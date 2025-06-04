@@ -1,0 +1,11 @@
+{
+    "welcome": "Welcome to my app!",
+    "greeting": "Hello, {name}!",
+    "reservation_menu":"Reservation",
+    "property_not_exist_message": "Property code {property_code} does not exists.",
+    "Change QTY": "QTY",
+    "order_translate_bong": "Orders",
+    "this_product_already_select_to_order": "Product {product_name} is already added to the order",
+    "Change Price": "Price",
+    "sale_order_not_found": "Sale order {keyword} does not exist"
+}
