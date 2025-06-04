@@ -11,6 +11,7 @@ import router from './router';
 
 import { useIonRouter } from '@ionic/vue';
 import { useRoute } from 'vue-router';
+import {getItem} from '@/services/storage-service';
 const ionRouter = useIonRouter();
 const route = useRoute();
 app.t =  i18n.global.t;
@@ -18,6 +19,7 @@ app.t =  i18n.global.t;
 app.setIonRouter(ionRouter)
 app.setRoute(route)
 app.setRouter(router)
+app.currentLanguage = getItem("lang") || "en";
 
 
 </script>

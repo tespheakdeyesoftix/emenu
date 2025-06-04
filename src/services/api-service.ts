@@ -15,7 +15,7 @@ export function setFrappeAppUrl(url:string){
 
 function getToken(){
         
-        return  "b84df842943ec01:9b7438e4a9bf4ea"
+    return  import.meta.env.VITE_TOKEN;
    
 }
 

@@ -22,7 +22,8 @@ import '@ionic/vue/css/flex-utils.css';
 import '@ionic/vue/css/display.css';
 
 import "@/helpers/global-function.js"
-
+import Img from '@/components/public/Img.vue';
+import ToolBar from '@/views/layouts/ToolBar.vue';
 
 /**
  * Ionic Dark Mode
@@ -151,9 +152,11 @@ const app = createApp(App)
 
 
 
+    app.component('Img',Img)
+    app.component('ToolBar', ToolBar)
     // TODO: get url from query string
   
-    setFrappeAppUrl("http://192.168.10.19:1217")
+    setFrappeAppUrl(import.meta.env.VITE_API_URL)
 
 
 router.isReady().then(() => {

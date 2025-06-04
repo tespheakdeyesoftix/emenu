@@ -9,6 +9,24 @@ import dayjs from 'dayjs';
 
 globalThis.app.storageService = storageService;
 globalThis.app.t = null
+globalThis.app.currentLanguage = storageService.getItem("lang") || "kh"
+
+globalThis.app.language = [
+  {
+    lang: "en",
+    icon: "/assets/en.svg",
+    label: "English"
+  },
+
+  {
+    lang: "kh",
+    icon: "/assets/kh.svg",
+    label: "ភាសារខ្មែរ"
+  }
+]
+
+
+
 
 // Ensure the namespace exists
 globalThis.app = globalThis.app || {};
