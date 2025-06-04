@@ -5,7 +5,23 @@ import * as utils from '@/helpers/utils';
 import * as storageService from '@/services/storage-service';
 import * as sale from '@/helpers/sale-action.js';
 
+import { useApp } from '@/hooks/useApp';
+
 import dayjs from 'dayjs';
+
+
+ 
+
+
+// Ensure the namespace exists
+globalThis.app = globalThis.app || {};
+
+
+
+
+globalThis.app.apiUrl ="";
+
+
 
 globalThis.app.storageService = storageService;
 globalThis.app.t = null
@@ -26,12 +42,6 @@ globalThis.app.language = [
 ]
 
 
-
-
-// Ensure the namespace exists
-globalThis.app = globalThis.app || {};
-const {getMeta} = useApp()
-import { useApp } from '@/hooks/useApp';
 
 globalThis.app.openModal =  async function (props) {
   return await utils.openModal(props)

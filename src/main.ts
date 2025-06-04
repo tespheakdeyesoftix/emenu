@@ -154,11 +154,12 @@ const app = createApp(App)
 
     app.component('Img',Img)
     app.component('ToolBar', ToolBar)
+
+
     // TODO: get url from query string
-  
     setFrappeAppUrl(import.meta.env.VITE_API_URL)
-
-
+    app.apiUrl = import.meta.env.VITE_API_URL;
+ 
 router.isReady().then(() => {
   app.mount('#app');
 });
