@@ -69,6 +69,9 @@ async function onSubmitOrder(){
    const l = await app.showLoading();
    const res = await app.createDoc("Online Order",orderDoc.value)
    if(res.data){
+      orderDoc.value = {
+         order_products:[]
+      };
       printToKitchen()
       await l.dismiss();
       app.ionRouter.navigate('/order-success', 'forward', 'replace');
