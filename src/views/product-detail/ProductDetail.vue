@@ -40,7 +40,7 @@
                                     <h4>&nbsp; * </h4>
                                 </ion-text>
                                </ion-list-header> 
-                               <ion-item @click="onModifierClick(m)" button lines="full" v-for="(m,mindex) in c.items" :key="'m'+mindex">
+                               <ion-item @click="onModifierClick(c,m)" button lines="full" v-for="(m,mindex) in c.items" :key="'m'+mindex">
                                 <ion-icon slot="start" :color="m.selected?'success':''" :icon="checkmarkCircleOutline" class="ion-no-margin" style="margin-right:10px ;"></ion-icon>
                                     <ion-label>{{ m.modifier }}</ion-label>
                                     <ion-label v-if="m.price>0" color="danger" slot="end">{{ m.price }}</ion-label>
@@ -58,6 +58,9 @@
 </template>
 <script setup>
 import {ref,onMounted, computed} from "vue"
+import {useSale} from "@/hooks/useSale.js"
+const {orderDoc} = useSale()
+
 const t = app.t;
 const data =ref()
 import { checkmarkCircleOutline } from 'ionicons/icons';
@@ -74,14 +77,20 @@ function onPortionClick(p){
 
 }
 
-function onModifierClick(m){
-    // const selected = portions.value.find(x=>x.selected);
-    // if(selected){
-    //     selected.selected  = false;
-    // }
-
+function onModifierClick(group,modifier){
+    if(group.is_multiple==0){
+        const selected = modifiers.value.flatMap(group => group.items).find(x=>x.selected);
+        if(selected){
+            selected.selected  = false;
+        }
+        modifier.selected =    true
+    }else {
+        modifier.selected = !modifier.selected
+    }
     
-    m.selected =    true
+   
+
+   
 
 }
 
