@@ -3,7 +3,8 @@ import App from './App.vue'
 import router from './router';
 
 import { IonicVue } from '@ionic/vue';
-import {setFrappeAppUrl} from "@/services/api-service.ts"
+
+import {setup} from "@/helpers/setup.js"
 
 /* Core CSS required for Ionic components to work properly */
 import '@ionic/vue/css/core.css';
@@ -27,6 +28,7 @@ import ToolBar from '@/views/layouts/ToolBar.vue';
 import AppBar from '@/views/layouts/AppBar.vue';
 import ComOrderCart from '@/views/components/ComOrderCart.vue';
 
+
 /**
  * Ionic Dark Mode
  * -----------------------------------------------------
@@ -42,19 +44,19 @@ import '@ionic/vue/css/palettes/dark.system.css';
 /* Theme variables */
 import './theme/variables.css';
 
-import { 
-  IonLabel, 
-  IonChip, 
+import {
+  IonLabel,
+  IonChip,
   IonPage,
-  IonContent, 
+  IonContent,
   useIonRouter,
   IonRippleEffect,
   IonCard,
   IonCardContent,
   IonCardHeader,
   IonCardTitle,
-  IonCardSubtitle, 
-  IonIcon ,
+  IonCardSubtitle,
+  IonIcon,
   IonButton,
   IonHeader,
   IonToolbar,
@@ -86,15 +88,15 @@ import {
   IonAccordion,
   IonText,
   IonInput,
-  IonCol, 
-  IonGrid, 
-  IonRow ,
+  IonCol,
+  IonGrid,
+  IonRow,
   IonTab,
-  
+
   IonTabBar,
   IonTabButton,
   IonTabs
-  
+
 } from '@ionic/vue';
 
 
@@ -102,68 +104,77 @@ const app = createApp(App)
   .use(IonicVue)
   .use(router);
 
-  app.component('ion-footer', IonFooter)
-    app.component('ion-ripple-effect', IonRippleEffect)
-    app.component('ion-infinite-scroll', IonInfiniteScroll)
-    app.component('ion-infinite-scroll-content', IonInfiniteScrollContent)
-    app.component('ion-card', IonCard)
-    app.component('ion-card-title', IonCardTitle)
-    app.component('ion-card-content', IonCardContent)
-    app.component('ion-card-header', IonCardHeader)
-    app.component('ion-card-subtitle', IonCardSubtitle)
-    app.component('ion-page', IonPage)
-    app.component('ion-content', IonContent)
-    app.component('ion-icon',IonIcon)
-    app.component('ion-chip',IonChip)
-    app.component('ion-avatar',IonAvatar)
-    app.component('ion-label',IonLabel)
-    app.component('ion-button',IonButton)
-    app.component('ion-buttons',IonButtons)
-    app.component('ion-back-button',IonBackButton)
-    app.component('ion-header',IonHeader)
-    app.component('ion-toolbar',IonToolbar)
-    app.component('ion-title',IonTitle)
-    app.component('ion-img',IonImg)
-    app.component('ion-searchbar',IonSearchbar)
-    app.component('ion-list',IonList)
-    app.component('ion-item',IonItem)
-    app.component('ion-fab',IonFab)
-    app.component('ion-fab-button',IonFabButton)
-    app.component('ion-segment',IonSegment)
-    app.component('ion-segment-button',IonSegmentButton)
-    app.component('ion-segment-view',IonSegmentView)
-    app.component('ion-refresher-content',IonRefresherContent)
-    app.component('ion-refresher',IonRefresher)
-    app.component('ion-progress-bar',IonProgressBar)
-    app.component('ion-spinner',IonSpinner)
-    app.component('ion-modal',IonModal)
-    app.component('ion-popover',IonPopover)
-    app.component('ion-datetime',IonDatetime)
-    app.component('ion-datetime-button',IonDatetimeButton)
-    app.component('ion-accordion-group',IonAccordionGroup)
-    app.component('ion-accordion',IonAccordion)
-    app.component('ion-text',IonText)
-    app.component('ion-input',IonInput)
-    app.component('ion-grid',IonGrid)
-    app.component('ion-row',IonRow)
-    app.component('ion-col',IonCol)
-    app.component('ion-tab',IonTab)
-    app.component('ion-tabs',IonTabs)
-    app.component('ion-tab-bar',IonTabBar)
-    app.component('ion-tab-button',IonTabButton)
+app.component('ion-footer', IonFooter)
+app.component('ion-ripple-effect', IonRippleEffect)
+app.component('ion-infinite-scroll', IonInfiniteScroll)
+app.component('ion-infinite-scroll-content', IonInfiniteScrollContent)
+app.component('ion-card', IonCard)
+app.component('ion-card-title', IonCardTitle)
+app.component('ion-card-content', IonCardContent)
+app.component('ion-card-header', IonCardHeader)
+app.component('ion-card-subtitle', IonCardSubtitle)
+app.component('ion-page', IonPage)
+app.component('ion-content', IonContent)
+app.component('ion-icon', IonIcon)
+app.component('ion-chip', IonChip)
+app.component('ion-avatar', IonAvatar)
+app.component('ion-label', IonLabel)
+app.component('ion-button', IonButton)
+app.component('ion-buttons', IonButtons)
+app.component('ion-back-button', IonBackButton)
+app.component('ion-header', IonHeader)
+app.component('ion-toolbar', IonToolbar)
+app.component('ion-title', IonTitle)
+app.component('ion-img', IonImg)
+app.component('ion-searchbar', IonSearchbar)
+app.component('ion-list', IonList)
+app.component('ion-item', IonItem)
+app.component('ion-fab', IonFab)
+app.component('ion-fab-button', IonFabButton)
+app.component('ion-segment', IonSegment)
+app.component('ion-segment-button', IonSegmentButton)
+app.component('ion-segment-view', IonSegmentView)
+app.component('ion-refresher-content', IonRefresherContent)
+app.component('ion-refresher', IonRefresher)
+app.component('ion-progress-bar', IonProgressBar)
+app.component('ion-spinner', IonSpinner)
+app.component('ion-modal', IonModal)
+app.component('ion-popover', IonPopover)
+app.component('ion-datetime', IonDatetime)
+app.component('ion-datetime-button', IonDatetimeButton)
+app.component('ion-accordion-group', IonAccordionGroup)
+app.component('ion-accordion', IonAccordion)
+app.component('ion-text', IonText)
+app.component('ion-input', IonInput)
+app.component('ion-grid', IonGrid)
+app.component('ion-row', IonRow)
+app.component('ion-col', IonCol)
+app.component('ion-tab', IonTab)
+app.component('ion-tabs', IonTabs)
+app.component('ion-tab-bar', IonTabBar)
+app.component('ion-tab-button', IonTabButton)
 
 
 
-    app.component('Img',Img)
-    app.component('ToolBar', ToolBar)
-    app.component('AppBar', AppBar)
-    app.component('ComOrderCart', ComOrderCart)
+app.component('Img', Img)
+app.component('ToolBar', ToolBar)
+app.component('AppBar', AppBar)
+app.component('ComOrderCart', ComOrderCart)
 
 
-    // TODO: get url from query string
-    setFrappeAppUrl(import.meta.env.VITE_API_URL)
-    app.apiUrl = import.meta.env.VITE_API_URL;
+
+
+async function init() {
+
+  //  setup api
+  await setup()
+  // TODO: get url from query string
  
-router.isReady().then(() => {
-  app.mount('#app');
-});
+  router.isReady().then(() => {
+    app.mount('#app');
+  });
+} 
+ 
+
+await init();
+
