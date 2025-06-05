@@ -3,16 +3,11 @@
     <ToolBar>
       {{ t("Your Order") }}
     </ToolBar>
-
-    <!-- ✅ Only one ion-content -->
     <ion-content>
       <div v-for="(p, index) in orderDoc.order_products" :key="index">
+        <!-- {{ p }} -->
         <ion-card style="display: flex; align-items: center; border-radius: 20px; padding: 10px; margin-bottom: 10px;">
-          <img
-            src="https://ionicframework.com/docs/img/demos/card-media.png"
-            alt="Product"
-            style="width: 100px; height: 100px; object-fit: cover; margin-right: 10px; padding: 5px; border-radius: 20px;"
-          />
+          <Img :src="p.photo" width="100" height="100" />
 
           <ion-card-content style="flex: 1;">
             <ion-card-title>{{ p.product_name }}</ion-card-title>
@@ -21,7 +16,7 @@
           </ion-card-content>
 
           <ion-card-content style="flex: 0.2; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; height: 100px;">
-            <ion-icon :icon="trashOutline" style="font-size: 24px; color: #f44336; cursor: pointer;" @click="showAlert" />
+            <ion-icon :icon="trashOutline" style="font-size: 24px; color: #f44336; cursor: pointer;" @click="deleteCart" />
             <div style="display: flex; align-items: center; gap: 10px; font-size: 24px;">
               <ion-icon :icon="removeOutline" style="cursor: pointer;" @click="decrease" />
               <span style="min-width: 20px; text-align: center;">{{ p.quantity }}</span>
@@ -32,7 +27,6 @@
       </div>
     </ion-content>
 
-    <!-- ✅ Footer -->
     <ion-footer slot="fixed">
       <ion-toolbar>
         <ion-row class="ion-align-items-center ion-justify-content-between" style="width: 100%; padding: 0 16px;">
@@ -54,12 +48,15 @@
 <script setup>
   import { IonIcon } from '@ionic/vue';
   import { trashOutline,removeOutline,addOutline } from 'ionicons/icons';
+  import Img from '@/components/public/Img.vue';
 
 import {useSale} from "@/hooks/useSale.js"
 const t = app.t;
 const {orderDoc,onSubmitOrder} = useSale()
 const showAlert = () =>{
     alert('Hello')
-}
+} 
+
+
 
 </script>
