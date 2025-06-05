@@ -8,8 +8,10 @@
         </ToolBar>
         <ion-content class="ion-padding">
             <template v-if="data ">
-              
-                <Img :src="data?.photo" />
+                <div>
+                   <Img class="image-banner-style" :src="data?.photo" /> 
+                </div>
+                
                 {{ data.product_code }} - {{ data.product_name_en }}
 
                 {{ data.price }}
@@ -67,23 +69,22 @@
         <ion-row class="ion-align-items-center">
           <ion-col size="6">
             <ion-buttons>
-              <ion-button color="danger" fill="outline" size="small" @click="decreaseQty()">
+              <ion-button v-if="data" color="danger" fill="outline" size="small" @click="onAddQuantity(-1)" :disabled="data.quantity==1">
                 <ion-icon :icon="removeOutline"></ion-icon>
               </ion-button>
               <ion-label id="qty-display" class="ion-padding-horizontal">
-
-                {{ qty }}
+{{ data?.quantity }}
               </ion-label>
-              <ion-button color="success" fill="outline" size="small" @click="increaseQty()">
+              <ion-button color="success" fill="outline" size="small" @click="onAddQuantity(1)">
                 <ion-icon :icon="addOutline"></ion-icon>
               </ion-button>
             </ion-buttons>
           </ion-col>
           <ion-col size="6" class="ion-text-end">
-            <ion-button color="primary" onclick="orderFood()">
+            <ion-button @click="addOrderProduct(data)" color="primary" onclick="orderFood()">
               <ion-icon :icon="basketOutline" slot="start"></ion-icon>
               <ion-icon name="basket-outline"></ion-icon>
-              Summit
+              {{ t("Add to Order") }}
             </ion-button>
           </ion-col>
         </ion-row>
