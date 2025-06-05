@@ -11,8 +11,10 @@
                 <div>
                    <Img class="image-banner-style" :src="data?.photo" /> 
                 </div>
+                <div style="margin-top: 10px; width: 100%;">
+                  {{ data.product_code }} - {{ data.product_name_en }}  
+                </div>
                 
-                {{ data.product_code }} - {{ data.product_name_en }}
 
                 {{ data.price }}
 
@@ -56,9 +58,7 @@
                    
                 </div>
                 
-                <ion-input v-model="data.note" :label="t('Note')" label-placement="stacked" fill="outline" :placeholder="t('Enter Note')"></ion-input>
-<ion-button @click="onAddQuantity(-1)" :disabled="data.quantity==1">-</ion-button> {{ data.quantity }} <ion-button @click="onAddQuantity(1)">+</ion-button>
-                <ion-button @click="addOrderProduct(data)">{{ t("Add to Order") }}</ion-button>
+               
             </template>
         
             
