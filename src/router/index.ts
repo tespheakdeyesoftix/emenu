@@ -1,8 +1,15 @@
-import { createRouter, createWebHistory } from '@ionic/vue-router';
+import { createRouter, createWebHistory, NavigationGuardNext, RouteLocationNormalized } from '@ionic/vue-router'
+import {useApp} from "@/hooks/useApp.js"
+
+const {canShowApp,isSessionExpired,isAppLoadReady} = useApp();
 import { RouteRecordRaw } from 'vue-router';
  
-
 const routes: Array<RouteRecordRaw> = [
+  {
+    path: '/:pathMatch(.*)*', // Catch-all
+    name: 'NotFound',
+    component: () => import('@/views/NotFound.vue')
+  },
   {
     path: '/',
     component: () => import('@/views/Home.vue')
@@ -19,6 +26,15 @@ const routes: Array<RouteRecordRaw> = [
   {
     path: '/order-success',
     component: () => import('@/views/OrderSuccess.vue')
+  
+  },
+  {
+    path: '/invalid-qr',
+    component: () => import('@/views/InvalidQR.vue')
+  },
+  {
+    path: '/session-expired',
+    component: () => import('@/views/SessionExpired.vue')
   }
 ]
 
@@ -27,5 +43,45 @@ const router = createRouter({
   // history: createWebHistory(import.meta.env.BASE_URL),
   routes
 })
+
+
+
+// ✅ Type-safe navigation guard
+router.beforeEach(
+  async (to: RouteLocationNormalized, from: RouteLocationNormalized, next: NavigationGuardNext) => {
+    if (!isAppLoadReady.value) {
+      // Poll until setup is done
+      const waitForSetup = () =>
+        new Promise<void>((resolve) => {
+          const interval = setInterval(() => {
+            if (isAppLoadReady.value) {
+              clearInterval(interval)
+              resolve()
+            }
+          }, 10)
+        })
+      await waitForSetup()
+    }
+    
+ 
+
+    if (!canShowApp.value === true && to.path !='/invalid-qr') {
+     next("/invalid-qr")
+    }
+    else if (canShowApp.value === true && to.path =='/invalid-qr') {
+      next("/")
+    }
+    else if (isSessionExpired.value === true && to.path !='/session-expired') {
+      next("/session-expired")
+    }
+    else if (!isSessionExpired.value  && to.path ==='/session-expired') {
+      next("/")
+    }
+    else {
+      next()
+    }
+  }
+)
+
 
 export default router

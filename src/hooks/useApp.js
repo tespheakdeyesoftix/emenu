@@ -1,7 +1,10 @@
 
 
 import {  ref } from "vue";
- 
+const canShowApp = ref(false)
+const isSessionExpired = ref(false)
+const isAppLoadReady = ref(false)
+
 const products = ref([])
 const emenu = ref()
 
@@ -10,7 +13,7 @@ const setting = ref()
 
 async function getMenu(){
   
-  const res = await app.getDoc("eMenu",app.route.query.menu)
+  const res = await app.getDoc("eMenu",app.emenu)
   
   if(res){
     emenu.value = res.data
@@ -38,6 +41,9 @@ export function useApp() {
   return {
     products,
     emenu,
+    canShowApp,
+    isSessionExpired,
+    isAppLoadReady,
     getProducts,
     getMenu
   };

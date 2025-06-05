@@ -50,7 +50,7 @@ import 'swiper/css/pagination'
 import { Autoplay, Pagination, Navigation } from 'swiper/modules'
 const {emenu,products,getMenu,getProducts} = useApp()
 const t = app.t;
-const data = ref()
+
 onMounted(async ()=>{
   const l = await app.showLoading();
   await getMenu();
