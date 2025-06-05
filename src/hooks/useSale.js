@@ -29,7 +29,8 @@ function addOrderProduct(data){
       modifiers_data:app.sale.getModifierData(data?.modifiers),
       price:app.sale.getPrice(data),
       modifier_price:app.sale.getModifierPrice(data.modifiers),
-      note:data.note || ""
+      note:data.note || "",
+      photo:data.photo
 
    }
    sp.sub_total = (sp.quanitty * sp.price) + (sp.quanitty * sp.modifier_price)
