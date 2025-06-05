@@ -11,8 +11,6 @@ export function getRandomChar() {
 
 
 import { useApp } from '@/hooks/useApp';
-const { setting } = useApp();
-
 
 
 
@@ -23,12 +21,9 @@ export function imageUrl(imageUrl, baseUrl = "") {
     if (baseUrl !== "") {
         return baseUrl + imageUrl;
     }
-
-    const strCurrentProperty = app.storageService.getItem("current_property");
-    if (strCurrentProperty) {
-        const property = JSON.parse(strCurrentProperty);
-        return property.api_url + imageUrl;
-    }
+ 
+        return app.api_url + imageUrl;
+   
 }
 
 export function getTimespanRange(timespan) {

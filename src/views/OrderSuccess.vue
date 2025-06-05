@@ -1,8 +1,8 @@
 <template>
     <ion-page>
-        <ToolBar>
+        <AppBar>
             {{ t("Order successfully") }}
-        </ToolBar>
+        </AppBar>
         <ion-content>
             {{ t("Your order has been submitted sucessfully.") }}
             

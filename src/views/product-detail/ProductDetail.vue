@@ -81,7 +81,7 @@
             </ion-buttons>
           </ion-col>
           <ion-col size="6" class="ion-text-end">
-            <ion-button @click="addOrderProduct(data)" color="primary" onclick="orderFood()">
+            <ion-button @click="addOrderProduct(data)" color="primary" >
               <ion-icon :icon="basketOutline" slot="start"></ion-icon>
               <ion-icon name="basket-outline"></ion-icon>
               {{ t("Add to Order") }}

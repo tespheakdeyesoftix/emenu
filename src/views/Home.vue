@@ -9,13 +9,20 @@
 
         <ion-content class="ion-padding">
 <div v-html="emenu?.welcome_description "></div>  
+
           <swiper
+          v-if="emenu" 
     :modules="[Autoplay, Pagination, Navigation]"
     :autoplay="{ delay: 3000, disableOnInteraction: false }"
     :pagination="{ clickable: true }"
     class="mySwiper"
   >
-    <swiper-slide  v-if="emenu" v-for="n in emenu.promotion" :key="n"><Img style="width: 100%;" :src="n.photo" /></swiper-slide>
+  
+    <swiper-slide  v-for="(n,index) in emenu?.promotion" :key="'promotion_' + index">
+      
+      <Img style="width: 100%;" :src="n.photo" />
+    
+    </swiper-slide>
   </swiper>
      
            <ion-searchbar placeholder="Search Product"></ion-searchbar>

@@ -69,6 +69,12 @@ function validateAddProduct(data){
 }
 
 
+function onRemoveProduct(index){
+   orderDoc.value.order_products.splice(index,1);
+
+}
+
+
 async function onSubmitOrder(){
    
    if (orderDoc.value.order_products.length==0){
@@ -101,7 +107,8 @@ export function useSale() {
        saleDoc,
        orderDoc,
        addOrderProduct,
-       onSubmitOrder
+       onSubmitOrder,
+       onRemoveProduct
     };
   }
   
