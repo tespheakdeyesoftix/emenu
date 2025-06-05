@@ -2,12 +2,13 @@
     <ion-page>
       <AppBar>
         <Img  :src="emenu" />
-         {{ emenu?.emenu_app_name }}
+           {{ emenu?.emenu_app_name }}
          {{ emenu?.photo }}
           
       </AppBar>
-<div v-html="emenu?.welcome_description ">   </div>  
+
         <ion-content class="ion-padding">
+<div v-html="emenu?.welcome_description "></div>  
           <swiper
     :modules="[Autoplay, Pagination, Navigation]"
     :autoplay="{ delay: 3000, disableOnInteraction: false }"
@@ -16,10 +17,10 @@
   >
     <swiper-slide  v-if="emenu" v-for="n in emenu.promotion" :key="n"><Img style="width: 100%;" :src="n.photo" /></swiper-slide>
   </swiper>
-       
-          <ion-searchbar placeholder="Search Product" ></ion-searchbar>
-         <ion-item lines="none">
-            <div class="category-tabs">
+     
+           <ion-searchbar placeholder="Search Product"></ion-searchbar>
+            <ion-item lines="none" class="sticky-tabs">
+          <div class="category-tabs">
             <button
               v-for="(category, index) in categories"
               :key="index"
@@ -30,7 +31,8 @@
             </button>
           </div>
         </ion-item>
-            {{ emenu }}
+        
+            <!-- {{ emenu }} -->
           <ComMenuList v-for="m in emenu?.pos_menu_selections" :key="m.name" :menu="m" />
         </ion-content>
     </ion-page>
@@ -97,5 +99,18 @@ function selectTab(index) {
   background-color: #d0021b;  
   color: white;
  
+}
+ion-searchbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  
+}
+
+.sticky-tabs {
+  position: sticky;
+  top: 56px; /* Height of the searchbar; adjust if needed */
+  z-index: 99;
+  
 }
 </style>
