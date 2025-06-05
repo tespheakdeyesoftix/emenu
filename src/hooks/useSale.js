@@ -4,6 +4,18 @@ const  orderDoc = ref({
    order_products:[]
 })
 
+initOrder();
+
+
+function initOrder(){
+   orderDoc.value = {
+      pos_profile:app.pos_profile,
+      session_id:app.session_id,
+      table_id:app.table_id,
+      order_products:[]
+   }
+}
+
 function addOrderProduct(data){
    const canAdd = validateAddProduct(data)
    if(!canAdd) return ;
@@ -69,9 +81,7 @@ async function onSubmitOrder(){
    const l = await app.showLoading();
    const res = await app.createDoc("Online Order",orderDoc.value)
    if(res.data){
-      orderDoc.value = {
-         order_products:[]
-      };
+      initOrder();
       printToKitchen()
       await l.dismiss();
       app.ionRouter.navigate('/order-success', 'forward', 'replace');

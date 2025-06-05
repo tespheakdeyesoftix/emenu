@@ -24,6 +24,7 @@ globalThis.app.token ="";
 globalThis.app.emenu ="";
 globalThis.app.pos_profile ="";
 globalThis.app.table_id ="";
+globalThis.app.session_id = "";
  
 globalThis.app.utils = utils;
 

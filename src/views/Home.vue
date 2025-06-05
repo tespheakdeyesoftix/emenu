@@ -16,7 +16,6 @@
   >
     <swiper-slide  v-if="emenu" v-for="n in emenu.promotion" :key="n"><Img style="width: 100%;" :src="n.photo" /></swiper-slide>
   </swiper>
-       
           <ion-searchbar placeholder="Search Product" ></ion-searchbar>
          <ion-item lines="none">
             <div class="category-tabs">
@@ -30,7 +29,7 @@
             </button>
           </div>
         </ion-item>
-            {{ emenu }}
+          
           <ComMenuList v-for="m in emenu?.pos_menu_selections" :key="m.name" :menu="m" />
         </ion-content>
     </ion-page>

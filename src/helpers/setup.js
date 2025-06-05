@@ -23,8 +23,6 @@ export async function setup(){
         qrcode = qrcode?.replace(".encrypt", "")
         qrcode = atob(atob(qrcode))
         
-        
-       
 
         const config = JSON.parse(qrcode)
         canShowApp.value = (checkConfigField(config,"api_url") && checkConfigField(config,"table_no") && checkConfigField(config,"pos_profile") && checkConfigField(config,"token"));
@@ -37,6 +35,7 @@ export async function setup(){
             app.pos_profile = config.pos_profile;
             app.api_url = config.api_url
             app.token = config.token;
+            app.table_id = config.table_no;
             
             // check aging to show qr session expire
             if (!isScanQRCode){
@@ -47,11 +46,13 @@ export async function setup(){
                     const end_time = dayjs();
                     const diff = end_time.diff(dayjs(start_time),'hour', true);
                     isSessionExpired.value = diff>duration;
-                  
+                    
                 }
             }
         }
 
+        // set session id  for  client device
+        app.session_id = await storageService.getItem("session_id") || crypto.randomUUID();
 
         isAppLoadReady.value = true;
           
