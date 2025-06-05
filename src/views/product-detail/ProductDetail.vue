@@ -61,6 +61,35 @@
         
             
         </ion-content>
+        <ion-footer>
+    <ion-toolbar>
+      <ion-grid>
+        <ion-row class="ion-align-items-center">
+          <ion-col size="6">
+            <ion-buttons>
+              <ion-button color="danger" fill="outline" size="small" @click="decreaseQty()">
+                <ion-icon :icon="removeOutline"></ion-icon>
+              </ion-button>
+              <ion-label id="qty-display" class="ion-padding-horizontal">
+
+                {{ qty }}
+              </ion-label>
+              <ion-button color="success" fill="outline" size="small" @click="increaseQty()">
+                <ion-icon :icon="addOutline"></ion-icon>
+              </ion-button>
+            </ion-buttons>
+          </ion-col>
+          <ion-col size="6" class="ion-text-end">
+            <ion-button color="primary" onclick="orderFood()">
+              <ion-icon :icon="basketOutline" slot="start"></ion-icon>
+              <ion-icon name="basket-outline"></ion-icon>
+              Summit
+            </ion-button>
+          </ion-col>
+        </ion-row>
+      </ion-grid>
+    </ion-toolbar>
+  </ion-footer>
     </ion-page>
 </template>
 <script setup>
@@ -70,7 +99,7 @@ const {orderDoc,addOrderProduct} = useSale()
 
 const t = app.t;
 const data =ref()
-import { checkmarkCircleOutline } from 'ionicons/icons';
+import { checkmarkCircleOutline , removeOutline , addOutline , basketOutline } from 'ionicons/icons';
 import ComOrderCart from "../components/ComOrderCart.vue";
  
 
