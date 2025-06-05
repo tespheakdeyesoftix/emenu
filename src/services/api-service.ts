@@ -2,7 +2,7 @@ import { handleErrorMessage } from '@/helpers/error-message';
 import { FrappeApp } from 'frappe-js-sdk';
 
 let frappe: FrappeApp | null = null;
-
+let token ="";
 export function setFrappeAppUrl(url:string){
     
     frappe = new FrappeApp(url,{
@@ -13,9 +13,16 @@ export function setFrappeAppUrl(url:string){
  
 }
 
+export function setToken(t:string){
+    
+    token = t;
+    
+ 
+}
+
 function getToken(){
-        
-    return  import.meta.env.VITE_TOKEN;
+      
+    return token;
    
 }
 

@@ -15,7 +15,7 @@ import ComMenuList from "@/views/components/ComMenuList.vue"
 import {useApp} from "@/hooks/useApp.js"
 const {emenu,products,getMenu,getProducts} = useApp()
 const t = app.t;
-const data = ref()
+
 onMounted(async ()=>{
   const l = await app.showLoading();
   await getMenu();
