@@ -1,12 +1,23 @@
 <template>
     <ion-page>
       <AppBar>
-          {{ t("Shop Name") }}
+        <Img  :src="emenu" />
+         {{ emenu?.emenu_app_name }}
+         {{ emenu?.photo }}
           
       </AppBar>
-      
-
-        <ion-searchbar placeholder="Search Product" ></ion-searchbar>
+<div v-html="emenu?.welcome_description ">   </div>  
+        <ion-content class="ion-padding">
+          <swiper
+    :modules="[Autoplay, Pagination, Navigation]"
+    :autoplay="{ delay: 3000, disableOnInteraction: false }"
+    :pagination="{ clickable: true }"
+    class="mySwiper"
+  >
+    <swiper-slide  v-if="emenu" v-for="n in emenu.promotion" :key="n"><Img style="width: 100%;" :src="n.photo" /></swiper-slide>
+  </swiper>
+       
+          <ion-searchbar placeholder="Search Product" ></ion-searchbar>
          <ion-item lines="none">
             <div class="category-tabs">
             <button
@@ -19,8 +30,6 @@
             </button>
           </div>
         </ion-item>
-        <ion-content class="ion-padding">
-          
           <ComMenuList v-for="m in emenu?.pos_menu_selections" :key="m.name" :menu="m" />
         </ion-content>
     </ion-page>
@@ -30,6 +39,12 @@ import {ref,onMounted } from "vue"
 import ComMenuList from "@/views/components/ComMenuList.vue"
 import { IonSearchbar } from '@ionic/vue';
 import {useApp} from "@/hooks/useApp.js"
+import { Swiper, SwiperSlide } from 'swiper/vue'
+import 'swiper/css'
+import 'swiper/css/navigation'
+import 'swiper/css/pagination'
+
+import { Autoplay, Pagination, Navigation } from 'swiper/modules'
 const {emenu,products,getMenu,getProducts} = useApp()
 const t = app.t;
 const data = ref()
