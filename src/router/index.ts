@@ -6,6 +6,7 @@ const routes: Array<RouteRecordRaw> = [
   {
     path: '/',
     component: () => import('@/views/Home.vue')
+    // component: () => import('@/views/Home.vue')
   },
   {
     path: '/menu/:name',
@@ -23,6 +24,7 @@ const routes: Array<RouteRecordRaw> = [
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
+  // history: createWebHistory(import.meta.env.BASE_URL),
   routes
 })
 

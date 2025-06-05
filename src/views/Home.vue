@@ -4,7 +4,8 @@
           {{ t("Shop Name") }}
       </AppBar>
         <ion-content class="ion-padding">
-          
+          <ion-text>Hello worl</ion-text> 
+            {{ emenu }}
           <ComMenuList v-for="m in emenu?.pos_menu_selections" :key="m.name" :menu="m" />
         </ion-content>
     </ion-page>
