@@ -166,7 +166,7 @@ export const getRandomColor = () => {
 };
 
 export const formatCurrency = (value) => {
-    return value.toLocaleString('en-US') + " " + setting.value.currency_symbol;
+    return value.toLocaleString('en-US') + " " + "$";
 };
 
 export async function showToast(message, color = "") {

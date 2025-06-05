@@ -24,6 +24,8 @@ import '@ionic/vue/css/display.css';
 import "@/helpers/global-function.js"
 import Img from '@/components/public/Img.vue';
 import ToolBar from '@/views/layouts/ToolBar.vue';
+import AppBar from '@/views/layouts/AppBar.vue';
+import ComOrderCart from '@/views/components/ComOrderCart.vue';
 
 /**
  * Ionic Dark Mode
@@ -154,6 +156,8 @@ const app = createApp(App)
 
     app.component('Img',Img)
     app.component('ToolBar', ToolBar)
+    app.component('AppBar', AppBar)
+    app.component('ComOrderCart', ComOrderCart)
 
 
     // TODO: get url from query string

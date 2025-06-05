@@ -23,6 +23,12 @@ globalThis.app.apiUrl ="";
 
 
 
+globalThis.app.utils = utils;
+
+
+
+
+
 globalThis.app.storageService = storageService;
 globalThis.app.t = null
 globalThis.app.currentLanguage = storageService.getItem("lang") || "kh"

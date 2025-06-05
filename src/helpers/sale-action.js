@@ -1,54 +1,59 @@
-export async function onEditBill(data){
-    const loading = await app.showLoading();
-    const doc_res = await app.getDoc("Sale",data.name)
-    if(doc_res.data){
-        if(doc_res.data.sale_status == "Closed"){
-            // check permission
-            if(app.currentUser.user_info.edit_bill == 0){
-                app.showWarningMessage("Edit Bill","You do not have permission to edit bill")
-                await loading.dismiss();
-                return
-            }
-        }
+
+export function getPortion(portions){
+    if(portions){
+       const selected = portions.find(x=>x.selected);
+       if(selected){
+          return selected.portion;
+       }
     }
-    
-    await loading.dismiss();
-    app.ionRouter.navigate('/selling/sale/edit/' + data.name, 'forward',"push");
-
-
-}
-
-export async function onSplitBill(data){
-   
-    // CHECK USER PERMISSSION
-    if(app.currentUser.user_info.split_bill ==0){
-        app.showWarningMessage("Split Bill","You do not have permission to split bill.")
-        return
-    }
-    // check if customer allow to split bill 
-    if(!data.customer){
-        app.showWarning("No Customer")
-        return 
-    }
-
-    const l = await app.showLoading();
-    const res = await app.getValue("Customer",data.customer,"can_split_bill")
+    return "Normal"
+ }
  
-    if(res.data.can_split_bill==0){
-        
-        await l.dismiss()
-        app.showWarningMessage("Split Bill","This customer is not allow to split bill.")
-    return ;
+ export  function getModifiers(modifiers){
+    if(!modifiers) return ""
+    
+    const selected =  modifiers.flatMap(group => group.items).filter(x=>x.selected);
+    if(selected){
+       return selected.map(x=>{
+          let m = `${x.prefix} ${x.modifier}`;
+          if(x.price>0){
+             m = m + "-" + app.utils.formatCurrency(x.price)
+          }
+          return m
+       }).join(",")
     }
-     
-await l.dismiss()
-    app.ionRouter.navigate('/selling/split-bill/' + data.name, 'forward',"push");
-}
+    return ""
+ 
+ }
 
-export function getCustomerProductPrice(product,product_prices){
-        let product_price = product_prices?.filter(r=>r.product_code == product.product_code && r.unit == product.unit) 
-        if(product_price.length>0){
-          return product_price[0].price
-        }
-        return product.price;
-}
+ export  function getModifierPrice(modifiers){
+    if(!modifiers) return 0
+    
+    const selected =  modifiers.flatMap(group => group.items).filter(x=>x.selected);
+    if(selected){
+        return selected.reduce((sum, item) => sum + item.price, 0);
+    }
+    return 0
+ 
+ }
+
+ export  function getModifierData(modifiers){
+    if(!modifiers) return []
+    
+    const selected =  modifiers.flatMap(group => group.items).filter(x=>x.selected);
+    if(selected){
+       return selected.map(x=> {
+        return {prefix:x.prefix, modifier:x.modifier, price:x.price}
+       })
+    }
+    return []
+ 
+ }
+ export  function getPrice(data){
+    if(!data.portions) return data.price || 0;
+    const selected = data.portions.find(x=>x.selected);
+    if(selected){
+        return selected.price;
+    }
+    return 0
+ }

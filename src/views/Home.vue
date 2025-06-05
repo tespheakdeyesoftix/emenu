@@ -1,10 +1,8 @@
 <template>
     <ion-page>
-        <ion-header>
-    <ion-toolbar>
-      <ion-title>Header</ion-title>
-    </ion-toolbar>
-  </ion-header>
+      <AppBar>
+          {{ t("Shop Name") }}
+      </AppBar>
         <ion-content class="ion-padding">
           
           <ComMenuList v-for="m in emenu?.pos_menu_selections" :key="m.name" :menu="m" />
@@ -16,7 +14,7 @@ import {ref,onMounted } from "vue"
 import ComMenuList from "@/views/components/ComMenuList.vue"
 import {useApp} from "@/hooks/useApp.js"
 const {emenu,products,getMenu,getProducts} = useApp()
-
+const t = app.t;
 const data = ref()
 onMounted(async ()=>{
   const l = await app.showLoading();
@@ -25,4 +23,5 @@ onMounted(async ()=>{
   await l.dismiss()
 
 })
+
 </script>
