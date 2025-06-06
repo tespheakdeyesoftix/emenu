@@ -5,7 +5,7 @@
     </ToolBar>
     <ion-content>
       <div v-if="orderDoc.order_products.length>0" v-for="(p, index) in orderDoc.order_products" :key="index">
-       
+       <!-- {{ p }} -->
        <ComOrderProductCard :data="p" :index="index"/>
       </div>
       <div v-else>
@@ -20,12 +20,12 @@
     <ion-footer slot="fixed">
       <ion-toolbar>
         <ion-row class="ion-align-items-center ion-justify-content-between" style="width: 100%; padding: 0 16px;">
-          <ion-col size="6">
+          <ion-col size="6" v-if="total">
             <div style="font-weight: bold; font-size: 18px;">Total:</div>
             <div style="font-size: 22px;">$ {{ total || '0.00' }}</div>
           </ion-col>
-          <ion-col size="6" class="ion-text-end">
-            <ion-button expand="block" @click="onSubmitOrder">
+          <ion-col  class="ion-text-end">
+            <ion-button color="success" expand="block" @click="onSubmitOrder">
               {{ t("Submit Order") }}
             </ion-button>
           </ion-col>
