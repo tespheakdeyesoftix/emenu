@@ -1,34 +1,48 @@
 <template>
-               <ion-searchbar placeholder="Search Product"></ion-searchbar>
-            <ion-item lines="none" class="sticky-tabs">
+    <div class="sticky-tabs bg-white"  >
+
+    <div>
+        <div>
+            <ion-searchbar placeholder="Search Product"></ion-searchbar>
+        </div>
+          <div>
+              <ion-item lines="none"  >
+                
           <div class="category-tabs">
             <button
-              v-for="(category, index) in categories"
+              v-for="(category, index) in menu"
               :key="index"
-              :class="['tab-btn', selectedIndex === index ? 'active' : '']"
-              @click="selectTab(index)"
+              :class="['tab-btn', selectedIndex === index ? 'active-filter' : '']"
+              @click="selectTab(index,category?.menu)"
             >
-              {{ category }}
+              {{ category?.menu }}
             </button>
           </div>
         </ion-item>
+          </div>
+          
+    </div>   
+        </div>
 </template>
 <script setup>
+const props = defineProps({
+    menu:Object
+})
 import {ref,onMounted } from "vue"
 import { IonSearchbar } from '@ionic/vue';
-const categories = [
-  'ទាំងអស់​',
-  'ជម្រើសសាច់អាំង',
-  'ជម្រើសាច់ស៊ុប',
-  'គ្រឿងសមុទ្រ',
-  'ឈុតបន្លែពិសេស',
-  'គ្រឿងបន្ថែម'
-]
+
 const selectedIndex = ref(0)
 
-function selectTab(index) {
-  selectedIndex.value = index
+function selectTab(index, id) {
+  selectedIndex.value = index;
+ const el = document.getElementById(id)
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth' })
+  }
 }
+
+
+
 </script>
 <style scoped>
 .category-tabs {
@@ -52,22 +66,13 @@ function selectTab(index) {
   transition: 0.3s;
 }
 
-.tab-btn.active {
-  background-color: #d0021b;  
-  color: white;
- 
-}
-ion-searchbar {
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  
-}
-
 .sticky-tabs {
+padding-top: 5px;
+padding-bottom: 5px;
   position: sticky;
-  top: 56px; /* Height of the searchbar; adjust if needed */
+  top:-20px;
   z-index: 99;
+  margin: 0;
   
 }
 </style>
