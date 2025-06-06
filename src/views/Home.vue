@@ -19,7 +19,7 @@
 <div v-html="emenu?.welcome_description "></div>  
 
      <ComPromotionSlide :emenu="emenu" />
-     <ComFilterMenuList />
+     <ComFilterMenuList /> 
      <ComMenuList v-for="m in emenu?.pos_menu_selections" :key="m.name" :menu="m" />
         </ion-content>
     </ion-page>
