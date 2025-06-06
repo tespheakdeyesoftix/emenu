@@ -160,9 +160,6 @@ export const getRandomColor = () => {
     return `#${Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')}`;
 };
 
-export const formatCurrency = (value) => {
-    return value.toLocaleString('en-US') + " " + "$";
-};
 
 export async function showToast(message, color = "") {
     const toast = await toastController.create({
@@ -241,7 +238,7 @@ export async function onWarningMessage(title = "Confirm", message = "Are you sur
         {
             text: app.t('OK'),
             role: 'confirm',
-            cssClass: 'alert-button-confirm'
+            cssClass: 'alert-button-warning'
         }
         
     ];
@@ -253,6 +250,29 @@ export async function onWarningMessage(title = "Confirm", message = "Are you sur
         subHeader:app.t(message)  ,
         buttons: defaultButtons,
         cssClass:"warning-alert"
+    });
+
+    await al.present();
+    const { role } = await al.onWillDismiss();
+    return role === 'confirm';
+}
+
+export async function showSuccessMessage(title = "Confirm") {
+    let defaultButtons = [
+        {
+            text: app.t('OK'),
+            role: 'confirm',
+            cssClass: 'alert-button-confirm-success'
+        }
+        
+    ];
+
+
+
+    const al = await alertController.create({
+        header: app.t(title),
+        buttons: defaultButtons,
+        cssClass:"success-alert"
     });
 
     await al.present();
@@ -402,4 +422,77 @@ export async function getDoctypeDefaultFields(docType) {
 
   return [...new Set(fields)];
 
+}
+
+
+export function uuid() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+
+export function getGeoLocation(){
+  if (navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      const latitude = position.coords.latitude;
+      const longitude = position.coords.longitude;
+      return {lat:latitude, long:longitude}
+    },
+    (error) => {
+      console.error("Error getting location:", error.message);
+    }
+  );
+}
+}
+
+export function isWithinRange(currentPosition, predefinePosition, rangeInMeters) {
+  const R = 6371000; // Earth's radius in meters
+  const toRad = (value) => (value * Math.PI) / 180;
+
+  const lat1 = currentPosition.lat;
+  const lon1 = currentPosition.long;
+  const lat2 = predefinePosition.lat;
+  const lon2 = predefinePosition.long;
+
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) ** 2;
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  const distance = R * c;
+
+  
+  return distance <= rangeInMeters;
+}
+
+
+export function  formatCurrency(value, format="$ #,###,##0.00") {
+  const hasDollar = format.includes('$');
+  const hasRiel = format.includes('៛');
+
+  // Determine decimal places from format
+  const decimalPlaces = format.includes('.') ? format.split('.')[1].length : 0;
+
+  // Format number with thousand separators
+  const numberFormatted = Number(value).toLocaleString('en-US', {
+    minimumFractionDigits: decimalPlaces,
+    maximumFractionDigits: decimalPlaces,
+  });
+
+  // Place currency symbol based on format
+  if (hasDollar) {
+    return `$ ${numberFormatted}`;
+  } else if (hasRiel) {
+    return `${numberFormatted} ៛`;
+  } else {
+    return numberFormatted; // fallback
+  }
 }

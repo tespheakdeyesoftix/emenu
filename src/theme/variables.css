@@ -7,3 +7,21 @@ http://ionicframework.com/docs/theming/ */
     border: 2px solid rgb(110, 130, 133);
     border-radius: 15px;
 }
+
+.success-alert .alert-wrapper {
+	background: var(--ion-color-success);
+    color: var(--ion-color-danger-contrast);
+}
+.warning-alert .alert-wrapper {
+	background: var(--ion-color-warning);
+    
+}
+button.alert-button.alert-button-confirm-success {
+	background-color: var(--ion-color-primary);
+	color: var(--ion-color-danger-contrast);
+  }
+button.alert-button.alert-button-warning {
+	background-color: var(--ion-color-danger);
+	color: var(--ion-color-danger-contrast);
+  }
+

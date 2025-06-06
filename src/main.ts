@@ -24,6 +24,7 @@ import '@ionic/vue/css/display.css';
 
 import "@/helpers/global-function.js"
 import Img from '@/components/public/Img.vue';
+import ComCurrency from '@/components/public/ComCurrency.vue';
 import ToolBar from '@/views/layouts/ToolBar.vue';
 import AppBar from '@/views/layouts/AppBar.vue';
 import ComOrderCart from '@/views/components/ComOrderCart.vue';
@@ -157,13 +158,13 @@ app.component('ion-tab-button', IonTabButton)
 
 
 app.component('Img', Img)
+app.component('ComCurrency', ComCurrency)
 app.component('ToolBar', ToolBar)
 app.component('AppBar', AppBar)
 app.component('ComOrderCart', ComOrderCart)
 
 
-
-
+ 
 async function init() {
 
   //  setup api

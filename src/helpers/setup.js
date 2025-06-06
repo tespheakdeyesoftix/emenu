@@ -52,7 +52,7 @@ export async function setup(){
         }
 
         // set session id  for  client device
-        app.session_id = await storageService.getItem("session_id") || crypto.randomUUID();
+        app.session_id = await storageService.getItem("session_id") || app.utils.uuid();
 
         isAppLoadReady.value = true;
           

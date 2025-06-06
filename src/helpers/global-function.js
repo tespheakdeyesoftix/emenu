@@ -10,6 +10,7 @@ import { useApp } from '@/hooks/useApp';
 import dayjs from 'dayjs';
 
 
+
  
 
 
@@ -22,11 +23,15 @@ globalThis.app = globalThis.app || {};
 globalThis.app.apiUrl ="";
 globalThis.app.token ="";
 globalThis.app.emenu ="";
+globalThis.app.business_branch ="";
+globalThis.app.predefineLocation =null;
 globalThis.app.pos_profile ="";
 globalThis.app.table_id ="";
 globalThis.app.session_id = "";
- 
 globalThis.app.utils = utils;
+
+
+
 
 
 
@@ -51,6 +56,11 @@ globalThis.app.language = [
 ]
 
 
+globalThis.app.getBusinessBranch = async function(){
+  if(app.business_branch) return app.business_branch
+  const res = await app.getValue("POS Profile", app.pos_profile, "business_branch")
+  return res.data.business_branch
+}
 
 globalThis.app.openModal =  async function (props) {
   return await utils.openModal(props)
@@ -137,6 +147,9 @@ globalThis.app.showConfirm = async function (message = 'Loading...') {
   }
  
 
+  globalThis.app.showSuccessMessage = async function (message){
+    return await utils.showSuccessMessage(message)
+  }
   globalThis.app.showSuccess = async function (message){
     const toast = await toastController.create({
         message: message,
