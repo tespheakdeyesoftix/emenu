@@ -137,6 +137,9 @@ globalThis.app.showConfirm = async function (message = 'Loading...') {
   }
  
 
+  globalThis.app.showSuccessMessage = async function (message){
+    return await utils.showSuccessMessage(message)
+  }
   globalThis.app.showSuccess = async function (message){
     const toast = await toastController.create({
         message: message,

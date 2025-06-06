@@ -260,6 +260,29 @@ export async function onWarningMessage(title = "Confirm", message = "Are you sur
     return role === 'confirm';
 }
 
+export async function showSuccessMessage(title = "Confirm") {
+    let defaultButtons = [
+        {
+            text: app.t('OK'),
+            role: 'confirm',
+            cssClass: 'alert-button-confirm-success'
+        }
+        
+    ];
+
+
+
+    const al = await alertController.create({
+        header: app.t(title),
+        buttons: defaultButtons,
+        cssClass:"success-alert"
+    });
+
+    await al.present();
+    const { role } = await al.onWillDismiss();
+    return role === 'confirm';
+}
+
 
 export function getDatebyTimestamp(timestamp) {
     const format = "YYYY-MM-DD";
@@ -402,4 +425,12 @@ export async function getDoctypeDefaultFields(docType) {
 
   return [...new Set(fields)];
 
+}
+
+
+export function uuid() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
 }

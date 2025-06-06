@@ -1,36 +1,40 @@
-import {ref} from "vue"
+import { ref } from "vue"
+import WebSocketPrinter from "@/helpers/websocket-printer.js"
 const saleDoc = ref()
-const  orderDoc = ref({
-   order_products:[]
+const orderDoc = ref({
+   order_products: []
 })
+
+const printService = new WebSocketPrinter();
+
 
 initOrder();
 
 
-function initOrder(){
+function initOrder() {
    orderDoc.value = {
-      pos_profile:app.pos_profile,
-      session_id:app.session_id,
-      table_id:app.table_id,
-      order_products:[]
+      pos_profile: app.pos_profile,
+      session_id: app.session_id,
+      table_id: app.table_id,
+      order_products: []
    }
 }
 
-function addOrderProduct(data){
+function addOrderProduct(data) {
    const canAdd = validateAddProduct(data)
-   if(!canAdd) return ;
+   if (!canAdd) return;
 
    const sp = {
-      product_code:data.product_code,
-      product_name:data.product_name_en,
-      quantity:data.quantity,
-      portion:app.sale.getPortion(data?.portions),
-      modifiers:app.sale.getModifiers(data?.modifiers),
-      modifiers_data:app.sale.getModifierData(data?.modifiers),
-      price:app.sale.getPrice(data),
-      modifier_price:app.sale.getModifierPrice(data.modifiers),
-      note:data.note || "",
-      photo:data.photo
+      product_code: data.product_code,
+      product_name: data.product_name_en,
+      quantity: data.quantity,
+      portion: app.sale.getPortion(data?.portions),
+      modifiers: app.sale.getModifiers(data?.modifiers),
+      modifiers_data: app.sale.getModifierData(data?.modifiers),
+      price: app.sale.getPrice(data),
+      modifier_price: app.sale.getModifierPrice(data.modifiers),
+      note: data.note || "",
+      photo: data.photo
 
    }
    sp.sub_total = (sp.quanitty * sp.price) + (sp.quanitty * sp.modifier_price)
@@ -43,23 +47,23 @@ function addOrderProduct(data){
 
    orderDoc.value.order_products.push(sp)
 
-   app.showSuccess(app.t("Add successfully"));
+   app.showSuccessMessage(app.t("Add order successfully"));
 
 }
 
-function validateAddProduct(data){
+function validateAddProduct(data) {
 
-   if(data.portions && data.portions!=""){
-      
-      if(!data.portions.find(x=>x.selected)) {
+   if (data.portions && data.portions != "") {
+
+      if (!data.portions.find(x => x.selected)) {
          app.showWarning(app.t("Please select portion"))
          return false
       }
    }
-   
-   if(data.modifiers){
-      data.modifiers.filter(x=>x.is_required ==1).forEach(c => {
-         if(!c.items.find(m=>m.selected)){
+
+   if (data.modifiers) {
+      data.modifiers.filter(x => x.is_required == 1).forEach(c => {
+         if (!c.items.find(m => m.selected)) {
             app.showWarning(app.t("Please select modifer for ") + c.category)
          }
       });
@@ -69,46 +73,69 @@ function validateAddProduct(data){
 }
 
 
-function onRemoveProduct(index){
-   orderDoc.value.order_products.splice(index,1);
+function onRemoveProduct(index) {
+   orderDoc.value.order_products.splice(index, 1);
 
 }
 
 
-async function onSubmitOrder(){
-   
-   if (orderDoc.value.order_products.length==0){
+async function onSubmitOrder() {
+
+   if (orderDoc.value.order_products.length == 0) {
       app.showWarning(app.t("Please select product to your order"))
       return
    }
 
-   const confirm = await app.onConfirm("Submit Order","Are you sure you want to submit your order?")
-   if(!confirm) return;
+   const confirm = await app.onConfirm("Submit Order", "Are you sure you want to submit your order?")
+   if (!confirm) return;
 
    const l = await app.showLoading();
-   const res = await app.createDoc("Online Order",orderDoc.value)
-   if(res.data){
+   const res = await app.createDoc("Online Order", orderDoc.value)
+   if (res.data) {
       initOrder();
-      printToKitchen()
+      printToKitchen(res.data.name)
       await l.dismiss();
       app.ionRouter.navigate('/order-success', 'forward', 'replace');
    }
-  
+
    await l.dismiss();
 
-} 
-
-function printToKitchen(){
-   alert("print to keitchen")
 }
 
-export function useSale() {
-    return {
-       saleDoc,
-       orderDoc,
-       addOrderProduct,
-       onSubmitOrder,
-       onRemoveProduct
-    };
-  }
+
+
+async function printToKitchen(docname) {
+
+   const result = await app.postApi("epos_restaurant_2023.api.printing.get_mobile_order_to_kitchen_pdf", {
+      pdf: 0,
+      doc_name: docname
+   })
+
+   if (result.data) {
+      result.data.forEach(x => {
+         printService.submit({
+            'type': x[0],//printer name
+            'url': 'file.pdf',
+            'file_content': x[1] //base 64 pdf
+         });
+      }
+   )
   
+   }
+}
+
+    
+ 
+
+
+
+export function useSale() {
+         return {
+            saleDoc,
+            orderDoc,
+            addOrderProduct,
+            onSubmitOrder,
+            onRemoveProduct,
+            printToKitchen
+         };
+      }

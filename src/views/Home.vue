@@ -4,10 +4,11 @@
         <Img  :src="emenu" />
            {{ emenu?.emenu_app_name }}
          {{ emenu?.photo }}
-          
+           
       </AppBar>
 
         <ion-content class="ion-padding">
+          
 <div v-html="emenu?.welcome_description "></div>  
 
           <swiper
