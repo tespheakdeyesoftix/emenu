@@ -112,14 +112,14 @@ export function getDoc(DocType: string,DocName:string) {
   });
 }
  
-export function getSingleValue(DocType: string,DocName:string) {
+export function getSingleValue(DocType: string,fieldname:string) {
     if (!frappe) {
         return { data: null, error: "Frappe is not defined" };
     }
     const db = frappe.db()
 
-    return db.getDoc(DocType, DocName)
-  .then((doc) =>({ data: doc, error: null }))
+    return db.getSingleValue(DocType,fieldname)
+  .then((doc) =>({ data: doc.message, error: null }))
   .catch((error) => {
     handleErrorMessage(error);
     return { data: null, error }

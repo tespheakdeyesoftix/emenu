@@ -9,7 +9,7 @@ export  function getItem(key:string) {
     return localStorage.getItem(key)
 }
 
-export function removeItem(key: string, value: any): void {
+export function removeItem(key: string): void {
   localStorage.removeItem(key);
 }
 

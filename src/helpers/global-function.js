@@ -1,6 +1,6 @@
 import { alertController, toastController,loadingController,modalController } from '@ionic/vue';
 import i18n from '../../i18n'; // Import i18n config
-import { getApi, getDoc,updateDoc,createDoc,getDocList, postApi,getValue  } from "@/services/api-service";
+import { getApi, getSingleValue,getDoc,updateDoc,createDoc,getDocList, postApi,getValue  } from "@/services/api-service";
 import * as utils from '@/helpers/utils';
 import * as storageService from '@/services/storage-service';
 import * as sale from '@/helpers/sale-action.js';
@@ -102,6 +102,10 @@ globalThis.app.getRandomChar =  function(){
 globalThis.app.getDoc =  async function (DocType,DocName) {
   return await getDoc(DocType,DocName)
 }
+globalThis.app.getSingleValue =  async function (DocType,fieldname) {
+  return await getSingleValue(DocType,fieldname)
+}
+
 globalThis.app.getValue =  async function (DocType,name,fields) {
   return await getValue(DocType,name,fields)
 }
@@ -222,10 +226,8 @@ globalThis.app.station_name  =  async function() {
 
 globalThis.app.print_setting= {printer_name:"Cashier Printer", copy:1}
 
-globalThis.app.setting = null
-globalThis.app.setSetting  =    function(setting) {
-  app.setting = setting;
-}
+globalThis.app.setting = {}//setting is dynamic set
+
 
 globalThis.app.currentUser = null
 globalThis.app.setCurrentUser  =    function(user) {

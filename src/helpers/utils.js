@@ -122,6 +122,7 @@ export function getTimespanRange(timespan) {
 }
 
 export async function showWarning(message) {
+    
     const toast = await toastController.create({
         message: message,
         duration: 5000,
@@ -473,26 +474,39 @@ export function isWithinRange(currentPosition, predefinePosition, rangeInMeters)
   return distance <= rangeInMeters;
 }
 
+export async function getOrderRange(){
+    if((app.setting.online_order_range || 0) > 0) return app.setting.online_order_range;
+    return (await app.getValue("eMenu",app.emenu, "online_order_range")).data.online_order_range
+     
+}
 
-export function  formatCurrency(value, format="$ #,###,##0.00") {
+
+export function formatCurrency(value, format) {
   const hasDollar = format.includes('$');
   const hasRiel = format.includes('៛');
 
-  // Determine decimal places from format
-  const decimalPlaces = format.includes('.') ? format.split('.')[1].length : 0;
+  // Extract format decimal part
+  const decimalPart = (format.split('.')[1] || '').replace(/[^0#]/g, '');
+  const minDecimal = decimalPart.replace(/[^0]/g, '').length; // count '0's
+  const maxDecimal = decimalPart.length; // total length of 0s and #s
 
-  // Format number with thousand separators
-  const numberFormatted = Number(value).toLocaleString('en-US', {
-    minimumFractionDigits: decimalPlaces,
-    maximumFractionDigits: decimalPlaces,
+  let numberFormatted = Number(value).toLocaleString('en-US', {
+    minimumFractionDigits: minDecimal,
+    maximumFractionDigits: maxDecimal,
+    useGrouping: true,
   });
 
-  // Place currency symbol based on format
+  // Remove optional trailing zeros
+  if (maxDecimal > minDecimal) {
+    numberFormatted = numberFormatted.replace(/(\.\d*?[1-9])0+$/, '$1'); // trim trailing zeros
+    numberFormatted = numberFormatted.replace(/\.0+$/, '.00'); // ensure required .00 stays
+  }
+
   if (hasDollar) {
     return `$ ${numberFormatted}`;
   } else if (hasRiel) {
     return `${numberFormatted} ៛`;
   } else {
-    return numberFormatted; // fallback
+    return numberFormatted;
   }
 }

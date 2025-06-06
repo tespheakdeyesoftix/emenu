@@ -4,6 +4,7 @@ import {  ref } from "vue";
 const canShowApp = ref(false)
 const isSessionExpired = ref(false)
 const isAppLoadReady = ref(false)
+const isInvalidQR = ref(false)
 
 const products = ref([])
 const emenu = ref()
@@ -43,6 +44,7 @@ export function useApp() {
     canShowApp,
     isSessionExpired,
     isAppLoadReady,
+    isInvalidQR,
     getProducts,
     getMenu
   };

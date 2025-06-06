@@ -15,7 +15,9 @@
                 <ion-card style="margin: 0;margin-top: 10px;">
     <ion-card-header>
       <ion-card-title> {{ data.product_code }} - {{ data.product_name_en }}  </ion-card-title>
-      <ion-card-subtitle>{{data.price}}</ion-card-subtitle>
+      <ion-card-subtitle>
+        <ComCurrency :value="data.price" />
+      </ion-card-subtitle>
     </ion-card-header>
 
     <ion-card-content>
@@ -31,7 +33,7 @@
                             <ion-label>
                                 {{ p.portion  }} 
                             </ion-label>
-                            <ion-label slot="end" color="danger">{{ p.price }}</ion-label>
+                            <ion-label slot="end" color="danger">   <ComCurrency :value="p.price" /></ion-label>
                         </ion-item>
                     </ion-list>
                 </div>
@@ -50,7 +52,7 @@
                                <ion-item @click="onModifierClick(c,m)" button lines="full" v-for="(m,mindex) in c.items" :key="'m'+mindex">
                                 <ion-icon slot="start" :color="m.selected?'success':''" :icon="checkmarkCircleOutline" class="ion-no-margin" style="margin-right:10px ;"></ion-icon>
                                     <ion-label>{{ m.modifier }}</ion-label>
-                                    <ion-label v-if="m.price>0" color="danger" slot="end">{{ m.price }}</ion-label>
+                                    <ion-label v-if="m.price>0" color="danger" slot="end">   <ComCurrency :value="m.price" /></ion-label>
                                </ion-item>
                         </template>
                     </ion-list>
