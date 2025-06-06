@@ -8,20 +8,19 @@
         </ToolBar>
         <ion-content class="ion-padding">
             <template v-if="data ">
+                
                 <div>
                    <Img class="image-banner-style" :src="data?.photo" /> 
                 </div>
-                <div style="margin-top: 10px; width: 100%;">
-                  {{ data.product_code }} - {{ data.product_name_en }}  
-                </div>
-                
+                <ion-card style="margin: 0;margin-top: 10px;">
+    <ion-card-header>
+      <ion-card-title> {{ data.product_code }} - {{ data.product_name_en }}  </ion-card-title>
+      <ion-card-subtitle>{{data.price}}</ion-card-subtitle>
+    </ion-card-header>
 
-                {{ data.price }}
-
-                <div v-html="data.description"></div>
-                
-                
-
+    <ion-card-content>
+      <div v-html="data.description"></div>
+ 
                 <div v-if="data.portions">
                     <ion-text>
                         <h3>{{ t("Portion") }}</h3>
@@ -58,9 +57,35 @@
                    
                 </div>
                 
-               
+                  </ion-card-content>
+  </ion-card>
             </template>
-        
+            <div style="margin-top: 10px;">
+        <ion-textarea
+  label="Note"
+  label-placement="stacked"
+  fill="outline"
+  placeholder="Enter text"
+  style="min-height: 120px;"
+></ion-textarea>
+
+
+
+
+            </div>
+            
+            <div style="margin-top: 10px;display: flex;justify-content: space-between;">
+                <ion-button @click="addOrderProduct(data)" color="primary" >
+              <ion-icon :icon="arrowBackOutline" slot="start"></ion-icon>
+            
+              {{ t("Back To Order") }}
+            </ion-button>
+             <ion-button @click="addOrderProduct(data)" color="primary" >
+              <ion-icon :icon="basketOutline" slot="start"></ion-icon>
+              {{ t("View Pedding Order") }} 
+            </ion-button>
+            </div>
+         
             
         </ion-content>
         <ion-footer>
@@ -100,7 +125,7 @@ const {orderDoc,addOrderProduct} = useSale()
 
 const t = app.t;
 const data =ref()
-import { checkmarkCircleOutline , removeOutline , addOutline , basketOutline } from 'ionicons/icons';
+import { checkmarkCircleOutline , removeOutline , addOutline , basketOutline , arrowBackOutline } from 'ionicons/icons';
 import ComOrderCart from "../components/ComOrderCart.vue";
  
 
