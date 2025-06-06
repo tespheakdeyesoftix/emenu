@@ -64,8 +64,11 @@ const props = defineProps({
   font-size: 14px;
   font-weight: 600;
   color: #333;
-  white-space: nowrap;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2; 
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: ellipsis; 
 }
 </style>
