@@ -1,5 +1,8 @@
 import { ref } from "vue"
 import WebSocketPrinter from "@/helpers/websocket-printer.js"
+import {useApp} from "@/hooks/useApp.js"
+const {emenu} = useApp();
+
 const saleDoc = ref()
 const orderDoc = ref({
    order_products: []
@@ -85,20 +88,57 @@ async function onSubmitOrder() {
       app.showWarning(app.t("Please select product to your order"))
       return
    }
+   navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        
+         if(!app.utils.isWithinRange(
+            {lat:position.coords.latitude,long:position.coords.longitude },
+            app.predefinePosition,
+            emenu.value.online_order_range
+         ))
+         {
+            app.showWarningMessage("Your location","You cannot submit your order. Your location is too far from the shop location.")
+            return
+         }
+         const confirm = await app.onConfirm("Submit Order", "Are you sure you want to submit your order?")
+         if (!confirm) return;
 
-   const confirm = await app.onConfirm("Submit Order", "Are you sure you want to submit your order?")
-   if (!confirm) return;
+         const l = await app.showLoading();
+         const res = await app.createDoc("Online Order", orderDoc.value)
+         if (res.data) {
+            initOrder();
+            printToKitchen(res.data.name)
+            await l.dismiss();
+            app.ionRouter.navigate('/order-success', 'forward', 'replace');
+         }
 
-   const l = await app.showLoading();
-   const res = await app.createDoc("Online Order", orderDoc.value)
-   if (res.data) {
-      initOrder();
-      printToKitchen(res.data.name)
-      await l.dismiss();
-      app.ionRouter.navigate('/order-success', 'forward', 'replace');
-   }
+         await l.dismiss();
+      },
+      (error) => {
+      // ❌ Handle error or denial
+      switch (error.code) {
+        case error.PERMISSION_DENIED:
+          app.showWarningMessage(app.t("You need to allow location access to continue."));
+          break;
+        case error.POSITION_UNAVAILABLE:
+          app.showWarningMessage("Location information is unavailable.");
+          break;
+        case error.TIMEOUT:
+          app.showWarningMessage("The request to get user location timed out.");
+          break;
+        default:
+          app.showWarningMessage("An unknown error occurred.");
+          break;
+      }
+ 
+    }
+  
+   )
 
-   await l.dismiss();
+
+
+
+
 
 }
 
@@ -119,23 +159,23 @@ async function printToKitchen(docname) {
             'file_content': x[1] //base 64 pdf
          });
       }
-   )
-  
+      )
+
    }
 }
 
-    
- 
+
+
 
 
 
 export function useSale() {
-         return {
-            saleDoc,
-            orderDoc,
-            addOrderProduct,
-            onSubmitOrder,
-            onRemoveProduct,
-            printToKitchen
-         };
-      }
+   return {
+      saleDoc,
+      orderDoc,
+      addOrderProduct,
+      onSubmitOrder,
+      onRemoveProduct,
+      printToKitchen
+   };
+}

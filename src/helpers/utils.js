@@ -241,7 +241,7 @@ export async function onWarningMessage(title = "Confirm", message = "Are you sur
         {
             text: app.t('OK'),
             role: 'confirm',
-            cssClass: 'alert-button-confirm'
+            cssClass: 'alert-button-warning'
         }
         
     ];
@@ -433,4 +433,45 @@ export function uuid() {
     const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
   });
+}
+
+
+export function getGeoLocation(){
+  if (navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      const latitude = position.coords.latitude;
+      const longitude = position.coords.longitude;
+      return {lat:latitude, long:longitude}
+    },
+    (error) => {
+      console.error("Error getting location:", error.message);
+    }
+  );
+}
+}
+
+export function isWithinRange(currentPosition, predefinePosition, rangeInMeters) {
+  const R = 6371000; // Earth's radius in meters
+  const toRad = (value) => (value * Math.PI) / 180;
+
+  const lat1 = currentPosition.lat;
+  const lon1 = currentPosition.long;
+  const lat2 = predefinePosition.lat;
+  const lon2 = predefinePosition.long;
+
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) ** 2;
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  const distance = R * c;
+
+  
+  return distance <= rangeInMeters;
 }

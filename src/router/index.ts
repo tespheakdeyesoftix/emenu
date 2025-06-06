@@ -16,6 +16,11 @@ const routes: Array<RouteRecordRaw> = [
     // component: () => import('@/views/Home.vue')
   },
   {
+    path: '/menu',
+    component: () => import('@/views/Home.vue')
+    // component: () => import('@/views/Home.vue')
+  },
+  {
     path: '/menu/:name',
     component: () => import('@/views/product-detail/ProductDetail.vue')
   },
@@ -58,12 +63,13 @@ router.beforeEach(
               clearInterval(interval)
               resolve()
             }
-          }, 10)
+          }, 100)
         })
       await waitForSetup()
     }
     
- 
+     const urlParams = new URLSearchParams(window.location.search);
+      let qrcode = urlParams.get('qrcode') || "";
 
     if (!canShowApp.value === true && to.path !='/invalid-qr') {
      next("/invalid-qr")
@@ -76,6 +82,8 @@ router.beforeEach(
     }
     else if (!isSessionExpired.value  && to.path ==='/session-expired') {
       next("/")
+    } else if (to.path=="/" && qrcode){
+      next("/menu")
     }
     else {
       next()
