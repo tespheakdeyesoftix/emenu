@@ -160,9 +160,6 @@ export const getRandomColor = () => {
     return `#${Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')}`;
 };
 
-export const formatCurrency = (value) => {
-    return value.toLocaleString('en-US') + " " + "$";
-};
 
 export async function showToast(message, color = "") {
     const toast = await toastController.create({
@@ -474,4 +471,28 @@ export function isWithinRange(currentPosition, predefinePosition, rangeInMeters)
 
   
   return distance <= rangeInMeters;
+}
+
+
+export function  formatCurrency(value, format="$ #,###,##0.00") {
+  const hasDollar = format.includes('$');
+  const hasRiel = format.includes('៛');
+
+  // Determine decimal places from format
+  const decimalPlaces = format.includes('.') ? format.split('.')[1].length : 0;
+
+  // Format number with thousand separators
+  const numberFormatted = Number(value).toLocaleString('en-US', {
+    minimumFractionDigits: decimalPlaces,
+    maximumFractionDigits: decimalPlaces,
+  });
+
+  // Place currency symbol based on format
+  if (hasDollar) {
+    return `$ ${numberFormatted}`;
+  } else if (hasRiel) {
+    return `${numberFormatted} ៛`;
+  } else {
+    return numberFormatted; // fallback
+  }
 }

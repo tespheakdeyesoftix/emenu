@@ -34,21 +34,24 @@ function addOrderProduct(data) {
       portion: app.sale.getPortion(data?.portions),
       modifiers: app.sale.getModifiers(data?.modifiers),
       modifiers_data: app.sale.getModifierData(data?.modifiers),
-      price: app.sale.getPrice(data),
-      modifier_price: app.sale.getModifierPrice(data.modifiers),
+      price: app.sale.getPrice(data) || 0,
+      modifier_price: app.sale.getModifierPrice(data.modifiers) || 0,
       note: data.note || "",
       photo: data.photo
 
    }
-   sp.sub_total = (sp.quanitty * sp.price) + (sp.quanitty * sp.modifier_price)
+   sp.sub_total = (sp.quantity * sp.price) + (sp.quantity * sp.modifier_price)
    // discount in future update
 
    // tax in future update
 
-   sp.total_amount = (sp.quanitty * sp.price) + (sp.quanitty * sp.modifier_price)
+   sp.total_amount = (sp.quantity * sp.price) + (sp.quantity * sp.modifier_price)
 
 
    orderDoc.value.order_products.push(sp)
+
+
+   updateSaleAmount();
 
    app.showSuccessMessage(app.t("Add order successfully"));
 
@@ -78,8 +81,20 @@ function validateAddProduct(data) {
 
 function onRemoveProduct(index) {
    orderDoc.value.order_products.splice(index, 1);
-
+updateSaleAmount();
 }
+
+
+
+function updateSaleAmount(){
+  
+  const total_amount = orderDoc.value.order_products.reduce((sum, product) => sum + product.total_amount, 0);
+  orderDoc.value.total_amount = total_amount || 0
+
+ 
+ 
+}
+
 
 
 async function onSubmitOrder() {

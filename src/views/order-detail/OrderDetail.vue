@@ -22,7 +22,7 @@
         <ion-row class="ion-align-items-center ion-justify-content-between" style="width: 100%; padding: 0 16px;">
           <ion-col size="6">
             <div style="font-weight: bold; font-size: 18px;">Total:</div>
-            <div style="font-size: 22px;">$ {{ total || '0.00' }}</div>
+            <div style="font-size: 22px;"><ComCurrency :value="orderDoc?.total_amount || 0"/></div>
           </ion-col>
           <ion-col size="6" class="ion-text-end">
             <ion-button expand="block" @click="onSubmitOrder">
