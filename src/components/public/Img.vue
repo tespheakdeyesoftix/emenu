@@ -1,7 +1,7 @@
 <template>
 
  
-  <img :src="imgData" :width="width == 0 ? undefined : width" :height="height == 0 ? undefined : height"  />
+  <img :src="imgData" :width="width == 0 ? undefined : width" :height="height == 0 ? undefined : height" @error="onImageError"  />
 
 </template>
 <script setup>
@@ -24,9 +24,11 @@ const props = defineProps({
   },
 })
 
+function onImageError(){
+  imgData.value = "resources/placeholder.jpg"
+}
 
-
-const imgData = ref("/epos-mobile/assets/placeholder.jpg");
+const imgData = ref("resources/placeholder.jpg");
 
 let serverUrl = app.apiUrl;
 
@@ -40,7 +42,7 @@ const getImage = async () => {
   }
 
   if (!props.src) {
-    imgData.value = "/assets/placeholder.jpg"
+    imgData.value = "resources/placeholder.jpg"
     return;
   }
 
