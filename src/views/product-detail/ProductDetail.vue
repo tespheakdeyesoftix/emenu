@@ -15,13 +15,13 @@
                 <ion-card style="margin: 0;margin-top: 10px;">
     <ion-card-header>
       <ion-card-title> {{ data.product_code }} - {{ data.product_name_en }}  </ion-card-title>
-      <ion-card-subtitle>{{data.price}}</ion-card-subtitle>
+      <ion-card-subtitle v-if="data.price">{{data.price}}</ion-card-subtitle>
     </ion-card-header>
 
     <ion-card-content>
       <div v-html="data.description"></div>
  
-                <div v-if="data.portions">
+                <div v-if="data.portions && data.portions.length > 0">
                     <ion-text>
                         <h3>{{ t("Portion") }}</h3>
                     </ion-text>
@@ -61,13 +61,13 @@
   </ion-card>
             </template>
             <div style="margin-top: 10px;">
-        <ion-textarea
+        <!-- <ion-textarea
   label="Note"
   label-placement="stacked"
   fill="outline"
   placeholder="Enter text"
   style="min-height: 120px;"
-></ion-textarea>
+></ion-textarea> -->
 
 
 
@@ -75,15 +75,12 @@
             </div>
             
             <div style="margin-top: 10px;display: flex;justify-content: space-between;">
-                <ion-button @click="addOrderProduct(data)" color="primary" >
+                <ion-button @click="goBack()" color="primary" >
               <ion-icon :icon="arrowBackOutline" slot="start"></ion-icon>
-            
-              {{ t("Back To Order") }}
+            <span style="font-size: 10px;">{{ t("Back To Order") }}</span>
+              
             </ion-button>
-             <ion-button @click="addOrderProduct(data)" color="primary" >
-              <ion-icon :icon="basketOutline" slot="start"></ion-icon>
-              {{ t("View Pedding Order") }} 
-            </ion-button>
+           
             </div>
          
             
@@ -127,8 +124,11 @@ const t = app.t;
 const data =ref()
 import { checkmarkCircleOutline , removeOutline , addOutline , basketOutline , arrowBackOutline } from 'ionicons/icons';
 import ComOrderCart from "../components/ComOrderCart.vue";
- 
-
+import { useRouter } from 'vue-router'
+ const router = useRouter()
+function goBack() {
+  router.back()
+}
 function onPortionClick(p){
     const selected = data.value.portions.find(x=>x.selected);
     if(selected){
