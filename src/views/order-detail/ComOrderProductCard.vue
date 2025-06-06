@@ -1,16 +1,17 @@
 <template>
   <ion-card
     style="display: flex; flex-direction: column; border-radius: 20px; padding: 8px;"
-    class="ion-activatable ripple-parent ion-margin"
+    class="ion-margin"
+    button
   >
-    <ion-ripple-effect></ion-ripple-effect> 
+   
     <div style="display: flex; align-items: center;">
       <Img :src="data.photo" width="100" height="100" style="object-fit: cover; border-radius: 20px;" />
 
       <ion-card-content style="flex: 1;" class="ion-no-padding ion-margin-start">
         <ion-card-title style="font-size: 15px;">{{ data.product_name }}</ion-card-title>
         <ion-card-subtitle>{{ data.portion }}</ion-card-subtitle>
-        <h2 style="font-weight: bold; font-size: 24px;">$ {{ data.price || '0.00' }}</h2>
+        <h2 style="font-weight: bold; font-size: 24px;"><ComCurrency :value="data.total_amount"/></h2>
       </ion-card-content>
 
       <ion-card-content
@@ -35,7 +36,6 @@
 <script setup >
 import { trashOutline,removeOutline,addOutline } from 'ionicons/icons';
 import {useSale} from "@/hooks/useSale.js"
-  import { IonRippleEffect } from '@ionic/vue';
 
 const {onRemoveProduct} = useSale()
 
@@ -46,6 +46,8 @@ const props  =defineProps({
 
 function updateQuantity (n){
   props.data.quantity = Math.max(1, props.data.quantity + n);
+  props.data.sub_total = (props.data.quantity * props.data.price) + (props.data.quantity * props.data.modifier_price)
+  props.data.total_amount = props.data.sub_total ;
 }
 
 </script>

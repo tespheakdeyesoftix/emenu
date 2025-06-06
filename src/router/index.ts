@@ -71,6 +71,7 @@ router.beforeEach(
      const urlParams = new URLSearchParams(window.location.search);
       let qrcode = urlParams.get('qrcode') || "";
 
+      alert(to.path)
     if (!canShowApp.value === true && to.path !='/invalid-qr') {
      next("/invalid-qr")
     }
@@ -84,6 +85,10 @@ router.beforeEach(
       next("/")
     } else if (to.path=="/" && qrcode){
       next("/menu")
+    }
+    else if (to.path=="/" && !qrcode){
+      alert(55)
+      next("/invalid-qr")
     }
     else {
       next()

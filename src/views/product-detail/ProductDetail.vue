@@ -15,10 +15,7 @@
                 <ion-card style="margin: 0;margin-top: 10px;">
     <ion-card-header>
       <ion-card-title> {{ data.product_code }} - {{ data.product_name_en }}  </ion-card-title>
-      <ion-card-subtitle v-if="data.price">
-
-        <ComCurrency :value="data.price" />
-      </ion-card-subtitle>
+      <ion-card-subtitle v-if="data.price">{{data.price}}</ion-card-subtitle>
     </ion-card-header>
 
     <ion-card-content>
@@ -35,7 +32,7 @@
                                 {{ p.portion  }} 
                             </ion-label>
                             <ion-label slot="end" color="danger">
-                              <ComCurrency :value="p.price" /></ion-label>
+                              {{ p.price }}</ion-label>
                         </ion-item>
                     </ion-list>
                 </div>
@@ -129,7 +126,6 @@ const data =ref()
 import { checkmarkCircleOutline , removeOutline , addOutline , basketOutline , arrowBackOutline } from 'ionicons/icons';
 import ComOrderCart from "../components/ComOrderCart.vue";
 import { useRouter } from 'vue-router'
-import ComCurrency from "@/components/public/ComCurrency.vue";
  const router = useRouter()
 function goBack() {
   router.back()
