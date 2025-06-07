@@ -1,4 +1,8 @@
 <template>   
+<!-- {{ modifiers }}+ -->
+<!-- <div v-for="(p,index) in modifiers" :key="index">
+  {{ p.items }}
+</div> -->
   <div class="card-wrapper">   
 <ion-chip v-if="priceRange && priceRange.min > 0" class="card-chip">
   <ion-label>
@@ -41,11 +45,12 @@ const priceRange = computed(() => {
   } catch (err) {
     return null;
   }
-});
+}); 
 
-// const prices = JSON.parse(data.value.prices)
-// console.log(prices);
+const modifiers = JSON.parse(props.data.modifiers || '[]')
+const modifier_price = modifiers.map(m => m.category)
 
+// console.log("modifier_price",modifier_price)
 
 </script>
 

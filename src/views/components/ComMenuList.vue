@@ -1,4 +1,4 @@
-<template>  
+<template>   
     <div :id="menu.menu">
         <ion-text>
         <h1>{{ menu.menu }}</h1>
