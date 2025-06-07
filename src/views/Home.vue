@@ -36,7 +36,8 @@ const t = app.t;
 onMounted(async ()=>{
   const l = await app.showLoading();
   await getMenu();
-  await getProducts();
+  await getProducts()
+;
   await l.dismiss()
 
 })
