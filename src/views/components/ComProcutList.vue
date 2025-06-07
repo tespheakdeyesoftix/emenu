@@ -1,4 +1,5 @@
 <template>
+    <!-- {{ data }} -->
     <ion-grid>
         <ion-row>
             <ion-col size="6" size-lg="3"  v-for="(p,index) in data" :key="index">
