@@ -1,6 +1,5 @@
 <template>
     <ion-page>
-      <!-- {{ data }} -->
         <ToolBar>
             {{ t("Product Detail") }}
             <template #end>
@@ -33,8 +32,7 @@
                                 {{ p.portion  }} 
                             </ion-label>
                             <ion-label slot="end" color="danger">
-                              <ComCurrency :value="p.price" />
-                            </ion-label>
+                              {{ p.price }}</ion-label>
                         </ion-item>
                     </ion-list>
                 </div>
@@ -53,7 +51,7 @@
                                <ion-item @click="onModifierClick(c,m)" button lines="full" v-for="(m,mindex) in c.items" :key="'m'+mindex">
                                 <ion-icon slot="start" :color="m.selected?'success':''" :icon="checkmarkCircleOutline" class="ion-no-margin" style="margin-right:10px ;"></ion-icon>
                                     <ion-label>{{ m.modifier }}</ion-label>
-                                    <ion-label v-if="m.price>0" color="danger" slot="end"><ComCurrency :value="m.price" /></ion-label>
+                                    <ion-label v-if="m.price>0" color="danger" slot="end">{{ m.price }}</ion-label>
                                </ion-item>
                         </template>
                     </ion-list>
@@ -121,15 +119,13 @@
 <script setup>
 import {ref,onMounted, computed} from "vue"
 import {useSale} from "@/hooks/useSale.js"
-import { checkmarkCircleOutline , removeOutline , addOutline , basketOutline , arrowBackOutline } from 'ionicons/icons';
-import ComOrderCart from "../components/ComOrderCart.vue";
-import { useRouter } from 'vue-router';
-import ComCurrency from "@/components/public/ComCurrency.vue";
-
 const {orderDoc,addOrderProduct} = useSale()
 
 const t = app.t;
 const data =ref()
+import { checkmarkCircleOutline , removeOutline , addOutline , basketOutline , arrowBackOutline } from 'ionicons/icons';
+import ComOrderCart from "../components/ComOrderCart.vue";
+import { useRouter } from 'vue-router'
  const router = useRouter()
 function goBack() {
   router.back()
