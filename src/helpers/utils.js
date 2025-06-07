@@ -481,7 +481,7 @@ export async function getOrderRange(){
 }
 
 
-export function formatCurrency(value, format) {
+export function formatCurrency(value, format="$#,##0.00") {
   const hasDollar = format.includes('$');
   const hasRiel = format.includes('៛');
 
