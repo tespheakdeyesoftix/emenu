@@ -15,7 +15,16 @@
                 <ion-card style="margin: 0;margin-top: 10px;">
     <ion-card-header>
       <ion-card-title> {{ data.product_code }} - {{ data.product_name_en }}  </ion-card-title>
-      <ion-card-subtitle v-if="data.price">{{data.price}}</ion-card-subtitle>
+      <ion-card-subtitle  v-if="data.price">
+        <ion-chip color="danger" v-if="priceRange && priceRange.min > 0" class="card-chip">
+  <ion-label>
+    <ComCurrency :value="priceRange.min" />
+    <span v-if="priceRange.min !== priceRange.max"> → </span>
+    <ComCurrency v-if="priceRange.min !== priceRange.max" :value="priceRange.max" />
+  </ion-label>
+</ion-chip>
+      
+      </ion-card-subtitle>
     </ion-card-header>
 
     <ion-card-content>
@@ -32,7 +41,7 @@
                                 {{ p.portion  }} 
                             </ion-label>
                             <ion-label slot="end" color="danger">
-                              {{ p.price }}</ion-label>
+                              <ComCurrency :value="p.price" /></ion-label>
                         </ion-item>
                     </ion-list>
                 </div>
@@ -51,7 +60,8 @@
                                <ion-item @click="onModifierClick(c,m)" button lines="full" v-for="(m,mindex) in c.items" :key="'m'+mindex">
                                 <ion-icon slot="start" :color="m.selected?'success':''" :icon="checkmarkCircleOutline" class="ion-no-margin" style="margin-right:10px ;"></ion-icon>
                                     <ion-label>{{ m.modifier }}</ion-label>
-                                    <ion-label v-if="m.price>0" color="danger" slot="end">{{ m.price }}</ion-label>
+                                    <ion-label v-if="m.price>0" color="danger" slot="end">
+                                      <ComCurrency :value="m.price" /></ion-label>
                                </ion-item>
                         </template>
                     </ion-list>
@@ -126,7 +136,25 @@ const data =ref()
 import { checkmarkCircleOutline , removeOutline , addOutline , basketOutline , arrowBackOutline } from 'ionicons/icons';
 import ComOrderCart from "../components/ComOrderCart.vue";
 import { useRouter } from 'vue-router'
+import ComCurrency from "@/components/public/ComCurrency.vue";
  const router = useRouter()
+ const priceRange = computed(() => {
+  try {
+    const prices = JSON.parse(data.value.prices || '[]');
+    const validPrices = prices
+      .map(p => p.price)
+      .filter(price => typeof price === 'number' && price > 0);
+
+    if (validPrices.length === 0) return null;
+
+    const min = Math.min(...validPrices);
+    const max = Math.max(...validPrices);
+
+    return { min, max };
+  } catch (err) {
+    return null;
+  }
+});
 function goBack() {
   router.back()
 }
