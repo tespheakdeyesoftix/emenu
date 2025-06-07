@@ -1,6 +1,6 @@
 <template> 
   <div class="card-wrapper"> 
-    <ion-chip class="card-chip">
+    <ion-chip class="card-chip" v-if="data.price > 0">
       <ion-label>
       <ComCurrency :value="data.price"/>
       </ion-label>
