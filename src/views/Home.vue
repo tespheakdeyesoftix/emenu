@@ -10,14 +10,12 @@
            </div>
            
         </div>
-       
-           
+        
       </AppBar>
 
         <ion-content class="ion-padding" >
           
 <div v-html="emenu?.welcome_description "></div>  
-
      <ComPromotionSlide :emenu="emenu" />
      <ComFilterMenuList :menu="emenu?.pos_menu_selections" />
      <ComMenuList v-for="m in emenu?.pos_menu_selections" :key="m.name" :menu="m" />

@@ -304,5 +304,10 @@
     "sale_order_not_found": "លេខបុង {keyword} មិនមាននៅក្នុងប្រព័ន្ធទេ",
     "Delete Sale Product": "លុបទំនិញចេញពីបុង",
     "Change Customer": "ផ្លាស់ប្តូរអតិថិជន",
-    "Close": "បិទ"
+    "Close": "បិទ",
+    "Back To Order": "ត្រឡប់ទៅការកម្ម៉ុង",
+    "Search Product": "ស្វែងរកទំនិញ",
+    "Product Detail": "ព័ត៌មានលម្អិតអំពីទំនិញ",
+    "Add to Order": "បញ្ចូនការកម៉្មុង",
+    "Your Order": "ការកម៉្មុងរបស់អ្នក"
   } 
