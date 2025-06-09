@@ -3,7 +3,7 @@
 
     <div>
         <div>
-            <ion-searchbar placeholder="Search Product"></ion-searchbar>
+            <ion-searchbar :placeholder="t('Search Product')"></ion-searchbar>
         </div>
           <div>
               <ion-item lines="none"  >
@@ -30,6 +30,8 @@ const props = defineProps({
 })
 import {ref,onMounted } from "vue"
 import { IonSearchbar } from '@ionic/vue';
+
+const t =app.t;
 
 const selectedIndex = ref(0)
 
