@@ -9,7 +9,7 @@
        <ComOrderProductCard :data="p" :index="index"/>
     </div>
     <div v-else style="display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100%; text-align: center; padding: 20px;">
-        <img src="../../assets/images/cart.svg" alt="No Orders"style="max-width: 200px; height: auto; margin-bottom: 20px;"/>
+        <img src="emenu/public/cart.svg" alt="No Orders"style="max-width: 200px; height: auto; margin-bottom: 20px;"/>
 
         <ion-text style="margin-bottom: 20px; font-size: 16px; color: #444;">
             {{ t("You don't have any orders yet. Please click the 'Order Now' button to place your food order.") }}

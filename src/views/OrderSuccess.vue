@@ -5,7 +5,7 @@
         </AppBar>
         <ion-content color="success">
            <div style="width:100%;">
-            <img style="border-bottom-right-radius:80px;border-bottom-left-radius:80px;" src="..\assets\images\ordersuccess.gif" />
+            <img style="border-bottom-right-radius:80px;border-bottom-left-radius:80px;" src="emenu/public/ordersuccess.gif" />
            </div>
             <div style="text-align: center;width:100%;border-bottom: 2px solid;color: white;">
                 <h2>

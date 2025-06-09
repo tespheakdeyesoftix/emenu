@@ -3,7 +3,7 @@
         <ion-content class=" ion-text-center" >
             <div class="center-content">
                 <div>
-    <img style="width: 300px;" src="../assets/images/expired.png" />
+    <img style="width: 300px;" src="emenu/public/expired.png" />
     <h2 class="ion-margin-top">QR Session is expired.</h2>
     <p>Please scan the QR code again.</p>
 

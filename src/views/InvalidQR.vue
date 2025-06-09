@@ -3,7 +3,7 @@
         <ion-content class=" ion-text-center" >
             <div class="center-content">
                 <div>
-    <img style="width: 300px;" src="../assets/images/invalidqr.png" />
+    <img style="width: 300px;" src="emenu/public/invalidqr.png" />
     <h2 class="ion-margin-top">Invalid QR Code</h2>
     <p>Please scan the QR code again.</p>
 
