@@ -1,10 +1,12 @@
-<template> 
-  <div class="card-wrapper"> 
-    <ion-chip class="card-chip">
-      <ion-label>
-      <ComCurrency :value="data.price"/>
-      </ion-label>
-    </ion-chip> 
+<template>   
+  <div class="card-wrapper">   
+<ion-chip v-if="priceRange && priceRange.min > 0" class="card-chip">
+  <ion-label>
+    <ComCurrency :value="priceRange.min" />
+    <span v-if="priceRange.min !== priceRange.max"> → </span>
+    <ComCurrency v-if="priceRange.min !== priceRange.max" :value="priceRange.max" />
+  </ion-label>
+</ion-chip>
     <ion-card class="product-card" button :routerLink="'/menu/' + data?.name"> 
      
       <Img :src="data?.photo" class="product-image" /> 
@@ -18,10 +20,34 @@
 </template>
 
 <script setup>
-import ComCurrency from '@/components/public/ComCurrency.vue';
+import ComCurrency from '@/components/public/ComCurrency.vue'; 
+import { computed } from 'vue';
 const props = defineProps({
   data: Object
 })
+ 
+const priceRange = computed(() => {
+  try {
+    const prices = JSON.parse(props.data.prices || '[]');
+    const validPrices = prices
+      .map(p => p.price)
+      .filter(price => typeof price === 'number' && price > 0);
+
+    if (validPrices.length === 0) return null;
+
+    const min = Math.min(...validPrices);
+    const max = Math.max(...validPrices);
+
+    return { min, max };
+  } catch (err) {
+    return null;
+  }
+});
+
+// const prices = JSON.parse(data.value.prices)
+// console.log(prices);
+
+
 </script>
 
 <style scoped>

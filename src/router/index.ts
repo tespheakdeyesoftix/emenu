@@ -69,7 +69,6 @@ router.beforeEach(
     }
     
 
-    
     if (!canShowApp.value === true && to.path !='/invalid-qr') {
      next("/invalid-qr")
     }
@@ -85,7 +84,6 @@ router.beforeEach(
       next("/menu")
     }
     else if (to.path=="/" && !isInvalidQR){
-      alert(55)
       next("/invalid-qr")
     }
     else {

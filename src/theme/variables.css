@@ -4,17 +4,33 @@ http://ionicframework.com/docs/theming/ */
     width: 100%;
     max-height: 200px;
     object-fit:cover;
-    border: 2px solid rgb(110, 130, 133);
+    border: 2px solid var(--ion-color-light);
     border-radius: 15px;
 }
-
+.bg-white {
+  background-color: var(--ion-color-primary-contrast);
+}
+.active-filter {
+  background-color: var(--ion-color-danger) !important;  
+  color: var(--ion-color-primary-contrast) !important;
+ 
+}
 .success-alert .alert-wrapper {
 	background: var(--ion-color-success);
-    color: var(--ion-color-danger-contrast);
+    color: var(--ion-color-primary-contrast);
+}
+.alert-wrapper {
+  border-radius: 10px !important;
+}
+.success-alert .alert-wrapper .alert-title.sc-ion-alert-md{
+  color: var(--ion-color-primary-contrast);
+}
+.alert-button-role-confirm{
+  border-radius: 10px !important;
 }
 .warning-alert .alert-wrapper {
 	background: var(--ion-color-warning);
-    
+ 
 }
 button.alert-button.alert-button-confirm-success {
 	background-color: var(--ion-color-primary);

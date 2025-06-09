@@ -15,7 +15,7 @@
             {{ t("You don't have any orders yet. Please click the 'Order Now' button to place your food order.") }}
         </ion-text>
         
-        <ion-button fill="outline" color="danger" @click="onOrderNow">
+        <ion-button fill="outline" color="tertiary" @click="onOrderNow">
             {{ t('Order Now') }}
         </ion-button>
     </div>

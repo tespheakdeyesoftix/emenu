@@ -58,6 +58,7 @@ function addOrderProduct(data) {
       photo: data.photo
 
    }
+   console.log("sss",sp) 
    // check exists with product_code, portion, and modifier
    const exist_order_product = orderDoc.value.order_products.find(r=>r.product_code == sp.product_code && r.portion == sp.portion && r.modifiers == sp.modifiers );
    if(exist_order_product){
