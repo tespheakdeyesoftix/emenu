@@ -164,6 +164,7 @@ async function onSubmitOrder() {
       // ❌ Handle error or denial
        
       switch (error.code) {
+        
         case error.PERMISSION_DENIED:
           app.showWarningMessage(app.t("You need to allow location access to continue."));
           break;

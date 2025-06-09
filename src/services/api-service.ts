@@ -22,7 +22,7 @@ export function setToken(t:string){
 
 function getToken(){
       
-    return "b84df842943ec01:bfcdfd689b06b2d";
+    return token;//"8f658f62283c734:15332c681cf9767";
    
 }
 
@@ -66,7 +66,7 @@ export function getCount(DocType: string, param: any = null) {
 
 
 export function getApi(api_url: string, param: any = null,) {
-    alert("get api")
+    
     console.log(frappe)
     if (!frappe) {
         return { data: null, error: "Frappe is not defined" };
