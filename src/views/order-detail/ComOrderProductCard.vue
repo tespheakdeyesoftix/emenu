@@ -9,8 +9,8 @@
     <Img :src="data.photo" width="100" height="100" style="object-fit: cover; border-radius: 20px;" />
 
     <ion-card-content
-      style="flex: 1; min-width: 0;"
-      class="ion-no-padding ion-margin-start"
+      style="flex: 1; min-width: 0; margin-left: 8px;"
+      class="ion-no-padding "
     >
       <ion-card-title class="Cardtitle">
         {{ data.product_name }}
