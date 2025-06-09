@@ -10,8 +10,7 @@
            </div>
            
         </div>
-       
-           
+        
       </AppBar>
 
         <ion-content class="ion-padding" >
