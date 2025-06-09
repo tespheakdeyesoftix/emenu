@@ -13,12 +13,16 @@ const emenu = ref()
 const setting = ref()
 
 async function getMenu(){
-  
-  const res = await app.getDoc("eMenu",app.emenu)
+  if(app.setting.emenu){
+    emenu.value = app.setting.emenu;  
+  }else {
+const res = await app.getDoc("eMenu",app.emenu)
   
   if(res){
     emenu.value = res.data
   }
+  }
+  
 
 }
 

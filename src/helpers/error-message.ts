@@ -1,6 +1,11 @@
 
 import {  toastController } from '@ionic/vue';
 import {stripHtmlTags} from "@/helpers/utils"
+
+import i18n from '../../i18n'; 
+ 
+const t =   i18n.global.t;
+
 export async function handleErrorMessage(error_data:any){
    
     // const toast = await toastController.create({
@@ -72,7 +77,7 @@ export async function handleErrorMessage(error_data:any){
 export async  function showWarningMessage(message:string){
     let msg = message;
     if(msg){
-        msg = app.t(stripHtmlTags(msg))
+        msg = t(stripHtmlTags(msg))
     }
     const toast = await toastController.create({
         message: msg,

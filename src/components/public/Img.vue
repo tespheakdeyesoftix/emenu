@@ -1,5 +1,4 @@
 <template>
-
  
   <img :src="imgData" :width="width == 0 ? undefined : width" :height="height == 0 ? undefined : height" @error="onImageError"  />
 
@@ -42,19 +41,23 @@ const getImage = async () => {
   }
 
   if (!props.src) {
+    
+    
     imgData.value = "resources/placeholder.jpg"
     return;
   }
 
+   
 
+ 
 
   // check if image start with http or https
   if (isPlatform("mobileweb") || isPlatform("desktop")) {
 
 
-
-    imgData.value = imageUrl(props.src);
-
+ 
+    imgData.value =imageUrl(props.src);
+ 
     return;
   } else if (
     (isPlatform("android") && isPlatform("mobile")) ||
@@ -79,6 +82,9 @@ const getImage = async () => {
     }
   }
 
+
+
+  
 
   imgData.value = "/assets/placeholder.jpg"
 };

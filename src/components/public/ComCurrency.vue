@@ -25,9 +25,7 @@ async function formatNumber(){
         if (!app.setting.default_currency){
                 app.setting.default_currency= (await app.getSingleValue("ePOS Settings","currency")).data;
         }
-
         app.setting.currency_format = (await app.getValue("Currency",app.setting.default_currency,"custom_pos_currency_format")).data.custom_pos_currency_format;
-        
         
     }
     

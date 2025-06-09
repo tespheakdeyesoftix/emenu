@@ -54,6 +54,6 @@ function onOrderNow(){
   app.ionRouter.navigate('/', 'forward', 'replace');
 }
 
-
+ 
 
 </script>

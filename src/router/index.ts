@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory, NavigationGuardNext, RouteLocationNormalized } from '@ionic/vue-router'
 import {useApp} from "@/hooks/useApp.js"
 
-const {canShowApp,isSessionExpired,isAppLoadReady} = useApp();
+const {canShowApp,isSessionExpired,isAppLoadReady,isInvalidQR} = useApp();
 import { RouteRecordRaw } from 'vue-router';
  
 const routes: Array<RouteRecordRaw> = [
@@ -68,10 +68,8 @@ router.beforeEach(
       await waitForSetup()
     }
     
-     const urlParams = new URLSearchParams(window.location.search);
-      let qrcode = urlParams.get('qrcode') || "";
 
-      alert(to.path)
+    
     if (!canShowApp.value === true && to.path !='/invalid-qr') {
      next("/invalid-qr")
     }
@@ -83,10 +81,10 @@ router.beforeEach(
     }
     else if (!isSessionExpired.value  && to.path ==='/session-expired') {
       next("/")
-    } else if (to.path=="/" && qrcode){
+    } else if (to.path=="/" && isInvalidQR){
       next("/menu")
     }
-    else if (to.path=="/" && !qrcode){
+    else if (to.path=="/" && !isInvalidQR){
       alert(55)
       next("/invalid-qr")
     }

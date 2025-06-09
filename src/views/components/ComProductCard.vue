@@ -6,6 +6,7 @@
       </ion-label>
     </ion-chip> 
     <ion-card class="product-card" button :routerLink="'/menu/' + data?.name"> 
+     
       <Img :src="data?.photo" class="product-image" /> 
       <ion-card-header class="product-card-header">
         <ion-card-subtitle class="product-title">

@@ -15,6 +15,7 @@ import { useApp } from '@/hooks/useApp';
 
 
 export function imageUrl(imageUrl, baseUrl = "") {
+ 
     if (imageUrl?.startsWith("https://") || imageUrl?.startsWith("http://")) {
         return imageUrl;
     }
@@ -122,7 +123,7 @@ export function getTimespanRange(timespan) {
 }
 
 export async function showWarning(message) {
-    
+
     const toast = await toastController.create({
         message: message,
         duration: 5000,
@@ -475,8 +476,13 @@ export function isWithinRange(currentPosition, predefinePosition, rangeInMeters)
 }
 
 export async function getOrderRange(){
-    if((app.setting.online_order_range || 0) > 0) return app.setting.online_order_range;
-    return (await app.getValue("eMenu",app.emenu, "online_order_range")).data.online_order_range
+    if((app.setting.emenu.online_order_range || 0) > 0) return app.setting.emenu.online_order_range;
+    
+    const res =  await app.getValue("eMenu",app.emenu, "online_order_range");
+    if(res.data){
+      app.setting.emenu.online_order_range = res.data.online_order_range
+      return res.data.online_order_range
+    }
      
 }
 

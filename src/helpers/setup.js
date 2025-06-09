@@ -29,6 +29,8 @@ export async function setup() {
         canShowApp.value = (checkConfigField(config, "api_url") && checkConfigField(config, "table_no") && checkConfigField(config, "pos_profile") && checkConfigField(config, "token"));
 
         if (canShowApp.value) {
+
+            alert(config.token)
             setToken(config.token)
             setFrappeAppUrl(config.api_url)
 
@@ -37,23 +39,24 @@ export async function setup() {
             app.api_url = config.api_url
             app.token = config.token;
             app.table_id = config.table_no;
+            
+            const setting = (await app.getApi("epos_restaurant_2023.api.emenu.get_settings",{emenu:config.emenu,pos_profile:config.pos_profile})).data
+             
+           app.setting = {...app.setting,...setting}
 
             // check aging to show qr session expire
             if (!isScanQRCode) {
-                const res = await app.getValue("eMenu", config.emenu, "qr_code_expire_duration")
-                if (res.data) {
-                    const duration = res.data.qr_code_expire_duration;
+                    const duration = setting.emenu.qr_code_expire_duration;
                     const start_time = await storageService.getItem("start_time")
                     const end_time = dayjs();
                     const diff = end_time.diff(dayjs(start_time), 'hour', true);
                     isSessionExpired.value = diff > duration;
 
-                }
+               
             }
         }
 
-        // set session id  for  client device
-       
+      
 
         isAppLoadReady.value = true;
         isInvalidQR.value = true;
@@ -63,6 +66,8 @@ export async function setup() {
         }
     }
     finally{
+  // set session id  for  client device
+       
          app.session_id = await storageService.getItem("session_id") || app.utils.uuid();
          isAppLoadReady.value = true;
     }

@@ -132,12 +132,11 @@ async function onSubmitOrder() {
    navigator.geolocation.getCurrentPosition(
       async (position) => {
         
-         const orderRange =await app.utils.getOrderRange()
-          
+       
          if(!app.utils.isWithinRange(
             {lat:position.coords.latitude,long:position.coords.longitude },
-            app.predefinePosition,
-            orderRange
+            app.setting.predefineLocation,
+            app.setting.emenu.online_order_range
          ))
          {
             app.showWarningMessage("Your location","You cannot submit your order. Your location is too far from the shop location.")
@@ -152,9 +151,10 @@ async function onSubmitOrder() {
           
             printToKitchen(res.data.name)
             await app.storageService.removeItem("order");
-              initOrder();
+            
             await l.dismiss();
             app.ionRouter.navigate('/order-success', 'forward', 'replace');
+              initOrder();
          }
 
          await l.dismiss();

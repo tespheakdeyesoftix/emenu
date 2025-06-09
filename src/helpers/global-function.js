@@ -24,7 +24,6 @@ globalThis.app.apiUrl ="";
 globalThis.app.token ="";
 globalThis.app.emenu ="";
 globalThis.app.business_branch ="";
-globalThis.app.predefineLocation =null;
 globalThis.app.pos_profile ="";
 globalThis.app.table_id ="";
 globalThis.app.session_id = "";
@@ -66,22 +65,7 @@ globalThis.app.openModal =  async function (props) {
   return await utils.openModal(props)
 }
 
-globalThis.app.onSelectDate =  async function(props=null){
- 
-  return await utils.selectDate(props)
-}
-
-globalThis.app.selectCustomer =  async function(){
-  return await utils.selectCustomer( { title: "Select Customer", filters: [["is_customer", "=", 1], ["enabled", "=", 1]], validate_message: "Please select customer" })
-}
-globalThis.app.selectDriver =  async function(){
-  return await utils.selectCustomer( { title: "Select Driver", filters: [["is_driver", "=", 1], ["enabled", "=", 1]], validate_message: "Please select driver" })
-}
-
-globalThis.app.onInputNumber =  async function(title = "Enter Number", required = true){
-  return await utils.onInputNumber(title, required)
-}
-
+   
 
 
 globalThis.app.getTimespanRange =  function(timespan){
@@ -214,10 +198,7 @@ globalThis.app.showConfirm = async function (message = 'Loading...') {
         
 }
 
-
-globalThis.app.openKeyboard  =  async function(title = "Enter your text", default_value,storage_key="") {
-  return  await  utils.openKeyboard(title,default_value,storage_key)
-}
+ 
  
 globalThis.app.station_name  =  async function() {
   return await storageService.getItem("station_name")
@@ -296,15 +277,7 @@ globalThis.app.printReport = async function(param){
 }
 
  
-
  
-//  sale action
-globalThis.app.onEditBill = async function(data){
-  return await sale.onEditBill(data);
-}
-globalThis.app.onSplitBill = async function(data){
-  return await sale.onSplitBill(data);
-}
 globalThis.app.sale = sale;
 
 
