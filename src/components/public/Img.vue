@@ -24,10 +24,10 @@ const props = defineProps({
 })
 
 function onImageError(){
-  imgData.value = "resources/placeholder.jpg"
+  imgData.value = "emenu/public/placeholder.jpg"
 }
 
-const imgData = ref("resources/placeholder.jpg");
+const imgData = ref("emenu/public/placeholder.jpg");
 
 let serverUrl = app.apiUrl;
 
@@ -43,7 +43,7 @@ const getImage = async () => {
   if (!props.src) {
     
     
-    imgData.value = "resources/placeholder.jpg"
+    imgData.value = "emenu/public/placeholder.jpg"
     return;
   }
 
