@@ -30,7 +30,7 @@ export async function setup() {
 
         if (canShowApp.value) {
 
-            alert(config.token)
+          
             setToken(config.token)
             setFrappeAppUrl(config.api_url)
 
@@ -67,7 +67,6 @@ export async function setup() {
     }
     finally{
   // set session id  for  client device
-       
          app.session_id = await storageService.getItem("session_id") || app.utils.uuid();
          isAppLoadReady.value = true;
     }
