@@ -20,6 +20,8 @@
     "Help":"ជំនួយ",
     "My Profile":"ព័ត៌មានរបស់អ្នក",
     "Logout":"ចាក់ចេញ",
+    "Location":"ទីតាំងរបស់អ្មក",
+    "You are not allow app to use your current location. Please shop assistant to assist your problem.":"អ្នកមិនបានអនុញ្ញាតអោយ App នេះទាញយកទីតាំងរបស់អ្នក។ សូមទាក់ទងទៅកាន់បុក្គលិកហាងដើម្បីដោះស្រាយបញ្ហារនេះ។",
     "Occupy":"បន្ទប់មានភ្ងៀវ",
     "Please select modifer for ":"សូមជ្រើសរើស Modifer នៅក្នុងផ្នែក ",
     "Submit Order":"បញ្ជូនការកុម្មង",
@@ -305,9 +307,22 @@
     "Delete Sale Product": "លុបទំនិញចេញពីបុង",
     "Change Customer": "ផ្លាស់ប្តូរអតិថិជន",
     "Close": "បិទ",
-    "Back To Order": "ត្រឡប់ទៅការកម្ម៉ុង",
+    "Back To Order": "ត្រឡប់ទៅការកម្ម៉ុង់",
     "Search Product": "ស្វែងរកទំនិញ",
     "Product Detail": "ព័ត៌មានលម្អិតអំពីទំនិញ",
-    "Add to Order": "បញ្ចូនការកម៉្មុង",
-    "Your Order": "ការកម៉្មុងរបស់អ្នក"
+    "Add to Order": "បញ្ចូនការកម៉្មុង់",
+    "Your Order": "ការកម៉្មុង់របស់អ្នក",
+    "Order Now":"កម៉្មុង់ឥឡូវនេះ",
+    "You don't have any orders yet. Please click the 'Order Now' button to place your food order.":"អ្នកមិនទាន់មានការបញ្ជាទិញនៅឡើយទេ។ សូមចុចប៊ូតុង 'កម៉្មុង់ឥឡូវនេះ' ដើម្បីដាក់ការបញ្ជាទិញអាហាររបស់អ្នក។",
+    "Portion":"ទំហំ",
+    "Invalid QR Code":"QR កូដមិនត្រឹមត្រូវ",
+    "Please scan the QR code again.":"សូមស្កេន QR កូដម្តងទៀត។",
+    "Scan Again":"ស្កេនម្តងទៀត",
+    "404 not found":"មិនមាននៅក្នុងប្រព័ន្ធ",
+    "Order successfully":"ការកម៉្មុង់បានជោគជ័យ",
+    "Your order has been submitted sucessfully.":"ការកម៉្មុង់របស់អ្នកត្រូវបានដាក់ជូនជោគជ័យ។",
+    "Continue Order":"បន្តការកម៉្មុង់",
+    "QR Session is expired.":"QR ផុតកំណត់។"
+
+
   } 

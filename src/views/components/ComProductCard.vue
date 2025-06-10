@@ -47,6 +47,7 @@ const priceRange = computed(() => {
 // const prices = JSON.parse(data.value.prices)
  
 
+
 </script>
 
 <style scoped>

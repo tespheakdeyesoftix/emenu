@@ -8,15 +8,12 @@
       <ion-list>
         <ion-item lines="none">
           <ion-icon :icon="languageOutline" slot="start"></ion-icon>
-          {{ currentLang }}
-          <ion-select @ionChange="onLangChange" :value="currentLang" v-model="currentLang">
+          <ion-select @ionChange="onChange" v-model="currentLang"  
+          placeholder="Select a Language">
             <ion-select-option value="en">English</ion-select-option>
             <ion-select-option value="km">ខ្មែរ</ion-select-option>
           </ion-select>
         </ion-item>
-
-     
-
         <ion-item button detail="false">Option 2</ion-item>
       </ion-list>
     </ion-content>
@@ -25,21 +22,28 @@
 
 <script setup>
 import { ref, watch, onMounted } from 'vue'
+import {
+  IonPage,
+  IonHeader,
+  IonToolbar,
+  IonTitle,
+  IonContent,
+  IonItem,
+  IonLabel,
+  IonSelect,
+  IonSelectOption,
+} from '@ionic/vue';
  import { logoIonic, languageOutline, settingsOutline } from 'ionicons/icons';
 const currentLang = ref('en')
-function onLangChange(event) {
- alert(34)
-}
 const t = app.t;
 // Load saved lang from localStorage
 onMounted(() => {
-  const saved = localStorage.getItem('lang')
-  if (saved) currentLang.value = saved
+  if (localStorage.getItem('lang')) {
+    currentLang.value = localStorage.getItem('lang')
+  }
 })
 
-// Watch and store changes
 watch(currentLang, (newLang) => {
-    alert(34)
   localStorage.setItem('lang', newLang)
 })
 </script>
