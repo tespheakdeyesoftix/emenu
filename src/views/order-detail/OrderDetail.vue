@@ -1,7 +1,7 @@
 <template>
   <ion-page>
     <ToolBar>
-      {{ t("Your Order") }}
+      {{ t("Your Order") }} - {{ table?.tbl_number }}
     </ToolBar>
     <ion-content>
     <div v-if="orderDoc.order_products.length>0" v-for="(p, index) in orderDoc.order_products" :key="index">
@@ -48,11 +48,15 @@
 import {useSale} from "@/hooks/useSale.js"
 const t = app.t;
 const {orderDoc,onSubmitOrder} = useSale()
-
+import {ref,onMounted } from "vue"
+const table = ref()
 function onOrderNow(){
   app.ionRouter.navigate('/', 'forward', 'replace');
 }
 
- 
+ onMounted(async ()=>{
+  table.value =  ( await app.getValue("Tables Number",app.table_id, "tbl_number") ).data;
+
+})
 
 </script>
