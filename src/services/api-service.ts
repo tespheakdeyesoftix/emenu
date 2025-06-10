@@ -66,8 +66,7 @@ export function getCount(DocType: string, param: any = null) {
 
 
 export function getApi(api_url: string, param: any = null,) {
-    
-    console.log(frappe)
+ 
     if (!frappe) {
         return { data: null, error: "Frappe is not defined" };
     }
@@ -207,8 +206,7 @@ export async function uploadFile(
         )
         .then(async (result:any) =>{
             await loading.dismiss()
-            // Log to See Structure
-            console.log(result.data.message.file_url);
+            // Log to See Structure 
             app.showSuccess(app.t("Upload file successfully"));
             return { data: result.data.message.file_url, error: null };
         })
