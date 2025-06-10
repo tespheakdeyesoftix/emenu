@@ -27,7 +27,6 @@
         <ComCurrency :value="data.total_amount" />
       </h2>
     </ion-card-content>
-
     <ion-card-content
       class="ion-no-padding"
       style="flex: 0.2; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; height: 100px;"
@@ -54,13 +53,11 @@
       </div>
     </ion-card-content>
   </div>
-
   <ion-card-content class="ion-padding-top ion-no-padding" v-if="data.note">
     <small style="color: #888;">📝Note : {{ data.note }}</small>
   </ion-card-content>
 </ion-card>
 
-  
 </template>
 
 <script setup >

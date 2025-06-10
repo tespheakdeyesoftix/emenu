@@ -72,17 +72,13 @@
   </ion-card>
             </template>
             <div style="margin-top: 10px;">
-        <!-- <ion-textarea
-  label="Note"
-  label-placement="stacked"
-  fill="outline"
-  placeholder="Enter text"
-  style="min-height: 120px;"
-></ion-textarea> -->
-
-
-
-
+            <ion-textarea
+      label="Note"
+      label-placement="stacked"
+      fill="outline"
+      placeholder="Enter text"
+      style="min-height: 120px;"
+    ></ion-textarea>
             </div>
             
             <div style="margin-top: 10px;display: flex;justify-content: space-between;">
