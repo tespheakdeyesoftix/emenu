@@ -15,7 +15,7 @@
       
       </AppBar>
   <div style="display: flex; justify-content:space-between;padding: 10px;">
-          Table : {{ table.data.tbl_number }}
+          Table : {{ table?.tbl_number }}
   </div>
         <ion-content class="ion-padding" >
           
@@ -38,7 +38,7 @@ const {saleDoc,orderDoc} = useSale()
 const t = app.t;
 const table = ref()
 onMounted(async ()=>{
-  table.value =  await app.getValue("Tables Number",app.table_id, "tbl_number");
+  table.value =  ( await app.getValue("Tables Number",app.table_id, "tbl_number") ).data;
   const l = await app.showLoading();
   await getMenu();
   await getProducts()
