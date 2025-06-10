@@ -28,7 +28,7 @@ import { ref, watch, onMounted } from 'vue'
  import { logoIonic, languageOutline, settingsOutline } from 'ionicons/icons';
 const currentLang = ref('en')
 function onLangChange(event) {
- alert(34)
+ 
 }
 const t = app.t;
 // Load saved lang from localStorage
@@ -39,7 +39,7 @@ onMounted(() => {
 
 // Watch and store changes
 watch(currentLang, (newLang) => {
-    alert(34)
+  
   localStorage.setItem('lang', newLang)
 })
 </script>

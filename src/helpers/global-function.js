@@ -20,6 +20,7 @@ globalThis.app = globalThis.app || {};
 
 
 
+globalThis.app.setting ={};
 globalThis.app.apiUrl ="";
 globalThis.app.token ="";
 globalThis.app.emenu ="";

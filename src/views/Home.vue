@@ -1,6 +1,7 @@
 <template>
     <ion-page>
       <AppBar>
+        
         <div style="display: flex; align-items: center; gap:10px;">
            <Img v-if="emenu?.logo" style="width:40px;" :src="emenu?.logo" />
            <div>
@@ -39,6 +40,7 @@ onMounted(async ()=>{
   await l.dismiss()
 
 })
+
 
 </script>
 
