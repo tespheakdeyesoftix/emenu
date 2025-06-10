@@ -4,7 +4,7 @@
             <div class="center-content">
                 <div>
 
-    <img style="width: 300px;" src="emenu/public/invalidqr.png" />
+    <img style="width: 300px;" src="/assets/images/invalidqr.png" />
     <h2 class="ion-margin-top">{{t("Invalid QR Code")}}</h2>
     <p>{{t("Please scan the QR code again.")}}</p>
 

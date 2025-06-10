@@ -434,7 +434,7 @@ export function uuid() {
   });
 }
 
-
+ 
 
 export function isWithinRange(currentPosition, predefinePosition, rangeInMeters) {
   const R = 6371000; // Earth's radius in meters

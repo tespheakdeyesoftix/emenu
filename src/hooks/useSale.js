@@ -136,12 +136,14 @@ async function onSubmitOrder() {
       app.showWarning(app.t("Please select product to your order"))
       return
    }
-
+   const locationLoading = await app.showLoading(app.t("Check user location..."))
    const currentLocation = await app.utils.getGeoLocation()
    if(!currentLocation){
       //are now allow to use app
+      await locationLoading.dismiss()
    return
    } 
+   await locationLoading.dismiss()
 
        
          if(!app.utils.isWithinRange(
