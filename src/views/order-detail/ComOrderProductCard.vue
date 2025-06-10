@@ -13,7 +13,9 @@
       class="ion-no-padding "
     >
       <ion-card-title class="Cardtitle">
+  
         {{ data.product_name }}
+     
         <span v-if="data.modifiers"> - {{ data.modifiers }}</span>
       </ion-card-title>
 
@@ -21,7 +23,7 @@
         {{ data.portion }}
       </ion-card-subtitle>
 
-      <h2 style="font-weight: bold; font-size: 24px;">
+      <h2 style="font-weight: bold; font-size:20px;">
         <ComCurrency :value="data.total_amount" />
       </h2>
     </ion-card-content>

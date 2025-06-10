@@ -11,10 +11,9 @@
           <ion-select @ionChange="onChange" v-model="currentLang"  
           placeholder="Select a Language">
             <ion-select-option value="en">English</ion-select-option>
-            <ion-select-option value="km">ខ្មែរ</ion-select-option>
+            <ion-select-option value="kh">ខ្មែរ</ion-select-option>
           </ion-select>
         </ion-item>
-        <ion-item button detail="false">Option 2</ion-item>
       </ion-list>
     </ion-content>
   </ion-popover>
@@ -33,17 +32,18 @@ import {
   IonSelect,
   IonSelectOption,
 } from '@ionic/vue';
- import { logoIonic, languageOutline, settingsOutline } from 'ionicons/icons';
-const currentLang = ref('en')
+ import { languageOutline, settingsOutline } from 'ionicons/icons';
+const currentLang = ref('kh')
 const t = app.t;
-// Load saved lang from localStorage
+import { getItem } from '@/services/storage-service';
 onMounted(() => {
-  if (localStorage.getItem('lang')) {
-    currentLang.value = localStorage.getItem('lang')
+  if (getItem('lang')) {
+    currentLang.value = getItem('lang')
   }
 })
+function onChange(){
+localStorage.setItem('lang', currentLang.value)
+window.location.reload()
+}
 
-watch(currentLang, (newLang) => {
-  localStorage.setItem('lang', newLang)
-})
 </script>
