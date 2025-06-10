@@ -1,19 +1,22 @@
 <template>
     <ion-page>
       <AppBar>
-        
-        <div style="display: flex; align-items: center; gap:10px;">
+        <div style="display: flex; align-items: center; gap:10px;padding: 0 !;">
            <Img v-if="emenu?.logo" style="width:40px;" :src="emenu?.logo" />
            <div>
-            <h5>
-             {{ emenu?.emenu_app_name }} 
-            </h5>
-           </div>
-           
-        </div>
+   <span style="font-size: 15px;">
+   
+     {{ emenu?.emenu_app_name }} 
+   </span>
         
+       
+           </div>
+        </div>
+      
       </AppBar>
-
+  <div style="display: flex; justify-content:space-between;padding: 10px;">
+          Table : {{ saleDoc }}
+  </div>
         <ion-content class="ion-padding" >
           
 <div v-html="emenu?.welcome_description "></div>  
@@ -30,9 +33,12 @@ import {useApp} from "@/hooks/useApp.js"
 import ComPromotionSlide from "./components/ComPromotionSlide.vue";
 import ComFilterMenuList from "./components/ComFilterMenuList.vue";
 const {emenu,products,getMenu,getProducts} = useApp()
+import {useSale} from "@/hooks/useSale.js"
+const {saleDoc,orderDoc} = useSale()
 const t = app.t;
 
 onMounted(async ()=>{
+  console.log(orderDoc)
   const l = await app.showLoading();
   await getMenu();
   await getProducts()
@@ -40,7 +46,6 @@ onMounted(async ()=>{
   await l.dismiss()
 
 })
-
 
 </script>
 
