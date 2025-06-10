@@ -1,5 +1,5 @@
 import { ref, watch } from "vue"
- 
+import WebSocketPrinter from "@/helpers/websocket-printer.js"
 import {useApp} from "@/hooks/useApp.js"
 const {emenu} = useApp();
 
@@ -8,7 +8,7 @@ const orderDoc = ref({
    order_products: []
 })
 
-
+const printService = new WebSocketPrinter();
 
 watch(() => orderDoc.value, async (newVal, oldVal) => {
    if(orderDoc.value.order_products.length >0) {
@@ -58,7 +58,7 @@ function addOrderProduct(data) {
       photo: data.photo
 
    }
- 
+   console.log("sss",sp) 
    // check exists with product_code, portion, and modifier
    const exist_order_product = orderDoc.value.order_products.find(r=>r.product_code == sp.product_code && r.portion == sp.portion && r.modifiers == sp.modifiers );
    if(exist_order_product){
@@ -148,7 +148,6 @@ async function onSubmitOrder() {
             app.showWarningMessage("Your location","You cannot submit your order. Your location is too far from the shop location.")
             return
          }
-
          const confirm = await app.onConfirm("Submit Order", "Are you sure you want to submit your order?")
          if (!confirm) return;
 
@@ -180,9 +179,8 @@ async function printToKitchen(docname) {
    })
 
    if (result.data) {
-      
       result.data.forEach(x => {
-         app.printService.submit({
+         printService.submit({
             'type': x[0],//printer name
             'url': 'file.pdf',
             'file_content': x[1] //base 64 pdf
