@@ -4,12 +4,12 @@
             <div class="center-content">
                 <div>
     <img style="width: 300px;" src="emenu/public/expired.png" />
-    <h2 class="ion-margin-top">QR Session is expired.</h2>
-    <p>Please scan the QR code again.</p>
+    <h2 class="ion-margin-top">{{t("QR Session is expired.")}}</h2>
+    <p>{{t("Please scan the QR code again.")}}</p>
 
    <ion-button expand="block" color="primary" @click="retryScan" class="ion-margin-top scan-button">
   <ion-icon :icon="scanOutline" slot="start"></ion-icon>
-  Scan Again
+  {{t("Scan Again")}}
 </ion-button>
 
   </div>  
@@ -21,7 +21,9 @@
 </template>
 <script setup>
 import { scanOutline } from 'ionicons/icons';
+const t = app.t;
 </script>
+
 <style scoped>
 .center-content {
   display: flex;
