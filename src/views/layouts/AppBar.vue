@@ -9,7 +9,7 @@
         <ion-title><slot></slot></ion-title>
         <ion-buttons slot="end">
           <ComOrderCart/>
-          <ComLang />
+          <ComSetting />
 
           <slot name="end"></slot>
     </ion-buttons>
@@ -22,6 +22,6 @@
 import {  IonButtons, IonTitle, IonMenuButton } from '@ionic/vue';
 import ComOrderCart from '../components/ComOrderCart.vue';
 
-import ComLang from '../components/ComLang.vue';
+import ComSetting from '../components/ComSetting.vue';
 
 </script>
