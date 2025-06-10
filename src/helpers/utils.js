@@ -435,20 +435,6 @@ export function uuid() {
 }
 
 
-export function getGeoLocation(){
-  if (navigator.geolocation) {
-  navigator.geolocation.getCurrentPosition(
-    (position) => {
-      const latitude = position.coords.latitude;
-      const longitude = position.coords.longitude;
-      return {lat:latitude, long:longitude}
-    },
-    (error) => {
-      console.error("Error getting location:", error.message);
-    }
-  );
-}
-}
 
 export function isWithinRange(currentPosition, predefinePosition, rangeInMeters) {
   const R = 6371000; // Earth's radius in meters
@@ -515,4 +501,32 @@ export function formatCurrency(value, format="$#,##0.00") {
   } else {
     return numberFormatted;
   }
+}
+
+
+
+export async function getGeoLocation() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve(null); // Geolocation not supported
+    } else {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve({
+            lat: position.coords.latitude,
+            long: position.coords.longitude,
+          });
+        },
+        (error) => {
+          onWarningMessage(app.t("Location"),app.t("You are not allow app to use your current location. Please shop assistant to assist your problem."))
+          resolve(null); // User denied or error occurred
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0,
+        }
+      );
+    }
+  });
 }

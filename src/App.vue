@@ -1,5 +1,6 @@
 <template>
   <ion-app>
+  
     <ion-router-outlet />
   </ion-app>
 </template>
@@ -21,19 +22,24 @@ app.setRoute(route)
 app.setRouter(router)
 app.currentLanguage = getItem("lang") || "kh";
 
+
 onMounted(async ()=>{
-  if (navigator.geolocation) {
-  navigator.geolocation.getCurrentPosition(
-    (position) => {
-      const latitude = position.coords.latitude;
-      const longitude = position.coords.longitude;
-    
-    },
-    (error) => {
-      console.error("Error getting location:", error.message);
-    }
-  );
+
+   if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        
+        await app.storageService.setItem("locationStatus","allowed")
+        app.setting.currentLocation = {lat:position.coords.latitude, long: position.coords.longitude}
+      
+      },
+      async (error) => {
+        console.error("Error getting location:", error.message);
+      //  / await app.storageService.setItem("locationStatus","block")
+      }
+    );
 }
+
 
 // get business branch from pos profile
 

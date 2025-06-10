@@ -125,17 +125,22 @@ function updateSaleAmount(){
 
 
 async function onSubmitOrder() {
+
+
    if (orderDoc.value.order_products.length == 0) {
       app.showWarning(app.t("Please select product to your order"))
       return
    }
 
-   navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        
+   const currentLocation = await app.utils.getGeoLocation()
+   if(!currentLocation){
+      //are now allow to use app
+      return
+   } 
+
        
          if(!app.utils.isWithinRange(
-            {lat:position.coords.latitude,long:position.coords.longitude },
+           currentLocation,
             app.setting.predefineLocation,
             app.setting.emenu.online_order_range
          ))
@@ -159,34 +164,8 @@ async function onSubmitOrder() {
          }
 
          await l.dismiss();
-      },
-      (error) => {
-      // ❌ Handle error or denial
-       
-      switch (error.code) {
-        
-        case error.PERMISSION_DENIED:
-          app.showWarningMessage(app.t("You need to allow location access to continue."));
-          break;
-        case error.POSITION_UNAVAILABLE:
-          app.showWarningMessage("Location information is unavailable.");
-          break;
-        case error.TIMEOUT:
-          app.showWarningMessage("The request to get user location timed out.");
-          break;
-        default:
-          app.showWarningMessage("An unknown error occurred.");
-          break;
-      }
+     
  
-    }
-  
-   )
-
-
-
-
-
 
 }
 
