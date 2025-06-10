@@ -43,6 +43,7 @@ export async function setup() {
             const setting = (await app.getApi("epos_restaurant_2023.api.emenu.get_settings",{emenu:config.emenu,pos_profile:config.pos_profile})).data
              
            app.setting = {...app.setting,...setting}
+         
 
             // check aging to show qr session expire
             if (!isScanQRCode) {

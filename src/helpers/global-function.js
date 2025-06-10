@@ -4,7 +4,7 @@ import { getApi, getSingleValue,getDoc,updateDoc,createDoc,getDocList, postApi,g
 import * as utils from '@/helpers/utils';
 import * as storageService from '@/services/storage-service';
 import * as sale from '@/helpers/sale-action.js';
-
+import WebSocketPrinter from "@/helpers/websocket-printer.js"
 import { useApp } from '@/hooks/useApp';
 
 import dayjs from 'dayjs';
@@ -28,10 +28,25 @@ globalThis.app.pos_profile ="";
 globalThis.app.table_id ="";
 globalThis.app.session_id = "";
 globalThis.app.utils = utils;
+globalThis.app.printService = null;
 
 
 
 
+// printe service
+
+globalThis.app.printService = null;
+ 
+
+
+setTimeout(() => {
+    app.printService  =new  WebSocketPrinter({
+    url: app.setting.emenu.web_socket_print_url,
+    onConnect: () => {
+        console.log("Connected to printer");
+    },
+});
+}, 1000);
 
 
 

@@ -66,8 +66,7 @@ export function getCount(DocType: string, param: any = null) {
 
 
 export function getApi(api_url: string, param: any = null,) {
-    
-    console.log(frappe)
+  
     if (!frappe) {
         return { data: null, error: "Frappe is not defined" };
     }
@@ -200,7 +199,7 @@ export async function uploadFile(
             undefined,
             // (completedBytes, totalBytes) => {
             //     if(totalBytes){
-            //         console.log(Math.round((completedBytes / totalBytes) * 100), " completed")
+            //      
             //     }
             // },
             "edoor.api.upload.upload_file"
@@ -208,7 +207,7 @@ export async function uploadFile(
         .then(async (result:any) =>{
             await loading.dismiss()
             // Log to See Structure
-            console.log(result.data.message.file_url);
+ 
             app.showSuccess(app.t("Upload file successfully"));
             return { data: result.data.message.file_url, error: null };
         })

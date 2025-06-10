@@ -22,7 +22,7 @@ onMounted(() => {
 
 // Watch and store changes
 watch(currentLang, (newLang) => {
-    alert(34)
+ 
   localStorage.setItem('lang', newLang)
 })
 </script>
