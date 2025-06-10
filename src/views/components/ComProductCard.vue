@@ -45,7 +45,7 @@ const priceRange = computed(() => {
 });
 
 // const prices = JSON.parse(data.value.prices)
-// console.log(prices);
+ 
 
 
 </script>

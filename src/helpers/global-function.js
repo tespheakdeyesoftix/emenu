@@ -6,21 +6,32 @@ import * as storageService from '@/services/storage-service';
 import * as sale from '@/helpers/sale-action.js';
 
 import { useApp } from '@/hooks/useApp';
+import WebSocketPrinter from "@/helpers/websocket-printer.js"
 
 import dayjs from 'dayjs';
-
-
-
  
-
-
-// Ensure the namespace exists
 globalThis.app = globalThis.app || {};
 
 
+globalThis.app.printService = null
+
+setTimeout(() => {
+ 
+ app.printService =new WebSocketPrinter({
+    url: app.setting.emenu.web_socket_print_url,
+    onConnect: () => {
+        console.log("Connected to printer");
+    },
+});
+}, 1000);
+
+// Ensure the namespace exists
 
 
-globalThis.app.setting ={};
+
+
+
+
 globalThis.app.apiUrl ="";
 globalThis.app.token ="";
 globalThis.app.emenu ="";
@@ -198,6 +209,7 @@ globalThis.app.showConfirm = async function (message = 'Loading...') {
         
         
 }
+
 
  
  

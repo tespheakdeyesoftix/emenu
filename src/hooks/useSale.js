@@ -1,6 +1,11 @@
 import { ref, watch } from "vue"
-import WebSocketPrinter from "@/helpers/websocket-printer.js"
+
 import {useApp} from "@/hooks/useApp.js"
+
+let printService = null
+
+ 
+
 const {emenu} = useApp();
 
 const saleDoc = ref()
@@ -8,7 +13,7 @@ const orderDoc = ref({
    order_products: []
 })
 
-const printService = new WebSocketPrinter();
+
 
 watch(() => orderDoc.value, async (newVal, oldVal) => {
    if(orderDoc.value.order_products.length >0) {
@@ -58,7 +63,7 @@ function addOrderProduct(data) {
       photo: data.photo
 
    }
-   console.log("sss",sp) 
+
    // check exists with product_code, portion, and modifier
    const exist_order_product = orderDoc.value.order_products.find(r=>r.product_code == sp.product_code && r.portion == sp.portion && r.modifiers == sp.modifiers );
    if(exist_order_product){
@@ -135,7 +140,7 @@ async function onSubmitOrder() {
    const currentLocation = await app.utils.getGeoLocation()
    if(!currentLocation){
       //are now allow to use app
-      return
+   return
    } 
 
        
@@ -180,7 +185,7 @@ async function printToKitchen(docname) {
 
    if (result.data) {
       result.data.forEach(x => {
-         printService.submit({
+         app.printService.submit({
             'type': x[0],//printer name
             'url': 'file.pdf',
             'file_content': x[1] //base 64 pdf
