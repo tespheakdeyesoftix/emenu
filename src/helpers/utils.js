@@ -512,7 +512,7 @@ export async function getGeoLocation() {
       navigator.geolocation.getCurrentPosition(
         (position) => {
           
-           console.log(position.coords.accuracy)
+        
           resolve({
             lat: position.coords.latitude,
             long: position.coords.longitude,

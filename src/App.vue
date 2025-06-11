@@ -50,5 +50,14 @@ const res = await app.getValue("Business Branch",business_branch,["lat","long"])
 app.predefinePosition = {lat:res.data.lat, long:res.data.long}
 
 
+  const interval = setInterval(async () => {
+             
+              // clearInterval(interval)
+            app.setting.currentLocation = await app.utils.getGeoLocation()
+          
+          }, 1000*60*5)
+
+
+
 })
 </script>

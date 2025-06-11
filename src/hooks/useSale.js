@@ -86,28 +86,48 @@ async function addOrderProduct(data) {
 
 }
 
-async function validateAddProduct(data) {
+function validateAddProduct(data) {
+  return new Promise((resolve, reject) => {
+    const validations = [];
+    // Portion validation
+    if (data.portions && data.portions !== "") {
+      validations.push(
+        new Promise((res, rej) => {
+          if (!data.portions.filter(x => x.selected)) {
+            app.showWarning(app.t("Please select portion"));
+            rej(false);
+          } else {
+            res(true);
+          }
+        })
+      );
+    }
 
-   if (data.portions && data.portions != "") {
+    // Modifier validation
+    if (data.modifiers) {
+      data.modifiers
+        .filter(x => x.is_required == 1)
+        .forEach(c => {
+          validations.push(
+            new Promise((res, rej) => {
+              if (!c.items.filter(m => m.selected)) {
+                app.showWarning(app.t("Please select modifer for ") + c.category);
+                rej(false);
+              } else {
+                res(true);
+              }
+            })
+          );
+        });
+    }
 
-      if (!data.portions.find(x => x.selected)) {
-         await app.showWarning(app.t("Please select portion"))
-         return false
-      }
-   }
-
-   if (data.modifiers) {
-      data.modifiers.filter(x => x.is_required == 1).forEach(async c => {
-         if (!c.items.find(m => m.selected)) {
-        
-            await app.showWarning(app.t("Please select modifer for ") + c.category)
-           
-         }
-      });
-   }
-   return true;
-
+    // Run all validations
+    Promise.all(validations)
+      .then(() => resolve(true))
+      .catch(() => resolve(false)); // Return false if any validation fails
+  });
 }
+
 
 
 function onRemoveProduct(index) {
@@ -135,18 +155,15 @@ async function onSubmitOrder() {
       app.showWarning(app.t("Please select product to your order"))
       return
    }
-   const locationLoading = await app.showLoading(app.t("Check user location..."))
-   const currentLocation = await app.utils.getGeoLocation()
-   if(!currentLocation){
-      //are now allow to use app
-      await locationLoading.dismiss()
-   return
-   } 
-   await locationLoading.dismiss()
+
+   if(app.setting.currentLocation == null){
+      app.utils.onWarningMessage(app.t("Location"),app.t("You are not allow app to use your current location. Please shop assistant to assist your problem."))
+      return 
+   }
 
        
          if(!app.utils.isWithinRange(
-           currentLocation,
+           app.setting.currentLocation,
             app.setting.predefineLocation,
             app.setting.emenu.online_order_range
          ))

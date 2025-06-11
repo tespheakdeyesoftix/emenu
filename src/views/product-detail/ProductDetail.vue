@@ -71,7 +71,7 @@
           </ion-card-content>
           </ion-card>
          
-          <div style="margin-top: 10px;" >
+          <div style="margin-top: 20px;font-size: 18px;" >
             
             <ion-textarea
              @change="updatenote"
@@ -85,16 +85,7 @@
             </ion-textarea>
           </div>
         </template>
-            <!-- <div style="margin-top: 10px;">
-            <ion-textarea
-            v-model="data.note"
-      label="Note"
-      label-placement="stacked"
-      fill="outline"
-      placeholder="Enter text"
-      style="min-height: 120px;"
-    ></ion-textarea>
-            </div> -->
+             
           
             <div style="margin-top: 10px;display: flex;justify-content: space-between;">
                 <ion-button @click="goBack()" color="primary" >
