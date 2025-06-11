@@ -86,28 +86,48 @@ async function addOrderProduct(data) {
 
 }
 
-async function validateAddProduct(data) {
+function validateAddProduct(data) {
+  return new Promise((resolve, reject) => {
+    const validations = [];
+    // Portion validation
+    if (data.portions && data.portions !== "") {
+      validations.push(
+        new Promise((res, rej) => {
+          if (!data.portions.filter(x => x.selected)) {
+            app.showWarning(app.t("Please select portion"));
+            rej(false);
+          } else {
+            res(true);
+          }
+        })
+      );
+    }
 
-   if (data.portions && data.portions != "") {
+    // Modifier validation
+    if (data.modifiers) {
+      data.modifiers
+        .filter(x => x.is_required == 1)
+        .forEach(c => {
+          validations.push(
+            new Promise((res, rej) => {
+              if (!c.items.filter(m => m.selected)) {
+                app.showWarning(app.t("Please select modifer for ") + c.category);
+                rej(false);
+              } else {
+                res(true);
+              }
+            })
+          );
+        });
+    }
 
-      if (!data.portions.find(x => x.selected)) {
-         await app.showWarning(app.t("Please select portion"))
-         return false
-      }
-   }
-
-   if (data.modifiers) {
-      data.modifiers.filter(x => x.is_required == 1).forEach(async c => {
-         if (!c.items.find(m => m.selected)) {
-        
-            await app.showWarning(app.t("Please select modifer for ") + c.category)
-           
-         }
-      });
-   }
-   return true;
-
+    // Run all validations
+    Promise.all(validations)
+      .then(() => resolve(true))
+      .catch(() => resolve(false)); // Return false if any validation fails
+  });
 }
+
 
 
 function onRemoveProduct(index) {

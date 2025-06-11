@@ -63,7 +63,7 @@
 <script setup >
 import { trashOutline,removeOutline,addOutline } from 'ionicons/icons';
 import {useSale} from "@/hooks/useSale.js"
-
+const t = app.t;
 const {onRemoveProduct} = useSale()
 
 const props  =defineProps({
