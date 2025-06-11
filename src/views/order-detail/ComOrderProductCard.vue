@@ -16,11 +16,15 @@
   
         {{ data.product_name }}
      
-        <span v-if="data.modifiers"> - {{ data.modifiers }}</span>
+        <!-- <span v-if="data.modifiers"> - {{ data.modifiers }}</span> -->
       </ion-card-title>
 
       <ion-card-subtitle class="CardSubtitle" >
         {{ data.portion }}
+        
+      </ion-card-subtitle>
+      <ion-card-subtitle class="CardSubtitle" >
+        <span v-if="data.modifiers"> {{ data.modifiers }}</span>
       </ion-card-subtitle>
 
       <h2 style="font-weight: bold; font-size:20px;">
@@ -54,7 +58,7 @@
     </ion-card-content>
   </div>
   <ion-card-content class="ion-padding-top ion-no-padding" v-if="data.note">
-    <small style="color: #888;">📝{{t("Note")}} : {{ data.note }}</small>
+    <small style="color: #888;font-size: 15px;">📝{{t("Note")}} : {{ data.note }}</small>
   </ion-card-content>
 </ion-card>
 
