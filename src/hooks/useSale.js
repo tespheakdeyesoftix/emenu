@@ -155,18 +155,15 @@ async function onSubmitOrder() {
       app.showWarning(app.t("Please select product to your order"))
       return
    }
-   const locationLoading = await app.showLoading(app.t("Check user location..."))
-   const currentLocation = await app.utils.getGeoLocation()
-   if(!currentLocation){
-      //are now allow to use app
-      await locationLoading.dismiss()
-   return
-   } 
-   await locationLoading.dismiss()
+
+   if(app.setting.currentLocation == null){
+      app.utils.onWarningMessage(app.t("Location"),app.t("You are not allow app to use your current location. Please shop assistant to assist your problem."))
+      return 
+   }
 
        
          if(!app.utils.isWithinRange(
-           currentLocation,
+           app.setting.currentLocation,
             app.setting.predefineLocation,
             app.setting.emenu.online_order_range
          ))
