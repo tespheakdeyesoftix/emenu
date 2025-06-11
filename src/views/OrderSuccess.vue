@@ -14,7 +14,7 @@
    
             </div>
            <div style="display: flex; justify-content: center;margin-top: 10px;">
-<ion-button color="light" @click="onContinueOrder">
+<ion-button color="light" @click="onContinueOrder" size="large" shape="round">
   <ion-text class="ion-text-capitalize">{{ t("Continue Order") }}</ion-text>
 </ion-button>
 

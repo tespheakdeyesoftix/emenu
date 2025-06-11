@@ -74,8 +74,6 @@ function addOrderProduct(data) {
       orderDoc.value.order_products.push(sp)
    }
 
-   
-
    sp.sub_total = (sp.quantity * sp.price) + (sp.quantity * sp.modifier_price)
    // discount in future update
 
@@ -94,7 +92,7 @@ function validateAddProduct(data) {
    if (data.portions && data.portions != "") {
 
       if (!data.portions.find(x => x.selected)) {
-         app.showWarning(app.t("Please select portion"))
+          app.showWarning(app.t("Please select portion"))
          return false
       }
    }

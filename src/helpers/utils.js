@@ -436,28 +436,27 @@ export function uuid() {
 
  
 
-export function isWithinRange(currentPosition, predefinePosition, rangeInMeters) {
-  const R = 6371000; // Earth's radius in meters
+export function isWithinRange(currentLocation, predefineLocation, rangeInMeters) {
   const toRad = (value) => (value * Math.PI) / 180;
 
-  const lat1 = currentPosition.lat;
-  const lon1 = currentPosition.long;
-  const lat2 = predefinePosition.lat;
-  const lon2 = predefinePosition.long;
+  const R = 6371000; // Earth's radius in meters (mean radius)
 
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
+  const lat1 = toRad(currentLocation.lat);
+  const lon1 = toRad(currentLocation.long);
+  const lat2 = toRad(predefineLocation.lat);
+  const lon2 = toRad(predefineLocation.long);
+
+  const deltaLat = lat2 - lat1;
+  const deltaLon = lon2 - lon1;
 
   const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-    Math.sin(dLon / 2) ** 2;
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
   const distance = R * c;
-  alert(distance)
-  
+ 
   return distance <= rangeInMeters;
 }
 
@@ -512,6 +511,8 @@ export async function getGeoLocation() {
     } else {
       navigator.geolocation.getCurrentPosition(
         (position) => {
+          
+           console.log(position.coords.accuracy)
           resolve({
             lat: position.coords.latitude,
             long: position.coords.longitude,

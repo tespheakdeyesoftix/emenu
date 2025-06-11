@@ -46,7 +46,7 @@ onMounted(async ()=>{
   await l.dismiss()
 
   const locattion = await app.utils.getGeoLocation()
-  alert(JSON.stringify(locattion))
+ 
 })
 
 
