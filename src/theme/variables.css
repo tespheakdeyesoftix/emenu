@@ -17,14 +17,12 @@ http://ionicframework.com/docs/theming/ */
 }
 .success-alert .alert-wrapper {
 	background: var(--ion-color-success);
-    color: var(--ion-color-primary-contrast);
+ 
 }
 .alert-wrapper {
   border-radius: 10px !important;
 }
-.success-alert .alert-wrapper .alert-title.sc-ion-alert-md{
-  color: var(--ion-color-primary-contrast);
-}
+
 .alert-button-role-confirm{
   border-radius: 10px !important;
 }

@@ -13,10 +13,10 @@
                    <Img class="image-banner-style" :src="data?.photo" /> 
                 </div>
                 <ion-card style="margin: 0;margin-top: 10px;">
-    <ion-card-header>
-      <ion-card-title> {{ data.product_code }} - {{ data.product_name_en }}  </ion-card-title>
-      <ion-card-subtitle  v-if="data.price">
-        <ion-chip color="danger" v-if="priceRange && priceRange.min > 0" class="card-chip">
+            <ion-card-header>
+              <ion-card-title> {{ data.product_code }} - {{ data.product_name_en }}  </ion-card-title>
+              <ion-card-subtitle  v-if="data.price">
+                <ion-chip color="danger" v-if="priceRange && priceRange.min > 0" class="card-chip">
   <ion-label>
     <ComCurrency :value="priceRange.min" />
     <span v-if="priceRange.min !== priceRange.max"> → </span>
@@ -45,7 +45,7 @@
                         </ion-item>
                     </ion-list>
                 </div>
-<!--  modifier -->
+                  <!--  modifier -->
                 <div v-if="data.modifiers">
                     <ion-list>
                         <template v-for="(c,cindex) in data.modifiers" :key="'c'+cindex">
@@ -68,23 +68,34 @@
                    
                 </div>
                 
-                  </ion-card-content>
-  </ion-card>
-            </template>
-            <div style="margin-top: 10px;">
-        <!-- <ion-textarea
-  label="Note"
-  label-placement="stacked"
-  fill="outline"
-  placeholder="Enter text"
-  style="min-height: 120px;"
-></ion-textarea> -->
-
-
-
-
-            </div>
+          </ion-card-content>
+          </ion-card>
+         
+          <div style="margin-top: 10px;" >
             
+            <ion-textarea
+             @change="updatenote"
+              :value="data.note"
+              :label="t('Note')"
+              label-placement="stacked"
+              fill="outline"
+              :placeholder="t('Enter note')"
+              style="min-height: 120px;"
+            >
+            </ion-textarea>
+          </div>
+        </template>
+            <!-- <div style="margin-top: 10px;">
+            <ion-textarea
+            v-model="data.note"
+      label="Note"
+      label-placement="stacked"
+      fill="outline"
+      placeholder="Enter text"
+      style="min-height: 120px;"
+    ></ion-textarea>
+            </div> -->
+          
             <div style="margin-top: 10px;display: flex;justify-content: space-between;">
                 <ion-button @click="goBack()" color="primary" >
               <ion-icon :icon="arrowBackOutline" slot="start"></ion-icon>
@@ -132,7 +143,12 @@ import {useSale} from "@/hooks/useSale.js"
 const {orderDoc,addOrderProduct} = useSale()
 
 const t = app.t;
-const data =ref()
+  const data =ref()
+
+  function updatenote(event){
+    data.value.note = event.target.defaultValue
+
+  }
 import { checkmarkCircleOutline , removeOutline , addOutline , basketOutline , arrowBackOutline } from 'ionicons/icons';
 import ComOrderCart from "../components/ComOrderCart.vue";
 import { useRouter } from 'vue-router'

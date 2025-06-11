@@ -44,12 +44,11 @@ async function initOrder() {
    }
 }
 
-function addOrderProduct(data) {
-   const canAdd = validateAddProduct(data)
+async function addOrderProduct(data) {
+   const canAdd = await validateAddProduct(data)
    if (!canAdd) return;
 
- 
-
+  
    let sp = {
       product_code: data.product_code,
       product_name: data.product_name_en,
@@ -87,20 +86,22 @@ function addOrderProduct(data) {
 
 }
 
-function validateAddProduct(data) {
+async function validateAddProduct(data) {
 
    if (data.portions && data.portions != "") {
 
       if (!data.portions.find(x => x.selected)) {
-          app.showWarning(app.t("Please select portion"))
+         await app.showWarning(app.t("Please select portion"))
          return false
       }
    }
 
    if (data.modifiers) {
-      data.modifiers.filter(x => x.is_required == 1).forEach(c => {
+      data.modifiers.filter(x => x.is_required == 1).forEach(async c => {
          if (!c.items.find(m => m.selected)) {
-            app.showWarning(app.t("Please select modifer for ") + c.category)
+        
+            await app.showWarning(app.t("Please select modifer for ") + c.category)
+           
          }
       });
    }

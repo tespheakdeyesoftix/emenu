@@ -13,7 +13,9 @@
       class="ion-no-padding "
     >
       <ion-card-title class="Cardtitle">
+  
         {{ data.product_name }}
+     
         <span v-if="data.modifiers"> - {{ data.modifiers }}</span>
       </ion-card-title>
 
@@ -21,11 +23,10 @@
         {{ data.portion }}
       </ion-card-subtitle>
 
-      <h2 style="font-weight: bold; font-size: 24px;">
+      <h2 style="font-weight: bold; font-size:20px;">
         <ComCurrency :value="data.total_amount" />
       </h2>
     </ion-card-content>
-
     <ion-card-content
       class="ion-no-padding"
       style="flex: 0.2; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; height: 100px;"
@@ -52,13 +53,11 @@
       </div>
     </ion-card-content>
   </div>
-
   <ion-card-content class="ion-padding-top ion-no-padding" v-if="data.note">
-    <small style="color: #888;">📝Note : {{ data.note }}</small>
+    <small style="color: #888;">📝{{t("Note")}} : {{ data.note }}</small>
   </ion-card-content>
 </ion-card>
 
-  
 </template>
 
 <script setup >

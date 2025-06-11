@@ -14,7 +14,7 @@ const messages = {
 const i18n = createI18n({
   legacy: false, // Required for Vue 3 Composition API
   locale: getItem("lang") || "kh", // Default locale
-  fallbackLocale: 'kh', // Fallback locale
+  fallbackLocale: getItem("lang") ||  'kh', // Fallback locale
   messages,
 });
 
