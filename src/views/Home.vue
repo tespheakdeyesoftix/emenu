@@ -5,11 +5,8 @@
            <Img v-if="emenu?.logo" style="width:40px;" :src="emenu?.logo" />
            <div>
    <span style="font-size: 15px;">
-   
      {{ emenu?.emenu_app_name }} 
    </span>
-        
-       
            </div>
         </div>
       
