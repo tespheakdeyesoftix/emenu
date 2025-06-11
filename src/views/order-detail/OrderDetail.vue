@@ -1,5 +1,6 @@
 <template>
   <ion-page>
+    <!-- {{ orderDoc.total_amount }} -->
     <ToolBar>
       {{ t("Your Order") }} - {{ table?.tbl_number }}
     </ToolBar>
@@ -25,7 +26,7 @@
     <ion-footer v-if="orderDoc.order_products.length>0 " slot="fixed">
       <ion-toolbar>
         <ion-row class="ion-align-items-center ion-justify-content-between" style="width: 100%; padding: 0 16px;">
-          <ion-col size="6" v-if="total">
+          <ion-col size="6" v-if="orderDoc.total_amount">
             <div style="font-weight: bold; font-size: 18px;">Total:</div>
             <div style="font-size: 22px;"><ComCurrency :value="orderDoc?.total_amount || 0"/></div>
           </ion-col>
@@ -42,8 +43,8 @@
 
 <script setup>
  
-
-  import ComOrderProductCard from '@/views/order-detail/ComOrderProductCard.vue';
+import ComCurrency from '@/components/public/ComCurrency.vue';
+import ComOrderProductCard from '@/views/order-detail/ComOrderProductCard.vue';
 
 import {useSale} from "@/hooks/useSale.js"
 const t = app.t;
