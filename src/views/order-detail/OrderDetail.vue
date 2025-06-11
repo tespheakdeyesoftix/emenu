@@ -47,16 +47,18 @@
 
 import {useSale} from "@/hooks/useSale.js"
 const t = app.t;
-const {orderDoc,onSubmitOrder} = useSale()
-import {ref,onMounted } from "vue"
+const {orderDoc,onSubmitOrder,socket} = useSale()
+import {ref,onMounted,inject } from "vue"
+const sk = inject('$socket')
 const table = ref()
 function onOrderNow(){
   app.ionRouter.navigate('/', 'forward', 'replace');
 }
 
+
  onMounted(async ()=>{
   table.value =  ( await app.getValue("Tables Number",app.table_id, "tbl_number") ).data;
-
+  socket.value = sk;
 })
 
 </script>

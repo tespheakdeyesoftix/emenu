@@ -13,7 +13,7 @@ import router from './router';
 import { useIonRouter } from '@ionic/vue';
 import { useRoute } from 'vue-router';
 import {getItem} from '@/services/storage-service';
-import { onMounted } from 'vue';
+import { onMounted,inject } from 'vue';
 const ionRouter = useIonRouter();
 const route = useRoute();
 app.t =  i18n.global.t;
@@ -21,7 +21,6 @@ app.setIonRouter(ionRouter)
 app.setRoute(route)
 app.setRouter(router)
 app.currentLanguage = getItem("lang") || "kh";
-
 
 onMounted(async ()=>{
 
@@ -60,4 +59,7 @@ app.predefinePosition = {lat:res.data.lat, long:res.data.long}
 
 
 })
+
+
+ 
 </script>

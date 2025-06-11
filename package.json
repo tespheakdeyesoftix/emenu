@@ -21,6 +21,8 @@
     "@ionic/vue-router": "^8.0.0",
     "@supabase/supabase-js": "^2.48.1",
     "dayjs": "^1.11.13",
+        "socket.io": "^4.6.1",
+    "socket.io-client": "^4.6.1",
     "frappe-js-sdk": "^1.9.0",
     "ionicons": "^7.0.0",
     "swiper": "^11.2.8",

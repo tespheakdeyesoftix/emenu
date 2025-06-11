@@ -15,7 +15,7 @@
           {{t("Table")}} : {{ table?.tbl_number }}
   </div>
         <ion-content class="ion-padding" >
-        
+      
 <div v-html="emenu?.welcome_description "></div>  
      <ComPromotionSlide :emenu="emenu" />
      <ComFilterMenuList :menu="emenu?.pos_menu_selections" />
@@ -25,7 +25,7 @@
 
 </template>
 <script setup>
-import {ref,onMounted } from "vue"
+import {ref,onMounted,inject } from "vue"
 import ComMenuList from "@/views/components/ComMenuList.vue"
 import {useApp} from "@/hooks/useApp.js"
 import ComPromotionSlide from "./components/ComPromotionSlide.vue";
@@ -35,6 +35,9 @@ import {useSale} from "@/hooks/useSale.js"
 const {saleDoc,orderDoc} = useSale()
 const t = app.t;
 const table = ref()
+const socket = inject("$socket");
+ 
+
 onMounted(async ()=>{
   table.value =  ( await app.getValue("Tables Number",app.table_id, "tbl_number") ).data;
   const l = await app.showLoading();
@@ -46,6 +49,8 @@ onMounted(async ()=>{
   const locattion = await app.utils.getGeoLocation()
  
 })
+
+
 
 
 </script>

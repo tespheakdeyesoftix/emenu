@@ -3,6 +3,7 @@ import { ref, watch } from "vue"
 import { useApp } from "@/hooks/useApp.js"
 
 let printService = null
+const socket =ref(null) 
 
 
 
@@ -189,23 +190,26 @@ async function onSubmitOrder() {
 
 
 async function printToKitchen(docname) {
+    
+ 
+     socket.value.emit("OnPrintReport", {order_number:docname});
+     
+   // const result = await app.postApi("epos_restaurant_2023.api.printing.get_mobile_order_to_kitchen_pdf", {
+   //    pdf: 0,
+   //    doc_name: docname
+   // })
 
-   const result = await app.postApi("epos_restaurant_2023.api.printing.get_mobile_order_to_kitchen_pdf", {
-      pdf: 0,
-      doc_name: docname
-   })
+   // if (result.data) {
+   //    result.data.forEach(x => {
+   //       app.printService.submit({
+   //          'type': x[0],//printer name
+   //          'url': 'file.pdf',
+   //          'file_content': x[1] //base 64 pdf
+   //       });
+   //    }
+   //    )
 
-   if (result.data) {
-      result.data.forEach(x => {
-         app.printService.submit({
-            'type': x[0],//printer name
-            'url': 'file.pdf',
-            'file_content': x[1] //base 64 pdf
-         });
-      }
-      )
-
-   }
+   // }
 }
 
 
@@ -217,6 +221,7 @@ export function useSale() {
    return {
       saleDoc,
       orderDoc,
+      socket,
       addOrderProduct,
       onSubmitOrder,
       onRemoveProduct,

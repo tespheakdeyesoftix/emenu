@@ -28,7 +28,7 @@ import ComCurrency from '@/components/public/ComCurrency.vue';
 import ToolBar from '@/views/layouts/ToolBar.vue';
 import AppBar from '@/views/layouts/AppBar.vue';
 import ComOrderCart from '@/views/components/ComOrderCart.vue';
-
+import socket from '@/services/socketio.js';
 
 /**
  * Ionic Dark Mode
@@ -105,6 +105,10 @@ const app = createApp(App)
   .use(IonicVue)
   .use(router);
 
+
+// dependeance injection
+app.provide("$socket", socket)
+
 app.component('ion-footer', IonFooter)
 app.component('ion-ripple-effect', IonRippleEffect)
 app.component('ion-infinite-scroll', IonInfiniteScroll)
@@ -154,16 +158,12 @@ app.component('ion-tab', IonTab)
 app.component('ion-tabs', IonTabs)
 app.component('ion-tab-bar', IonTabBar)
 app.component('ion-tab-button', IonTabButton)
-
-
-
+ 
 app.component('Img', Img)
 app.component('ComCurrency', ComCurrency)
 app.component('ToolBar', ToolBar)
 app.component('AppBar', AppBar)
 app.component('ComOrderCart', ComOrderCart)
-
-
  
 async function init() {
 
@@ -175,7 +175,8 @@ async function init() {
     app.mount('#app');
   });
 } 
- 
+
+
 
 init();
 
