@@ -98,7 +98,7 @@ async function addOrderProduct(data) {
 
 async function validateAddProduct(data) {
   // Portion validation
-  if (data.portions && data.portions !== "") {
+  if (data.portions && data.portions.length>0 ) {
     const selectedPortions = data.portions.filter(x => x.selected);
     if (selectedPortions.length === 0) {
       app.showWarning(app.t("Please select portion"));
@@ -107,7 +107,7 @@ async function validateAddProduct(data) {
   }
 
   // Modifier validation
-  if (data.modifiers) {
+  if (data.modifiers && data.modifiers.length>0) {
     for (const c of data.modifiers.filter(x => x.is_required == 1)) {
       const selectedModifiers = c.items.filter(m => m.selected);
       if (selectedModifiers.length === 0) {
