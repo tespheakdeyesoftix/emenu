@@ -58,7 +58,11 @@
     </ion-card-content>
   </div>
   <ion-card-content class="ion-padding-top ion-no-padding" v-if="data.note">
+<<<<<<< Updated upstream
     <small style="color: #888;font-size: 15px;">📝{{t("Note")}} : {{ data.note }}</small>
+=======
+    <small style="color: #888;">📝{{t("Note")}} : <span style="font-weight: bold;"> {{ data.note }}</span></small>
+>>>>>>> Stashed changes
   </ion-card-content>
 </ion-card>
 
@@ -67,7 +71,13 @@
 <script setup >
 import { trashOutline,removeOutline,addOutline } from 'ionicons/icons';
 import {useSale} from "@/hooks/useSale.js"
+<<<<<<< Updated upstream
 const t = app.t;
+=======
+
+const t = app.t;
+
+>>>>>>> Stashed changes
 const {onRemoveProduct} = useSale()
 
 const props  =defineProps({
