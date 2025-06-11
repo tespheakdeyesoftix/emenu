@@ -199,7 +199,7 @@ export async function uploadFile(
             undefined,
             // (completedBytes, totalBytes) => {
             //     if(totalBytes){
-            //         console.log(Math.round((completedBytes / totalBytes) * 100), " completed")
+            //       
             //     }
             // },
             "edoor.api.upload.upload_file"
