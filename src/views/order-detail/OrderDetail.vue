@@ -1,6 +1,6 @@
 <template>
   <ion-page>
-    {{ orderDoc.total_amount }}
+    <!-- {{ orderDoc.total_amount }} -->
     <ToolBar>
       {{ t("Your Order") }} - {{ table?.tbl_number }}
     </ToolBar>
