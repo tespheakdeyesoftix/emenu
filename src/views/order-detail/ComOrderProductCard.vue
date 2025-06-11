@@ -54,7 +54,7 @@
     </ion-card-content>
   </div>
   <ion-card-content class="ion-padding-top ion-no-padding" v-if="data.note">
-    <small style="color: #888;">📝Note : {{ data.note }}</small>
+    <small style="color: #888;">📝{{t("Note")}} : {{ data.note }}</small>
   </ion-card-content>
 </ion-card>
 
