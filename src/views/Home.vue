@@ -1,5 +1,4 @@
 <template>
-  <component :is="menuComponent"  />
     <ion-page>
       <AppBar>
         <div style="display: flex; align-items: center; gap:10px;padding: 0 !;">
@@ -36,7 +35,6 @@ import ComPromotionSlide from "./components/ComPromotionSlide.vue";
 import ComFilterMenuList from "./components/ComFilterMenuList.vue";
 const {emenu,products,getMenu,getProducts} = useApp()
 import {useSale} from "@/hooks/useSale.js"
-const menuComponent = ref(ComPromotionSlide)
 const {saleDoc,orderDoc} = useSale()
 const t = app.t;
 const table = ref()
