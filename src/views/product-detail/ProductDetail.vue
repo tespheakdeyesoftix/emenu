@@ -71,7 +71,7 @@
           </ion-card-content>
           </ion-card>
          
-          <div style="margin-top: 10px; margin-left: 10px; font-size: 18px;" >
+          <div style="margin-top: 20px;font-size: 18px;" >
             
             <ion-textarea
              @change="updatenote"
