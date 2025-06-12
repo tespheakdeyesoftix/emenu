@@ -11,7 +11,7 @@
         </div>
       
       </AppBar>
-  <div style="display: flex; justify-content:space-between;padding: 10px;">
+  <div class="bg-white" style="display: flex; justify-content:space-between;padding: 10px;">
           {{t("Table")}} : {{ table?.tbl_number }}
   </div>
         <ion-content class="ion-padding" >
