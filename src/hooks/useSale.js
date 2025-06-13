@@ -34,8 +34,12 @@ async function initOrder() {
    const order = await app.storageService.getItem("order");
    if (order) {
       orderDoc.value = JSON.parse(order);
+      orderDoc.value.pos_profile  =   app.pos_profile
+      orderDoc.value.session_id  =   app.session_id
+      orderDoc.value.table_id  =   app.table_id
    }
    else {
+      
       orderDoc.value = {
          pos_profile: app.pos_profile,
          session_id: app.session_id,
