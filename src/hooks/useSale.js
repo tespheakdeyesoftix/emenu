@@ -57,6 +57,10 @@ async function addOrderProduct(data) {
    //    return
    // }
 
+   orderDoc.value.pos_profile  =   app.pos_profile
+   orderDoc.value.session_id  =   app.session_id
+   orderDoc.value.table_id  =   app.table_id
+
 
    const canAdd = await validateAddProduct(data);
 
