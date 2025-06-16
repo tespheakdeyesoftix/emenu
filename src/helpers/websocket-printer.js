@@ -1,6 +1,6 @@
 export default function WebSocketPrinter(options) {
     var defaults = {
-        url: "wss://lavender.edoorfrontdesk.com/print/",
+        url: "wss://[ip or host]/print/",
         onConnect: function () {
         },
         onDisconnect: function () {
