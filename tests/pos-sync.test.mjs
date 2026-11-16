@@ -630,6 +630,7 @@ test("subscription plans publish current prices, provision selected access, and 
   await expectStatus(await plans("GET", "", undefined, ""), 401);
   const [standard] = await listPublic();
   assert.equal(standard.amountMinor, 2499);
+  assert.equal(standard.pos.enabled, false);
   assert.equal(standard.features.includes("orders"), true);
   assert.equal((await assignment("biz_a")).subscription_plan_id, standard.id);
   await expectStatus(await plans("DELETE", `/${standard.id}`), 400);
@@ -680,6 +681,12 @@ test("subscription plans publish current prices, provision selected access, and 
   assert.ok(Math.abs(Date.parse(paidBefore.trial_ends_at) - Date.now() - 30 * 864e5) < 60_000);
   const legacy = await expectStatus(await register("legacy-plan"), 201);
   assert.equal((await assignment(legacy.business.id)).plan_id, standard.id);
+  const legacyDetail = await expectStatus(await superRequest(legacy.business.id, undefined, "GET", "super@example.test", ""), 200);
+  assert.deepEqual(legacyDetail.business.disabledControlPages, ["sellingOverview", "posProfiles", "posPaymentTypes"]);
+  for (const page of ["overview", "profiles", "payment-types"]) {
+    const blocked = await expectStatus(await request("/api/admin/pos/" + page, undefined, legacy.token, "GET"), 403);
+    assert.equal(blocked.code, "CONTROL_PAGE_DISABLED");
+  }
 
   await expectStatus(await superRequest(registeredPaid.business.id, { disabledControlPages: ["orders"] },
     "PUT", "super@example.test", "control-pages"), 200);
@@ -795,6 +802,11 @@ test("Windows POS subscription quota is isolated by business ID", {
       fixtures.push(business);
       await expectStatus(await setPlan(business, plan), 200);
       assert.equal((await subscription(id)).plan_id, planId);
+      const sidebar = (disabledControlPages) => superRequest(
+        id, { disabledControlPages }, "PUT", "super@example.test", "control-pages",
+      );
+      business.restoreSidebar = () => sidebar(["sellingOverview", "posProfiles", "posPaymentTypes"]);
+      await expectStatus(await sidebar([]), 200);
 
       const branch = await db.prepare("SELECT id FROM branches WHERE business_id=? AND is_default=1").bind(id).first("id");
       const { branches } = await expectStatus(await superRequest(
@@ -877,6 +889,7 @@ test("Windows POS subscription quota is isolated by business ID", {
     for (const business of fixtures) {
       await expectStatus(await setPlan(business, standard), 200);
       assert.deepEqual(await subscription(business.id), business.original);
+      if (business.restoreSidebar) await expectStatus(await business.restoreSidebar(), 200);
     }
     assert.deepEqual(await expectStatus(await plans("DELETE", `/${planId}`), 200), { archived: false });
   }
@@ -2120,7 +2133,10 @@ test("super-admin can configure a business's hourly QR order limit", async () =>
   assert.equal(other.business.hourlyDeviceOrderLimit, 10);
 });
 
-test("Control sidebar settings restrict pages and actions per business", async () => {
+test("Control sidebar settings restrict pages and actions per business", async (t) => {
+  const setPlanPos = (enabled) => db.prepare("UPDATE subscription_plans SET pos_enabled=? WHERE id='plan_standard'").bind(enabled).run();
+  await setPlanPos(1);
+  t.after(() => setPlanPos(0));
   const admin = (path, token = "owner-a", method = "GET", body) =>
     request(`/api/admin/${path}`, body, token, method);
   const setPages = (disabledControlPages, identity = "super@example.test") =>

@@ -1048,6 +1048,9 @@ async function handleApi(request, env, actorEmail) {
       await env.CONTROL_ADMIN.updateBusinessControlPages(actorEmail, controlPagesMatch[1], body)
     );
   }
+  const businessWebhookHistoryMatch = path.match(/^\/api\/super\/businesses\/([a-zA-Z0-9_-]+)\/webhook-deliveries$/);
+  if (businessWebhookHistoryMatch && request.method === "DELETE")
+    return fromRpc(await env.CONTROL_ADMIN.clearWebhookHistory(actorEmail, businessWebhookHistoryMatch[1], null, null));
   const webhookMatch = path.match(/^\/api\/super\/businesses\/([a-zA-Z0-9_-]+)\/branches\/([a-zA-Z0-9_-]+)\/webhooks(?:\/([a-zA-Z0-9_-]+))?(?:\/([a-zA-Z0-9_-]+)\/retry)?$/);
   if (webhookMatch) {
     const [, businessId, branchId, resource, deliveryId] = webhookMatch;
@@ -1055,14 +1058,9 @@ async function handleApi(request, env, actorEmail) {
     if (!resource && request.method === "GET")
       return fromRpc(await admin.branchWebhooks(actorEmail, businessId, branchId, "list", null, {}));
     if (resource === "deliveries" && !deliveryId && request.method === "GET")
-      return fromRpc(await admin.branchWebhooks(
-        actorEmail,
-        businessId,
-        branchId,
-        "deliveries",
-        null,
-        { offset: url.searchParams.get("offset") ?? 0 }
-      ));
+      return fromRpc(await admin.branchWebhooks(actorEmail, businessId, branchId, "deliveries", null, {}));
+    if (resource === "deliveries" && !deliveryId && request.method === "DELETE")
+      return fromRpc(await admin.clearWebhookHistory(actorEmail, businessId, branchId, url.searchParams.get("webhookId")));
     if (resource === "deliveries" && deliveryId && request.method === "POST")
       return fromRpc(await admin.branchWebhooks(actorEmail, businessId, branchId, "retry", deliveryId, {}));
     if (resource && !deliveryId && request.method === "DELETE")

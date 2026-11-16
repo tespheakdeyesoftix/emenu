@@ -2033,14 +2033,15 @@ async function provisionBusiness(env: Env, input: ProvisionBusinessInput) {
     env.DB.prepare(
       `INSERT INTO businesses
        (id, name, slug, tagline, locale, currency, timezone, pricing_mode,
-        default_price_list_id)
-       VALUES (?, ?, ?, ?, 'km', 'KHR', 'Asia/Phnom_Penh', 'automatic', ?)`,
+        default_price_list_id, disabled_control_pages_json)
+       VALUES (?, ?, ?, ?, 'km', 'KHR', 'Asia/Phnom_Penh', 'automatic', ?, ?)`,
     ).bind(
       businessId,
       input.businessName,
       input.businessSlug,
       "Freshly made, beautifully served.",
       priceListId,
+      JSON.stringify(["sellingOverview", "posProfiles", "posPaymentTypes"] satisfies ControlPage[]),
     ),
     env.DB.prepare(
       `INSERT INTO price_lists (id,business_id,name,is_normal)

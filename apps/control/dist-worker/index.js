@@ -13,6 +13,10 @@ var controlPages = {
   menus: { path: "/menus", label: "Menus" },
   priceLists: { path: "/price-lists", label: "Price lists" },
   managePrices: { path: "/manage-prices", label: "Manage prices" },
+  sellingOverview: { path: "/selling", label: "Selling dashboard" },
+  posProfiles: { path: "/selling/pos-profiles", label: "POS profile settings" },
+  posPaymentTypes: { path: "/selling/payment-types", label: "Payment types" },
+  salesList: { path: "/selling/sales", label: "Sales list" },
   orders: { path: "/orders", label: "Orders" },
   bookings: { path: "/bookings", label: "Bookings" },
   telegramNotifications: { path: "/telegram-notifications", label: "Telegram notifications" },
@@ -22,6 +26,12 @@ var controlPages = {
   qrDesigns: { path: "/qr-designs", label: "QR designs" }
 };
 var controlPageIds = Object.keys(controlPages);
+var sellingControlPages = [
+  "sellingOverview",
+  "posProfiles",
+  "posPaymentTypes",
+  "salesList"
+];
 var catalogReaderPages = [
   "overview",
   "appearance",
@@ -248,6 +258,46 @@ async function updateOrderStatus(db, businessId, orderId, status) {
   return order && { ...order, changed: Boolean(updated.meta.changes) };
 }
 __name(updateOrderStatus, "updateOrderStatus");
+async function confirmOrderProducts(db, businessId, orderId, products) {
+  const transition = `business_id=?1 AND id=?2 AND status='submitted'
+    AND (SELECT COUNT(*) FROM order_products WHERE order_id=?2)=json_array_length(?3)
+    AND NOT EXISTS (
+      SELECT 1 FROM json_each(?3) AS decision
+      WHERE NOT EXISTS (
+        SELECT 1 FROM order_products
+        WHERE order_id=?2 AND id=json_extract(decision.value,'$.id')
+      )
+    )`;
+  const bindings = [businessId, orderId, JSON.stringify(products)];
+  const [, , updated, current, lines] = await db.batch([
+    captureWebhook(db, "orders", "updated", transition, bindings, "'accepted'"),
+    db.prepare(
+      `UPDATE order_products SET status=(
+           SELECT json_extract(decision.value,'$.status') FROM json_each(?3) AS decision
+           WHERE json_extract(decision.value,'$.id')=order_products.id
+         )
+         WHERE order_id=?2 AND EXISTS (SELECT 1 FROM orders WHERE ${transition})`
+    ).bind(...bindings),
+    db.prepare(`UPDATE orders SET status='accepted' WHERE ${transition}`).bind(...bindings),
+    db.prepare("SELECT status FROM orders WHERE business_id=? AND id=?").bind(businessId, orderId),
+    db.prepare(
+      `SELECT line.id, line.status FROM order_products line
+         JOIN orders o ON o.id=line.order_id WHERE o.business_id=? AND o.id=?
+         ORDER BY line.line_number`
+    ).bind(businessId, orderId)
+  ]);
+  const order = current.results[0];
+  if (!order) return null;
+  const decisionsById = new Map(products.map(({ id: id2, status }) => [id2, status]));
+  const matches = lines.results.length === products.length && lines.results.every(({ id: id2, status }) => decisionsById.get(String(id2)) === status);
+  return {
+    status: order.status,
+    changed: Boolean(updated.meta.changes),
+    matches,
+    products: lines.results
+  };
+}
+__name(confirmOrderProducts, "confirmOrderProducts");
 
 // worker/orderEvents.ts
 import { DurableObject } from "cloudflare:workers";
@@ -1272,7 +1322,7 @@ async function syncTables(env, identity, raw) {
   });
   const duplicateIds = duplicateTableIds(requestedTables, tablesById);
   const skipped = [];
-  const tables = requestedTables.filter((table) => {
+  const tables2 = requestedTables.filter((table) => {
     if (duplicateIds.has(table.id)) {
       skipped.push({ id: table.id, code: String(table.code) });
       return false;
@@ -1297,7 +1347,7 @@ async function syncTables(env, identity, raw) {
     ).bind(placeholder2, businessId, JSON.stringify(groupIds)),
     env.DB.prepare(
       "UPDATE restaurant_tables SET code=? || id WHERE business_id=? AND id IN (SELECT value FROM json_each(?))"
-    ).bind(placeholder2, businessId, JSON.stringify(tables.map((table) => table.id))),
+    ).bind(placeholder2, businessId, JSON.stringify(tables2.map((table) => table.id))),
     ...upsertRows(env, "table_groups", groups, businessId, [
       "id",
       "branch_id",
@@ -1305,7 +1355,7 @@ async function syncTables(env, identity, raw) {
       "sort_order",
       "is_active"
     ]),
-    ...upsertRows(env, "restaurant_tables", tables, businessId, [
+    ...upsertRows(env, "restaurant_tables", tables2, businessId, [
       "id",
       "branch_id",
       "group_id",
@@ -1897,7 +1947,7 @@ var bookingDefaults = {
   noticeMinutes: 120,
   advanceDays: 30,
   minPax: 1,
-  maxPax: 12
+  maxPax: 20
 };
 var bookingPreferences = [
   "indoor",
@@ -2095,19 +2145,30 @@ function renderWebhookBody(body, values, format) {
 __name(renderWebhookBody, "renderWebhookBody");
 
 // worker/webhookDestination.ts
-function webhookDestination(value) {
+function isLocalHost(host) {
+  if (host === "localhost" || host === "[::1]") return true;
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(host)) return false;
+  const [first, second] = host.split(".").map(Number);
+  return first === 127 || first === 10 || first === 172 && second >= 16 && second <= 31 || first === 192 && second === 168;
+}
+__name(isLocalHost, "isLocalHost");
+function webhookDestination(env, value) {
+  const allowLocalHttp = env.WEBHOOK_ALLOW_LOCAL_HTTP === "true";
+  const invalidUrl = allowLocalHttp ? "Use a public HTTPS hostname or an HTTP URL on localhost or a private IPv4 address. Remove URL credentials and fragments." : "Use a public HTTPS hostname without URL credentials, a custom port, or a fragment.";
   if (typeof value !== "string" || value.length > 2048)
-    throw new Error("Enter a public HTTPS URL.");
+    throw new Error(invalidUrl);
   let url;
   try {
     url = new URL(value);
   } catch {
-    throw new Error("Enter a public HTTPS URL.");
+    throw new Error(invalidUrl);
   }
   const host = url.hostname;
-  if (url.protocol !== "https:" || url.port || url.username || url.password || url.hash || !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z](?:[a-z0-9-]*[a-z0-9])?$/.test(host) || /\.(localhost|local|internal|test|invalid|onion|home|lan|arpa)$/.test(host))
-    throw new Error("Use a public HTTPS hostname without URL credentials, a custom port, or a fragment.");
-  return { url: url.href, host };
+  if (url.username || url.password || url.href.includes("#")) throw new Error(invalidUrl);
+  const localHttp = allowLocalHttp && url.protocol === "http:" && isLocalHost(host);
+  if (!localHttp && (url.protocol !== "https:" || url.port || !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z](?:[a-z0-9-]*[a-z0-9])?$/.test(host) || /\.(localhost|local|internal|test|invalid|onion|home|lan|arpa)$/.test(host)))
+    throw new Error(invalidUrl);
+  return { url: url.href, host, localHttp };
 }
 __name(webhookDestination, "webhookDestination");
 function publicAddress(address, type) {
@@ -2177,7 +2238,7 @@ __name(decryptWebhookHeaders, "decryptWebhookHeaders");
 
 // worker/webhookDelivery.ts
 var retryDelays = [60, 300, 1800];
-var retention = 30 * 86400;
+var webhookRetentionSeconds = 24 * 60 * 60;
 var webhookBlocked = `EXISTS (
   SELECT 1 FROM branch_webhook_events earlier
   JOIN branch_webhook_deliveries prior ON prior.event_sequence=earlier.sequence AND prior.host=d.host
@@ -2193,9 +2254,9 @@ __name(includesOrderItems, "includesOrderItems");
 async function send(env, job) {
   let destination;
   try {
-    destination = webhookDestination(job.url);
-  } catch {
-    return { httpStatus: null, error: "The destination must use a public HTTPS hostname.", retry: false };
+    destination = webhookDestination(env, job.url);
+  } catch (error3) {
+    return { httpStatus: null, error: error3.message, retry: false };
   }
   let headers;
   let body;
@@ -2235,9 +2296,11 @@ async function send(env, job) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1e4);
   try {
-    const publicDns = await checkWebhookDns(destination.host, controller.signal).catch(() => null);
-    if (publicDns === null) return { httpStatus: null, error: "The destination DNS could not be verified.", retry: true };
-    if (!publicDns) return { httpStatus: null, error: "The destination resolves to a non-public address.", retry: false };
+    if (!destination.localHttp) {
+      const publicDns = await checkWebhookDns(destination.host, controller.signal).catch(() => null);
+      if (publicDns === null) return { httpStatus: null, error: "The destination DNS could not be verified.", retry: true };
+      if (!publicDns) return { httpStatus: null, error: "The destination resolves to a non-public address.", retry: false };
+    }
     const result = await fetch(destination.url, { method: job.method, headers, body, redirect: "manual", signal: controller.signal });
     if (result.body) void result.body.cancel().catch(() => {
     });
@@ -2259,6 +2322,8 @@ async function processJob(env, job) {
     UPDATE branch_webhook_deliveries SET status='sending', attempts=attempts+1,
       retry_count=retry_count+1, attempted_at=unixepoch(), due_at=unixepoch()+60, lease_token=?
     WHERE id=? AND status='pending' AND due_at<=unixepoch()
+      AND EXISTS (SELECT 1 FROM branch_webhook_events event WHERE event.sequence=event_sequence
+        AND event.created_at>unixepoch()-${webhookRetentionSeconds})
       AND EXISTS (SELECT 1 FROM branch_webhooks rule WHERE rule.id=webhook_id AND rule.enabled=1 AND rule.archived=0)
     RETURNING retry_count AS retryCount
   `).bind(lease, job.id).first();
@@ -2270,7 +2335,7 @@ async function processJob(env, job) {
       WHEN ?1='succeeded' THEN 'succeeded'
       WHEN NOT EXISTS (SELECT 1 FROM branch_webhooks rule WHERE rule.id=webhook_id AND rule.enabled=1 AND rule.archived=0)
         THEN 'stopped' ELSE ?1 END,
-      due_at=unixepoch()+?2, http_status=?3, error=?4, lease_token=NULL
+      due_at=unixepoch()+?2, http_status=?3, error=?4, lease_token=NULL, history_hidden=0
     WHERE id=?5 AND status='sending' AND lease_token=?6
   `).bind(
     result.error === null ? "succeeded" : delay === void 0 ? "failed" : "pending",
@@ -2293,7 +2358,7 @@ async function drainBranchWebhooks(env, businessId) {
     JOIN branch_webhook_events e ON e.sequence=d.event_sequence
     JOIN branch_webhooks rule ON rule.id=d.webhook_id AND rule.enabled=1 AND rule.archived=0
     JOIN branch_webhook_revisions config ON config.webhook_id=d.webhook_id AND config.revision=d.revision
-    WHERE d.status='pending' AND d.due_at<=unixepoch() AND e.created_at>unixepoch()-${retention}
+    WHERE d.status='pending' AND d.due_at<=unixepoch() AND e.created_at>unixepoch()-${webhookRetentionSeconds}
       ${scope} AND NOT ${webhookBlocked}
     ORDER BY e.sequence, d.id LIMIT 8
   `);
@@ -2326,11 +2391,11 @@ async function runBranchWebhookScheduler(env) {
         JOIN branch_webhook_events earlier ON earlier.business_id=e.business_id AND earlier.branch_id=e.branch_id
           AND earlier.table_key=e.table_key AND earlier.record_id=e.record_id AND earlier.sequence<e.sequence
         JOIN branch_webhook_deliveries prior ON prior.event_sequence=earlier.sequence AND prior.host=target.host
-        WHERE e.sequence=target.event_sequence AND earlier.created_at<=unixepoch()-${retention}
+        WHERE e.sequence=target.event_sequence AND earlier.created_at<=unixepoch()-${webhookRetentionSeconds}
           AND prior.status IN ('pending','sending','failed','stopped')
       )
     `),
-    env.DB.prepare(`DELETE FROM branch_webhook_events WHERE created_at<=unixepoch()-${retention}`),
+    env.DB.prepare(`DELETE FROM branch_webhook_events WHERE created_at<=unixepoch()-${webhookRetentionSeconds}`),
     env.DB.prepare(`
       DELETE FROM branch_webhook_revisions AS config
       WHERE config.revision<>(SELECT revision FROM branch_webhooks rule WHERE rule.id=config.webhook_id)
@@ -2350,13 +2415,27 @@ var ordersFrom = `FROM orders o
   JOIN restaurant_tables t ON t.id=o.table_id AND t.business_id=o.business_id
   JOIN table_groups g ON g.id=t.group_id AND g.business_id=o.business_id
   JOIN branches branch ON branch.id=o.branch_id AND branch.business_id=o.business_id`;
+function parseProductDecisions(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 30)
+    return null;
+  const ids = /* @__PURE__ */ new Set();
+  const products = [];
+  for (const item of value) {
+    const { id: id2, status } = item ?? {};
+    if (typeof id2 !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id2) || ids.has(id2) || status !== "accepted" && status !== "rejected") return null;
+    ids.add(id2);
+    products.push({ id: id2, status });
+  }
+  return products.some(({ status }) => status === "accepted") ? products : null;
+}
+__name(parseProductDecisions, "parseProductDecisions");
 async function orderDetail(db, businessId, orderId) {
   const [headers, lines] = await db.batch([
     db.prepare(
       `SELECT ${orderColumns}, o.note ${ordersFrom} WHERE o.business_id=? AND o.id=?`
     ).bind(businessId, orderId),
     db.prepare(
-      `SELECT line.id, line.line_number, line.product_id,
+      `SELECT line.id, line.line_number, line.product_id, line.status,
         COALESCE(line.product_code, product.code) AS product_code,
         COALESCE(line.product_name, NULLIF(product.name_km,''), product.name, line.product_id) AS name,
         product.name_en, line.quantity, line.price, line.portion_id, line.portion_name,
@@ -2406,6 +2485,25 @@ async function handlePosOrders(request, env, execution, subscriptionFor, orderId
           402
         );
       const body = await readPosJson(request, 4096);
+      if ("products" in body) {
+        const products = parseProductDecisions(body.products);
+        if (body.status !== "accepted" || Object.keys(body).length !== 2 || !products)
+          return response({
+            error: "Send status accepted with unique product line IDs and accepted or rejected decisions, including at least one accepted line"
+          }, 400);
+        const order2 = await confirmOrderProducts(env.DB, businessId, orderId, products);
+        if (!order2) return response({ error: "Order not found" }, 404);
+        if (order2.changed) scheduleBranchWebhooks(env, execution, businessId);
+        if (order2.status === "submitted")
+          return response({ error: "Send one decision for every line in this order" }, 400);
+        if (order2.status !== "accepted" || !order2.matches)
+          return response({
+            code: "order_status_conflict",
+            error: "This order was already reviewed with a different result",
+            status: order2.status
+          }, 409);
+        return response({ id: orderId, status: order2.status, products: order2.products });
+      }
       if (!isOrderStatusUpdate(body.status) || Object.keys(body).length !== 1)
         return response(
           { error: "Send only status with accepted, completed, or cancelled" },
@@ -2485,6 +2583,3661 @@ async function handlePosOrders(request, env, execution, subscriptionFor, orderId
   });
 }
 __name(handlePosOrders, "handlePosOrders");
+
+// worker/subscriptionPlans.ts
+var DEFAULT_PLAN_ID = "plan_standard";
+var planOfferJoin = `
+  JOIN subscription_plan_prices price ON price.id=(
+    SELECT id FROM subscription_plan_prices
+    WHERE plan_id=plan.id AND is_active=1 AND currency='USD'
+      AND provider IS NULL AND interval_count=1
+    ORDER BY created_at DESC,id DESC LIMIT 1
+  )`;
+var planOfferFields = `
+  plan.id,plan.code,plan.name,plan.description,plan.features_json AS featuresJson,
+  plan.max_branches AS maxBranches,plan.max_menus AS maxMenus,
+  plan.max_products AS maxProducts,plan.max_daily_orders AS maxDailyOrders,
+  plan.pos_enabled AS posEnabled,plan.max_pos_profiles AS maxPosProfiles,
+  plan.max_daily_pos_sales AS maxDailyPosSales,
+  price.id AS priceId,price.amount_minor AS amountMinor,price.billing_interval AS billingInterval`;
+var planFeatures = /* @__PURE__ */ __name((value) => {
+  try {
+    const keys = JSON.parse(value);
+    return Array.isArray(keys) ? controlPageIds.filter((key) => keys.includes(key)) : [];
+  } catch {
+    return [];
+  }
+}, "planFeatures");
+var serializePlan = /* @__PURE__ */ __name(({
+  featuresJson,
+  maxBranches,
+  maxMenus,
+  maxProducts,
+  maxDailyOrders,
+  posEnabled,
+  maxPosProfiles,
+  maxDailyPosSales,
+  ...row
+}) => ({
+  ...row,
+  features: planFeatures(featuresJson),
+  limits: { branches: maxBranches, menus: maxMenus, products: maxProducts, dailyOrders: maxDailyOrders },
+  pos: { enabled: Boolean(posEnabled), profiles: maxPosProfiles, dailySales: maxDailyPosSales }
+}), "serializePlan");
+var isLimit = /* @__PURE__ */ __name((input, minimum, maximum = Number.MAX_SAFE_INTEGER) => input === null || typeof input === "number" && Number.isSafeInteger(input) && input >= minimum && input <= maximum, "isLimit");
+function parsePlanLimits(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const { branches, menus, products, dailyOrders } = value;
+  if (Object.keys(value).length !== 4 || !isLimit(branches, 1) || !isLimit(menus, 0) || !isLimit(products, 0) || !isLimit(dailyOrders, 0, MAX_DAILY_ORDERS)) return null;
+  return { branches, menus, products, dailyOrders };
+}
+__name(parsePlanLimits, "parsePlanLimits");
+function parsePlanPos(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const { enabled, profiles, dailySales } = value;
+  if (Object.keys(value).length !== 3 || typeof enabled !== "boolean" || !isLimit(profiles, 0) || !isLimit(dailySales, 0)) return null;
+  return { enabled, profiles, dailySales };
+}
+__name(parsePlanPos, "parsePlanPos");
+var posPlanEnabled = /* @__PURE__ */ __name((businessId) => `NOT EXISTS (
+  SELECT 1 FROM business_subscriptions subscription
+  JOIN subscription_plans plan ON plan.id=subscription.plan_id
+  WHERE subscription.business_id=${businessId} AND plan.pos_enabled=0
+)`, "posPlanEnabled");
+var limitErrors = {
+  PLAN_BRANCH_LIMIT: { code: "PLAN_BRANCH_LIMIT", error: "This business has reached its subscription plan\u2019s branch limit." },
+  PLAN_MENU_LIMIT: { code: "PLAN_MENU_LIMIT", error: "This business has reached its subscription plan\u2019s menu limit." },
+  PLAN_PRODUCT_LIMIT: { code: "PLAN_PRODUCT_LIMIT", error: "This business has reached its subscription plan\u2019s product limit." },
+  PLAN_DAILY_ORDER_LIMIT: { code: "order_limit_reached", error: "The business has reached its daily order limit." },
+  PLAN_POS_PROFILE_LIMIT: { code: "PLAN_POS_PROFILE_LIMIT", error: "This business has reached its subscription plan\u2019s active POS profile limit." },
+  PLAN_POS_PROFILE_IN_USE: { code: "PLAN_POS_PROFILE_IN_USE", error: "Deactivate excess POS profiles before applying this limit." },
+  PLAN_DAILY_POS_SALE_LIMIT: { code: "PLAN_DAILY_POS_SALE_LIMIT", error: "This business has reached its daily POS sales limit." }
+};
+function planLimitError(error3) {
+  const message = String(error3);
+  const code = Object.keys(limitErrors).find((key) => message.includes(key));
+  return code ? limitErrors[code] : null;
+}
+__name(planLimitError, "planLimitError");
+function selectedPlan(db, planId, publicOnly) {
+  return db.prepare(
+    `SELECT ${planOfferFields} FROM subscription_plans plan ${planOfferJoin}
+     WHERE plan.id=? AND plan.is_active=1 AND (?=0 OR plan.is_public=1)`
+  ).bind(planId, Number(publicOnly)).first();
+}
+__name(selectedPlan, "selectedPlan");
+async function publicPlans(db) {
+  const { results } = await db.prepare(
+    `SELECT ${planOfferFields} FROM subscription_plans plan ${planOfferJoin}
+     WHERE plan.is_active=1 AND plan.is_public=1 ORDER BY plan.display_order,plan.name,plan.id`
+  ).all();
+  return results.map(serializePlan);
+}
+__name(publicPlans, "publicPlans");
+
+// worker/posApiCore.ts
+var posApiPath = "/api/integrations/pos/v1";
+var posAdminPath = "/api/admin/pos";
+var isPosApiPath = /* @__PURE__ */ __name((path) => path === posApiPath || path.startsWith(posApiPath + "/"), "isPosApiPath");
+var isPosAdminPath = /* @__PURE__ */ __name((path) => path === posAdminPath || path.startsWith(posAdminPath + "/"), "isPosAdminPath");
+function allowsCashFloat(type) {
+  return type.allow_cash_float ?? type.kind === "cash";
+}
+__name(allowsCashFloat, "allowsCashFloat");
+var PosError = class extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+  status;
+  code;
+  static {
+    __name(this, "PosError");
+  }
+};
+function respond(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "private, no-store"
+    }
+  });
+}
+__name(respond, "respond");
+function errorResponse(error3) {
+  if (error3 instanceof PosError)
+    return respond({ error: error3.message, code: error3.code }, error3.status);
+  const limit = planLimitError(error3);
+  if (limit) return respond(limit, 409);
+  const message = String(error3);
+  if (message.includes(
+    "UNIQUE constraint failed: sales.business_id, sales.profile_id, sales.table_id"
+  )) {
+    return respond(
+      {
+        error: "This table already has an open bill on this profile",
+        code: "TABLE_OCCUPIED"
+      },
+      409
+    );
+  }
+  if (message.includes("POS_STATE_CONFLICT") || message.includes("UNIQUE constraint failed:")) {
+    return respond(
+      {
+        error: "The requested state conflicts with existing POS data. Refresh and retry.",
+        code: "STATE_CONFLICT"
+      },
+      409
+    );
+  }
+  if (message.includes("FOREIGN KEY constraint failed")) {
+    return respond(
+      {
+        error: "A referenced record is no longer available",
+        code: "STATE_CONFLICT"
+      },
+      409
+    );
+  }
+  throw error3;
+}
+__name(errorResponse, "errorResponse");
+function requirePosPlan(enabled) {
+  if (enabled === 0)
+    throw new PosError(403, "PLAN_POS_DISABLED", "POS is not included in this business\u2019s subscription plan.");
+}
+__name(requirePosPlan, "requirePosPlan");
+function invalid2(message) {
+  throw new PosError(400, "INVALID_REQUEST", message);
+}
+__name(invalid2, "invalid");
+function conflict(message, code = "STATE_CONFLICT") {
+  throw new PosError(409, code, message);
+}
+__name(conflict, "conflict");
+function missing(entity) {
+  throw new PosError(404, "NOT_FOUND", `${entity} was not found`);
+}
+__name(missing, "missing");
+var privileged = /* @__PURE__ */ __name((role) => role === "owner" || role === "manager", "privileged");
+function requireManager(role) {
+  if (!privileged(role))
+    throw new PosError(
+      403,
+      "FORBIDDEN",
+      "A business owner or manager is required"
+    );
+}
+__name(requireManager, "requireManager");
+var newId = /* @__PURE__ */ __name((prefix) => `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`, "newId");
+var sql = /* @__PURE__ */ __name((db, query, ...bindings) => db.prepare(query).bind(...bindings), "sql");
+var MAX_AMOUNT = 1e11;
+function object2(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    invalid2("Expected a JSON object");
+  return value;
+}
+__name(object2, "object");
+async function bodyOf(request, maxBytes = 128e3) {
+  if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") {
+    throw new PosError(415, "UNSUPPORTED_MEDIA_TYPE", "Send application/json");
+  }
+  const reader = request.body?.getReader();
+  const decoder = new TextDecoder();
+  let size = 0;
+  let text2 = "";
+  if (!reader) invalid2("Expected a JSON body");
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      throw new PosError(
+        413,
+        "REQUEST_TOO_LARGE",
+        `JSON body exceeds ${maxBytes.toLocaleString("en-US")} bytes`
+      );
+    }
+    text2 += decoder.decode(value, { stream: true });
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text2 + decoder.decode());
+  } catch {
+    invalid2("Malformed JSON");
+  }
+  return object2(parsed);
+}
+__name(bodyOf, "bodyOf");
+function string(value, field, limit = 120) {
+  if (typeof value !== "string" || !value.trim() || value.trim().length > limit)
+    invalid2(`Invalid ${field}`);
+  return value.trim();
+}
+__name(string, "string");
+var optionalText = /* @__PURE__ */ __name((value, field, limit = 500) => value == null || value === "" ? null : string(value, field, limit), "optionalText");
+function recordId(value, field) {
+  if (typeof value !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(value))
+    invalid2(`Invalid ${field}`);
+  return value;
+}
+__name(recordId, "recordId");
+function integer2(value, field, min, max = MAX_AMOUNT) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max)
+    invalid2(`Invalid ${field}`);
+  return value;
+}
+__name(integer2, "integer");
+function choice(value, field, options) {
+  if (typeof value !== "string" || !options.includes(value))
+    invalid2(`Invalid ${field}`);
+  return value;
+}
+__name(choice, "choice");
+var currencyOf = /* @__PURE__ */ __name((value) => choice(value, "currency", ["USD", "KHR"]), "currencyOf");
+function list(value, field, max) {
+  if (!Array.isArray(value) || value.length > max) invalid2(`Invalid ${field}`);
+  return value;
+}
+__name(list, "list");
+function boolean(value, field) {
+  if (typeof value !== "boolean") invalid2(`Invalid ${field}`);
+  return value;
+}
+__name(boolean, "boolean");
+async function digest(text2) {
+  const bytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text2)
+  );
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+__name(digest, "digest");
+var activeDeviceSession = `(s.device_credential_id IS NULL OR EXISTS (
+  SELECT 1 FROM pos_device_credentials d
+  WHERE d.id=s.device_credential_id AND d.revoked_at IS NULL
+    AND d.business_id=s.business_id AND d.profile_id=s.profile_id AND d.user_id=s.user_id
+    AND d.credential_version=s.credential_version
+))`;
+var storeOperatorRegistered = `EXISTS (
+  SELECT 1 FROM pos_store_operator_history h
+  WHERE h.business_id=authority.business_id AND h.profile_id=? AND h.operator_id=?
+    AND h.device_id=authority.device_id AND h.public_key=authority.public_key
+)`;
+var storeOperatorActive = `EXISTS (
+  SELECT 1 FROM pos_device_credentials d
+  JOIN memberships member ON member.business_id=d.business_id AND member.user_id=d.user_id
+  JOIN users account ON account.id=d.user_id AND account.password_salt=d.credential_version
+  WHERE d.business_id=authority.business_id AND d.profile_id=? AND d.user_id=? AND d.revoked_at IS NULL
+    AND d.device_id=authority.device_id AND d.public_key=authority.public_key
+    AND (member.role IN ('owner','manager') OR EXISTS (
+      SELECT 1 FROM pos_profile_grants g
+      WHERE g.business_id=d.business_id AND g.profile_id=d.profile_id AND g.user_id=d.user_id
+    ))
+)`;
+var profileColumns = `p.id,p.branch_id,b.name AS branch_name,p.name,
+  p.is_active,p.version,p.config_json,p.pending_config_json`;
+function profileView(profile, admin = false) {
+  const { config_json, pending_config_json, is_active, ...fields } = profile;
+  return {
+    ...fields,
+    is_active: Boolean(is_active),
+    config: JSON.parse(config_json),
+    ...admin ? {
+      pending_config: pending_config_json ? JSON.parse(pending_config_json) : null
+    } : {}
+  };
+}
+__name(profileView, "profileView");
+async function paymentTypes(context) {
+  const { results } = await sql(
+    context.db,
+    `SELECT t.id,t.name,t.kind,t.currency
+    FROM pos_payment_types t WHERE t.business_id=? AND t.id IN (SELECT json_extract(value,'$.id') FROM json_each(?))`,
+    context.identity.business_id,
+    JSON.stringify(context.config.payment_types)
+  ).all();
+  const types = new Map(results.map((row) => [row.id, row]));
+  return context.config.payment_types.flatMap((entry) => {
+    const stored = types.get(entry.id);
+    if (!stored) return [];
+    const { currency, ...type } = stored;
+    const currencies = currency ? entry.currencies.filter((value) => value === currency) : entry.currencies;
+    return currencies.length ? [{
+      ...type,
+      currencies,
+      allow_cash_float: entry.allow_cash_float ?? (context.config.cashier_shift_enabled && type.kind === "cash")
+    }] : [];
+  });
+}
+__name(paymentTypes, "paymentTypes");
+var idleProfile = `NOT EXISTS (
+    SELECT 1 FROM cashier_shifts shift WHERE shift.profile_id=pos_profiles.id AND shift.closed_at IS NULL
+  ) AND NOT EXISTS (
+    SELECT 1 FROM sales sale WHERE sale.profile_id=pos_profiles.id AND sale.status='open'
+  )`;
+function promoteProfile(context) {
+  return sql(
+    context.db,
+    `UPDATE pos_profiles SET config_json=pending_config_json,
+    pending_config_json=NULL,version=version+1
+    WHERE business_id=? AND id=? AND pending_config_json IS NOT NULL AND ${idleProfile}`,
+    context.identity.business_id,
+    context.profile.id
+  );
+}
+__name(promoteProfile, "promoteProfile");
+function jsonRow(alias, columns, extra = {}) {
+  const entries = [
+    ...columns.split(/\s+/).filter(Boolean).map((column) => [column, `${alias}.${column}`]),
+    ...Object.entries(extra)
+  ];
+  let expression = "'{}'";
+  for (let offset = 0; offset < entries.length; offset += 12) {
+    const argumentsSql = entries.slice(offset, offset + 12).map(([key, value]) => `'$.${key}',${value}`).join(",");
+    expression = `json_set(${expression},${argumentsSql})`;
+  }
+  return expression;
+}
+__name(jsonRow, "jsonRow");
+function canonical(value) {
+  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  if (value && typeof value === "object") {
+    const row = value;
+    return "{" + Object.keys(row).sort().map((key) => JSON.stringify(key) + ":" + canonical(row[key])).join(",") + "}";
+  }
+  return JSON.stringify(value);
+}
+__name(canonical, "canonical");
+var Command = class _Command {
+  constructor(context, key, hash2, body) {
+    this.context = context;
+    this.key = key;
+    this.hash = hash2;
+    this.body = body;
+  }
+  context;
+  key;
+  hash;
+  body;
+  static {
+    __name(this, "Command");
+  }
+  static async read(request, context, supplied) {
+    const key = request.headers.get("idempotency-key");
+    if (!key || !/^[A-Za-z0-9_-]{8,128}$/.test(key))
+      invalid2("A valid Idempotency-Key header is required");
+    const body = supplied?.body ?? await bodyOf(request);
+    const hash2 = await digest(
+      canonical([
+        request.method,
+        context.storeImport?.recovery ? posApiPath + "/store-operations" : new URL(request.url).pathname,
+        context.identity.user_id,
+        supplied?.envelope ?? body
+      ])
+    );
+    const command = new _Command(context, key, hash2, body);
+    return await command.replay() ?? command;
+  }
+  async replay() {
+    const { db, identity, profile } = this.context;
+    const record = await sql(
+      db,
+      `SELECT request_hash,response_json,response_status FROM pos_commands
+      WHERE business_id=? AND profile_id=? AND idempotency_key=?`,
+      identity.business_id,
+      profile.id,
+      this.key
+    ).first();
+    if (!record) return null;
+    if (record.request_hash !== this.hash)
+      conflict(
+        "The idempotency key was already used for a different request",
+        "IDEMPOTENCY_CONFLICT"
+      );
+    return respond(JSON.parse(record.response_json), record.response_status);
+  }
+  async commit(status, guard, writes, result) {
+    const { db, identity, profile, now, storeImport } = this.context;
+    const { business_id: businessId, user_id: actor } = identity;
+    const recovery = storeImport?.recovery;
+    const eligible = `EXISTS (
+      SELECT 1 FROM pos_profiles p
+      JOIN branches b ON b.id=p.branch_id AND b.business_id=p.business_id AND b.is_active=1
+      JOIN businesses business ON business.id=b.business_id AND business.is_active=1
+      JOIN pos_sessions s ON s.business_id=p.business_id AND ${recovery ? "s.profile_id=?" : "s.profile_id=p.id"}
+      JOIN memberships m ON m.business_id=s.business_id AND m.user_id=s.user_id
+      JOIN users u ON u.id=m.user_id AND u.password_salt=s.credential_version
+      WHERE p.business_id=? AND p.id=? AND p.version=? AND p.is_active=1
+        AND s.token_hash=? AND s.expires_at>unixepoch() AND ${activeDeviceSession}
+        AND ${posPlanEnabled("p.business_id")}
+        ${recovery ? `AND m.role='owner' AND EXISTS (
+          SELECT 1 FROM pos_profiles approving
+          WHERE approving.id=s.profile_id AND approving.business_id=p.business_id
+            AND approving.branch_id=p.branch_id AND approving.is_active=1
+        )` : ""}
+        AND ${storeImport ? `EXISTS (
+            SELECT 1 FROM pos_store_authorities authority
+            JOIN pos_device_credentials device ON device.id=s.device_credential_id
+            WHERE authority.business_id=p.business_id AND authority.branch_id=p.branch_id
+              AND authority.epoch=? AND authority.last_sequence=? AND authority.device_id=device.device_id
+              AND (authority.public_key IS NULL OR authority.public_key=device.public_key)
+              ${recovery ? `AND ${storeOperatorRegistered} AND NOT ${storeOperatorActive}` : ""}
+          )` : guard.allowStoreAuthority ? "1" : `NOT EXISTS (
+            SELECT 1 FROM pos_store_authorities authority
+            WHERE authority.business_id=p.business_id AND authority.branch_id=p.branch_id
+          )`}
+        AND (m.role IN ('owner','manager') ${guard.manager ? "" : `OR EXISTS (
+          SELECT 1 FROM pos_profile_grants g WHERE g.business_id=m.business_id AND g.profile_id=p.id AND g.user_id=m.user_id
+        )`})
+        ${guard.allowReadOnly ? "" : `AND NOT EXISTS (
+          SELECT 1 FROM business_subscriptions sub WHERE sub.business_id=p.business_id
+          AND (sub.status IN ('past_due','canceled') OR
+            (sub.current_period_end_at IS NOT NULL AND COALESCE(unixepoch(sub.current_period_end_at),0)<=unixepoch()))
+        )`}
+    )`;
+    const results = await db.batch([
+      sql(
+        db,
+        `INSERT INTO pos_commands
+          (business_id,profile_id,idempotency_key,request_hash,actor_id,created_at,response_status,state_valid)
+          SELECT ?,?,?,?,?,?,?,CASE WHEN ${eligible} AND (${guard.query}) THEN 1 ELSE 0 END`,
+        businessId,
+        profile.id,
+        this.key,
+        this.hash,
+        actor,
+        now,
+        status,
+        ...recovery ? [identity.profile_id] : [],
+        businessId,
+        profile.id,
+        profile.version,
+        identity.token_hash,
+        ...storeImport ? [storeImport.epoch, storeImport.sequence - 1] : [],
+        ...recovery ? [profile.id, actor, profile.id, actor] : [],
+        ...guard.params
+      ),
+      ...writes,
+      ...recovery ? [
+        sql(
+          db,
+          `INSERT INTO pos_store_recoveries
+          (epoch,sequence,business_id,branch_id,profile_id,command_id,operator_id,approved_by,reason,approved_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          storeImport.epoch,
+          storeImport.sequence,
+          businessId,
+          profile.branch_id,
+          profile.id,
+          this.key,
+          actor,
+          recovery.approvedBy,
+          recovery.reason,
+          recovery.approvedAt
+        )
+      ] : [],
+      ...storeImport ? [
+        sql(
+          db,
+          "UPDATE pos_store_authorities SET last_sequence=? WHERE epoch=?",
+          storeImport.sequence,
+          storeImport.epoch
+        )
+      ] : [],
+      sql(
+        db,
+        `UPDATE pos_commands SET response_json=(${result.query})
+          WHERE business_id=? AND profile_id=? AND idempotency_key=? RETURNING response_json`,
+        ...result.params,
+        businessId,
+        profile.id,
+        this.key
+      )
+    ]);
+    return respond(
+      JSON.parse(results[results.length - 1].results[0].response_json),
+      status
+    );
+  }
+};
+function pagination(url) {
+  const size = url.searchParams.get("page_size") ?? "25";
+  const page = url.searchParams.get("page") ?? "1";
+  if (!/^\d+$/.test(page) || !/^\d+$/.test(size)) invalid2("Invalid pagination");
+  const limit = integer2(Number(size), "page_size", 1, 100);
+  const pageNumber = integer2(Number(page), "page", 1, 1e6);
+  return { limit, offset: (pageNumber - 1) * limit, page: pageNumber };
+}
+__name(pagination, "pagination");
+async function pageOf(db, url, resource, query, params) {
+  const { limit, offset, page } = pagination(url);
+  const { results } = await sql(
+    db,
+    `${query} LIMIT ? OFFSET ?`,
+    ...params,
+    limit + 1,
+    offset
+  ).all();
+  return {
+    [resource]: results.slice(0, limit),
+    page,
+    page_size: limit,
+    has_more: results.length > limit
+  };
+}
+__name(pageOf, "pageOf");
+
+// worker/posApiCatalog.ts
+function ratio(value) {
+  const match = String(value).match(/^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i);
+  if (!match)
+    conflict(
+      "The configured price or exchange rate is invalid",
+      "INVALID_PRICING"
+    );
+  const [, sign, whole, fraction = "", exponent = "0"] = match;
+  const scale = fraction.length - Number(exponent);
+  if (Math.abs(scale) > 330)
+    conflict(
+      "The configured price or exchange rate is invalid",
+      "INVALID_PRICING"
+    );
+  const numerator = BigInt(sign + whole + fraction);
+  return scale >= 0 ? [numerator, 10n ** BigInt(scale)] : [numerator * 10n ** BigInt(-scale), 1n];
+}
+__name(ratio, "ratio");
+var units = /* @__PURE__ */ __name((currency) => currency === "USD" ? 100n : 1n, "units");
+var rounded = /* @__PURE__ */ __name((numerator, denominator) => numerator < 0n ? -((-2n * numerator + denominator) / (2n * denominator)) : (2n * numerator + denominator) / (2n * denominator), "rounded");
+function bounded(value) {
+  if (value > BigInt(MAX_AMOUNT) || value < -BigInt(MAX_AMOUNT))
+    conflict("The amount exceeds the POS limit", "AMOUNT_LIMIT");
+  return Number(value);
+}
+__name(bounded, "bounded");
+function priceMinor(value, currency) {
+  const [numerator, denominator] = ratio(value);
+  return bounded(rounded(numerator * units(currency), denominator));
+}
+__name(priceMinor, "priceMinor");
+function secondaryToPrimary(amount, primary, rate) {
+  const [numerator, denominator] = ratio(rate);
+  if (numerator <= 0n)
+    conflict(
+      "The configured exchange rate must be positive",
+      "INVALID_PRICING"
+    );
+  const secondary = primary === "USD" ? "KHR" : "USD";
+  return bounded(
+    rounded(
+      BigInt(amount) * units(primary) * denominator,
+      units(secondary) * numerator
+    )
+  );
+}
+__name(secondaryToPrimary, "secondaryToPrimary");
+function saleLineTotals(gross, mode, bps) {
+  const denominator = mode === "inclusive" ? 1e4 + bps : 1e4;
+  const tax = mode === "disabled" ? 0 : Number(rounded(BigInt(gross) * BigInt(bps), BigInt(denominator)));
+  return {
+    subtotal_minor: mode === "inclusive" ? gross - tax : gross,
+    tax_minor: tax,
+    total_minor: mode === "exclusive" ? gross + tax : gross
+  };
+}
+__name(saleLineTotals, "saleLineTotals");
+function activeCatalogNodes(mode) {
+  const isMenu = mode === "menu";
+  const table = isMenu ? "menus" : "categories";
+  return `WITH RECURSIVE active_nodes AS (
+      SELECT id,parent_id FROM ${table} WHERE business_id=?1 AND is_active=1 AND parent_id IS NULL
+        ${isMenu ? "AND deleted_in_admin=0" : ""}
+      UNION
+      SELECT node.id,node.parent_id FROM ${table} node JOIN active_nodes parent ON parent.id=node.parent_id
+      WHERE node.business_id=?1 AND node.is_active=1 ${isMenu ? "AND node.deleted_in_admin=0" : ""}
+    )`;
+}
+__name(activeCatalogNodes, "activeCatalogNodes");
+function catalogScope(context) {
+  const mode = context.config.catalog_mode;
+  const isMenu = mode === "menu";
+  const table = isMenu ? "menus" : "categories";
+  const params = [
+    context.identity.business_id,
+    JSON.stringify(context.config.selected_ids)
+  ];
+  const scope = `${activeCatalogNodes(mode)}, selected_nodes(id) AS (
+      SELECT id FROM active_nodes
+      WHERE CASE WHEN ?2='null' THEN parent_id IS NULL ELSE id IN (SELECT value FROM json_each(?2)) END
+      UNION
+      SELECT node.id FROM active_nodes node JOIN selected_nodes parent ON node.parent_id=parent.id
+    )`;
+  const assignment = `FROM menu_products mp JOIN selected_nodes node ON node.id=mp.menu_id
+      WHERE mp.business_id=p.business_id AND mp.product_id=p.id
+      AND NOT EXISTS (SELECT 1 FROM menu_product_exclusions x
+        WHERE x.business_id=mp.business_id AND x.menu_id=mp.menu_id AND x.product_id=mp.product_id)`;
+  const products = `${scope}
+    SELECT p.id,p.code,p.category_id AS categoryId,COALESCE(NULLIF(p.name_km,''),p.name) AS name,
+      p.name_km AS nameKm,p.name_en AS nameEn,p.name_zh AS nameZh,p.description,p.unit,p.image_url AS imageUrl,
+      p.price_cents AS priceCents,p.portions_json AS portionsJson,p.modifier_groups_json AS modifierGroupsJson,
+      ${isMenu ? `(SELECT json_group_array(mp.menu_id) ${assignment})` : "'[]'"} AS menuIds
+    FROM products p WHERE p.business_id=?1 AND p.is_available=1
+      AND ${isMenu ? `EXISTS (SELECT 1 ${assignment})` : "p.category_id IN (SELECT id FROM selected_nodes)"}
+      AND (json_array_length(p.portions_json)=0 OR EXISTS (
+        SELECT 1 FROM json_each(p.portions_json) WHERE json_extract(value,'$.branchId') IS NULL
+          OR json_extract(value,'$.branchId')=?3
+      ))`;
+  const nodes = `${scope}
+    SELECT node.id,CASE WHEN node.parent_id IN (SELECT id FROM selected_nodes) THEN node.parent_id END AS parent_id,
+      COALESCE(NULLIF(node.name_km,''),${isMenu ? "NULLIF(node.name_en,''),node.name_zh" : "node.name"}) AS name,
+      node.name_km,node.name_en,node.name_zh,node.sort_order
+    FROM ${table} node JOIN selected_nodes selected ON selected.id=node.id
+    WHERE node.business_id=?1 ORDER BY node.sort_order,node.id`;
+  return { products, nodes, params };
+}
+__name(catalogScope, "catalogScope");
+async function priced(env, deps, context, products) {
+  const identity = context.identity;
+  const pricing = await deps.pricing(
+    env,
+    identity.business_id,
+    identity.pricing_mode,
+    identity.default_price_list_id,
+    identity.timezone
+  );
+  const prices = await sql(
+    context.db,
+    `SELECT price_list_id AS priceListId,product_id AS productId,
+      target_key AS targetKey,price_amount AS priceCents FROM product_prices
+    WHERE business_id=? AND price_list_id IN (?,?) AND product_id IN (SELECT value FROM json_each(?))`,
+    identity.business_id,
+    pricing.normalId,
+    pricing.activeId,
+    JSON.stringify(products.map((product) => product.id))
+  ).all();
+  const normal = deps.priceMap(prices.results, pricing.normalId);
+  const active = deps.priceMap(prices.results, pricing.activeId);
+  return {
+    active,
+    pricing,
+    products: products.flatMap((product) => {
+      const entry = deps.pricedProduct(
+        product,
+        normal,
+        active,
+        context.profile.branch_id
+      );
+      return entry ? [entry] : [];
+    })
+  };
+}
+__name(priced, "priced");
+function modifierGroups(value, currency) {
+  return value.map((group) => ({
+    id: group.id,
+    required: Boolean(group.required),
+    multiple: Boolean(group.multiple),
+    label_km: group.labelKm,
+    label_en: group.labelEn,
+    label_zh: group.labelZh,
+    options: group.options.map((option) => ({
+      id: String(option.id),
+      label_km: String(option.labelKm ?? ""),
+      label_en: String(option.labelEn ?? ""),
+      label_zh: String(option.labelZh ?? ""),
+      prefix: String(option.prefix ?? ""),
+      price_minor: priceMinor(Number(option.priceCents ?? 0), currency)
+    }))
+  }));
+}
+__name(modifierGroups, "modifierGroups");
+async function getCatalog(env, deps, context, url) {
+  const { products, nodes, params } = catalogScope(context);
+  const { limit, offset, page } = pagination(url);
+  const [productRows, nodeRows] = await context.db.batch([
+    sql(
+      context.db,
+      products + " ORDER BY p.sort_order,p.id LIMIT ?4 OFFSET ?5",
+      ...params,
+      context.profile.branch_id,
+      limit + 1,
+      offset
+    ),
+    sql(context.db, nodes, ...params)
+  ]);
+  const { currency, catalog_version } = context.identity;
+  const result = await priced(
+    env,
+    deps,
+    context,
+    productRows.results.slice(0, limit)
+  );
+  return respond({
+    catalog_version,
+    currency,
+    price_list_id: result.pricing.activeId,
+    mode: context.config.catalog_mode,
+    nodes: nodeRows.results,
+    page,
+    page_size: limit,
+    has_more: productRows.results.length > limit,
+    products: result.products.map((product) => ({
+      id: product.id,
+      code: product.code,
+      name: product.name,
+      name_km: product.nameKm,
+      name_en: product.nameEn,
+      name_zh: product.nameZh,
+      description: product.description,
+      unit: product.unit,
+      image_url: product.imageUrl,
+      category_id: product.categoryId,
+      menu_ids: JSON.parse(String(product.menuIds)),
+      price_minor: priceMinor(product.priceCents, currency),
+      price_list_id: result.active.has(`${product.id}:base`) ? result.pricing.activeId : result.pricing.normalId,
+      portions: product.portions.map((portion) => ({
+        id: portion.id,
+        label: portion.label,
+        label_km: portion.labelKm,
+        label_en: portion.labelEn,
+        label_zh: portion.labelZh,
+        price_minor: priceMinor(Number(portion.priceCents), currency),
+        price_list_id: result.active.has(`${product.id}:${portion.id}`) ? result.pricing.activeId : result.pricing.normalId
+      })),
+      modifier_groups: modifierGroups(product.modifierGroups, currency)
+    }))
+  });
+}
+__name(getCatalog, "getCatalog");
+async function saleLines(env, deps, context, value, currency, taxMode, taxRate) {
+  const inputs = list(value, "lines", 60).map((entry) => {
+    const line = object2(entry);
+    const modifiers2 = list(line.modifier_ids ?? [], "modifier_ids", 120).map(
+      (id2) => recordId(id2, "modifier ID")
+    );
+    if (new Set(modifiers2).size !== modifiers2.length)
+      invalid2("Modifier IDs must be distinct");
+    return {
+      productId: recordId(line.product_id, "product_id"),
+      portionId: line.portion_id == null ? null : recordId(line.portion_id, "portion_id"),
+      modifiers: modifiers2,
+      quantity: integer2(line.quantity, "quantity", 1, 999),
+      note: optionalText(line.note, "line note")
+    };
+  });
+  if (!inputs.length) invalid2("A bill needs at least one line");
+  const scope = catalogScope(context);
+  const rows = await sql(
+    context.db,
+    scope.products + " AND p.id IN (SELECT value FROM json_each(?4))",
+    ...scope.params,
+    context.profile.branch_id,
+    JSON.stringify([...new Set(inputs.map((line) => line.productId))])
+  ).all();
+  const result = await priced(env, deps, context, rows.results);
+  const products = new Map(
+    result.products.map((product) => [product.id, product])
+  );
+  return inputs.map((input, index) => {
+    const product = products.get(input.productId);
+    if (!product)
+      conflict(
+        "A product is unavailable for this profile",
+        "SELECTION_CHANGED"
+      );
+    const portion = product.portions.find(
+      (entry) => entry.id === input.portionId
+    );
+    if ((product.portions.length || input.portionId) && !portion) {
+      conflict("Choose an available portion", "SELECTION_CHANGED");
+    }
+    const modifiers2 = modifierGroups(product.modifierGroups, currency).flatMap(
+      (group) => {
+        const selected = group.options.filter(
+          (option) => input.modifiers.includes(option.id)
+        );
+        if (group.required && !selected.length || !group.multiple && selected.length > 1) {
+          conflict(
+            "Modifier selections do not satisfy this product's rules",
+            "SELECTION_CHANGED"
+          );
+        }
+        return selected.map((option) => ({ ...option, group_id: group.id }));
+      }
+    );
+    if (modifiers2.length !== input.modifiers.length)
+      conflict("A modifier is unavailable", "SELECTION_CHANGED");
+    const base = priceMinor(
+      Number(portion?.priceCents ?? product.priceCents),
+      currency
+    );
+    const unitPrice = base + modifiers2.reduce((sum, option) => sum + option.price_minor, 0);
+    const gross = unitPrice * input.quantity;
+    if (gross < 0)
+      conflict(
+        "The selected options produce a negative line price",
+        "INVALID_PRICING"
+      );
+    if (gross > MAX_AMOUNT)
+      conflict("The line amount exceeds the POS limit", "AMOUNT_LIMIT");
+    const key = `${input.productId}:${input.portionId ?? "base"}`;
+    return {
+      id: newId("posl"),
+      line_number: index + 1,
+      product_id: input.productId,
+      product_code: product.code,
+      product_name: product.name,
+      portion_id: input.portionId,
+      portion_name: portion ? String(
+        portion.label || portion.labelKm || portion.labelEn || portion.labelZh || ""
+      ) : null,
+      price_list_id: result.active.has(key) ? result.pricing.activeId : result.pricing.normalId,
+      modifiers: modifiers2,
+      quantity: input.quantity,
+      unit_price_minor: unitPrice,
+      ...saleLineTotals(gross, taxMode, taxRate),
+      note: input.note
+    };
+  });
+}
+__name(saleLines, "saleLines");
+
+// worker/posApiDevices.ts
+var proofWindow = 120;
+var accessLifetime = 43200;
+function issuePosToken(lifetime) {
+  return {
+    token: "possession_" + crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", ""),
+    expiresAt: Math.floor(Date.now() / 1e3) + lifetime
+  };
+}
+__name(issuePosToken, "issuePosToken");
+function hex(value, field, bytes) {
+  if (typeof value !== "string" || value.length !== bytes * 2 || !/^[a-f0-9]+$/.test(value))
+    invalid2(`Invalid ${field}`);
+  return value;
+}
+__name(hex, "hex");
+function decodeHex(value) {
+  return Uint8Array.from(
+    value.match(/../g),
+    (byte) => Number.parseInt(byte, 16)
+  );
+}
+__name(decodeHex, "decodeHex");
+function invalidProof() {
+  throw new PosError(
+    401,
+    "INVALID_DEVICE_CREDENTIAL",
+    "Sign in to enroll this POS device"
+  );
+}
+__name(invalidProof, "invalidProof");
+var grantRequired = `(m.role IN ('owner','manager') OR EXISTS (
+  SELECT 1 FROM pos_profile_grants g
+  WHERE g.business_id=p.business_id AND g.profile_id=p.id AND g.user_id=m.user_id
+))`;
+var activeCaller = `
+  FROM pos_sessions s
+  JOIN pos_profiles p ON p.business_id=s.business_id AND p.id=s.profile_id AND p.is_active=1
+  JOIN branches b ON b.business_id=p.business_id AND b.id=p.branch_id AND b.is_active=1
+  JOIN businesses business ON business.id=p.business_id AND business.is_active=1
+  JOIN memberships m ON m.business_id=s.business_id AND m.user_id=s.user_id
+  JOIN users u ON u.id=m.user_id AND u.password_salt=s.credential_version
+  WHERE s.token_hash=? AND s.expires_at>unixepoch()
+    AND ${activeDeviceSession} AND ${grantRequired} AND ${posPlanEnabled("p.business_id")}`;
+var credentialFields = "id,device_id,device_name,user_id,created_at,last_used_at,revoked_at";
+async function registerDevice(context, request) {
+  const body = await bodyOf(request);
+  const deviceId = recordId(body.device_id, "device_id");
+  const name = string(body.device_name, "device_name", 80);
+  const publicKey = hex(body.public_key, "public_key", 32);
+  const { db, identity, profile } = context;
+  const token = identity.token_hash;
+  const device = "posdev_" + crypto.randomUUID().replaceAll("-", "");
+  const [registered] = await db.batch([
+    sql(
+      db,
+      `INSERT INTO pos_device_credentials
+        (id,business_id,profile_id,user_id,device_id,device_name,public_key,credential_version,created_at,last_used_at)
+        SELECT ?,s.business_id,s.profile_id,s.user_id,?,?,?,s.credential_version,unixepoch(),unixepoch()
+        ${activeCaller} AND s.issued_by_device=0
+        ON CONFLICT (business_id,profile_id,user_id,device_id) DO UPDATE SET
+          device_name=excluded.device_name, credential_version=excluded.credential_version,
+          revoked_at=NULL, last_used_at=unixepoch()
+        WHERE pos_device_credentials.public_key=excluded.public_key
+        RETURNING ${credentialFields}`,
+      device,
+      deviceId,
+      name,
+      publicKey,
+      token
+    ),
+    sql(
+      db,
+      `UPDATE pos_sessions SET device_credential_id=(
+        SELECT id FROM pos_device_credentials WHERE business_id=? AND profile_id=? AND user_id=?
+          AND device_id=? AND public_key=? AND revoked_at IS NULL
+      ) WHERE token_hash=? AND issued_by_device=0 AND device_credential_id IS NULL
+        AND EXISTS (SELECT 1 ${activeCaller})`,
+      identity.business_id,
+      profile.id,
+      identity.user_id,
+      deviceId,
+      publicKey,
+      token,
+      token
+    )
+  ]);
+  if (!registered.results.length) {
+    const caller = await sql(
+      db,
+      `SELECT s.issued_by_device ${activeCaller}`,
+      token
+    ).first();
+    if (!caller || caller.issued_by_device) {
+      throw new PosError(
+        403,
+        "PASSWORD_SESSION_REQUIRED",
+        "Sign in with a password to enroll a POS device"
+      );
+    }
+    throw new PosError(
+      409,
+      "DEVICE_KEY_CHANGED",
+      "Use the enrolled key or set up a new device"
+    );
+  }
+  return respond(registered.results[0], 201);
+}
+__name(registerDevice, "registerDevice");
+async function renewDeviceSession(db, request) {
+  const body = await bodyOf(request);
+  const id2 = recordId(body.credential_id, "credential_id");
+  const nonce = hex(body.nonce, "nonce", 32);
+  const proof = hex(body.signature, "signature", 64);
+  const issuedAt = integer2(body.issued_at, "issued_at", 0);
+  const now = Math.floor(Date.now() / 1e3);
+  if (Math.abs(now - issuedAt) > proofWindow) {
+    throw new PosError(
+      409,
+      "DEVICE_PROOF_EXPIRED",
+      "Check the POS device date and time"
+    );
+  }
+  const credential = await sql(
+    db,
+    `SELECT d.public_key, ${posPlanEnabled("d.business_id")} AS pos_enabled
+     FROM pos_device_credentials d WHERE d.id=? AND d.revoked_at IS NULL`,
+    id2
+  ).first();
+  if (!credential) invalidProof();
+  let verified = false;
+  try {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      decodeHex(credential.public_key),
+      "Ed25519",
+      false,
+      ["verify"]
+    );
+    verified = await crypto.subtle.verify(
+      "Ed25519",
+      key,
+      decodeHex(proof),
+      new TextEncoder().encode(
+        `emenu.pos.device-session.v1
+${id2}
+${issuedAt}
+${nonce}`
+      )
+    );
+  } catch {
+    invalidProof();
+  }
+  if (!verified) invalidProof();
+  requirePosPlan(credential.pos_enabled);
+  const { token, expiresAt } = issuePosToken(accessLifetime);
+  const hash2 = await digest(token);
+  const [, , minted] = await db.batch([
+    sql(db, "DELETE FROM pos_device_proofs WHERE expires_at<?", now),
+    sql(
+      db,
+      `INSERT INTO pos_device_proofs (credential_id,nonce,session_hash,expires_at)
+        SELECT d.id,?,?,? FROM pos_device_credentials d
+        JOIN pos_profiles p ON p.business_id=d.business_id AND p.id=d.profile_id AND p.is_active=1
+        JOIN branches b ON b.business_id=p.business_id AND b.id=p.branch_id AND b.is_active=1
+        JOIN businesses business ON business.id=p.business_id AND business.is_active=1
+        JOIN memberships m ON m.business_id=d.business_id AND m.user_id=d.user_id
+        JOIN users u ON u.id=m.user_id AND u.password_salt=d.credential_version
+        WHERE d.id=? AND d.public_key=? AND d.revoked_at IS NULL AND ${grantRequired}
+          AND ${posPlanEnabled("d.business_id")}
+        ON CONFLICT (credential_id,nonce) DO NOTHING`,
+      nonce,
+      hash2,
+      issuedAt + proofWindow,
+      id2,
+      credential.public_key
+    ),
+    sql(
+      db,
+      `INSERT INTO pos_sessions
+        (token_hash,business_id,user_id,profile_id,credential_version,expires_at,device_credential_id,issued_by_device)
+        SELECT ?,d.business_id,d.user_id,d.profile_id,d.credential_version,?,d.id,1
+        FROM pos_device_credentials d JOIN pos_device_proofs proof ON proof.credential_id=d.id
+        WHERE d.id=? AND proof.nonce=? AND proof.session_hash=?
+        RETURNING profile_id,user_id`,
+      hash2,
+      expiresAt,
+      id2,
+      nonce,
+      hash2
+    ),
+    sql(
+      db,
+      `UPDATE pos_device_credentials SET last_used_at=unixepoch()
+        WHERE id=? AND EXISTS (SELECT 1 FROM pos_sessions WHERE token_hash=?)`,
+      id2,
+      hash2
+    ),
+    sql(
+      db,
+      "DELETE FROM pos_sessions WHERE device_credential_id=? AND expires_at<=unixepoch()",
+      id2
+    )
+  ]);
+  if (!minted.results.length) invalidProof();
+  return respond(
+    {
+      token,
+      expires_at: new Date(expiresAt * 1e3).toISOString(),
+      ...minted.results[0]
+    },
+    201
+  );
+}
+__name(renewDeviceSession, "renewDeviceSession");
+async function listDevices(context, url) {
+  const { db, identity, profile } = context;
+  return respond(
+    await pageOf(
+      db,
+      url,
+      "devices",
+      `SELECT ${credentialFields} FROM pos_device_credentials
+      WHERE business_id=? AND profile_id=? AND (?=1 OR user_id=?)
+      ORDER BY created_at DESC,id DESC`,
+      [
+        identity.business_id,
+        profile.id,
+        Number(privileged(identity.role)),
+        identity.user_id
+      ]
+    )
+  );
+}
+__name(listDevices, "listDevices");
+async function revokeDevice(context, id2) {
+  const { db, identity, profile } = context;
+  const revoked = await sql(
+    db,
+    `UPDATE pos_device_credentials AS target SET revoked_at=COALESCE(revoked_at,unixepoch())
+      WHERE id=? AND business_id=? AND profile_id=?
+        AND EXISTS (SELECT 1 ${activeCaller}
+          AND (s.user_id=target.user_id OR m.role IN ('owner','manager')))
+      RETURNING id`,
+    id2,
+    identity.business_id,
+    profile.id,
+    identity.token_hash
+  ).first();
+  if (!revoked) missing("Device credential");
+  return respond({ ok: true });
+}
+__name(revokeDevice, "revokeDevice");
+
+// worker/posApiShifts.ts
+var dayColumns = "id branch_id business_date timezone opened_at opened_by closed_at closed_by";
+var shiftColumns = "id branch_id profile_id working_day_id opened_at opened_by closed_at closed_by activity_revision";
+var dayJson = jsonRow("d", dayColumns);
+var shiftJson = jsonRow("s", shiftColumns);
+function selectDay(context, id2) {
+  return sql(
+    context.db,
+    `SELECT * FROM working_days WHERE business_id=? AND branch_id=?
+    AND ${id2 ? "id=?" : "closed_at IS NULL"}`,
+    context.identity.business_id,
+    context.profile.branch_id,
+    ...id2 ? [id2] : []
+  ).first();
+}
+__name(selectDay, "selectDay");
+function selectShift(context, id2) {
+  return sql(
+    context.db,
+    `SELECT * FROM cashier_shifts WHERE business_id=? AND profile_id=?
+    AND ${id2 ? "id=?" : "closed_at IS NULL"}`,
+    context.identity.business_id,
+    context.profile.id,
+    ...id2 ? [id2] : []
+  ).first();
+}
+__name(selectShift, "selectShift");
+async function operatingContext(context, requireShift = true) {
+  const [day, shift] = await Promise.all([
+    context.config.working_day_enabled ? selectDay(context) : null,
+    context.config.cashier_shift_enabled && requireShift ? selectShift(context) : null
+  ]);
+  if (context.config.working_day_enabled && !day)
+    conflict("Open the working day first", "WORKING_DAY_REQUIRED");
+  if (context.config.cashier_shift_enabled && requireShift && (!shift || shift.working_day_id !== (day?.id ?? null))) {
+    conflict("Open a cashier shift first", "CASHIER_SHIFT_REQUIRED");
+  }
+  return { day, shift, businessDate: day?.business_date ?? context.localDate };
+}
+__name(operatingContext, "operatingContext");
+function openGuard(day, shift) {
+  return {
+    query: `(? IS NULL OR EXISTS (SELECT 1 FROM working_days WHERE id=? AND closed_at IS NULL))
+      AND (? IS NULL OR EXISTS (SELECT 1 FROM cashier_shifts WHERE id=? AND closed_at IS NULL))`,
+    params: [
+      day?.id ?? null,
+      day?.id ?? null,
+      shift?.id ?? null,
+      shift?.id ?? null
+    ]
+  };
+}
+__name(openGuard, "openGuard");
+function updateShiftActivity(context, shift) {
+  return shift ? [
+    sql(
+      context.db,
+      "UPDATE cashier_shifts SET activity_revision=activity_revision+1 WHERE id=?",
+      shift.id
+    )
+  ] : [];
+}
+__name(updateShiftActivity, "updateShiftActivity");
+var dayResult = /* @__PURE__ */ __name((id2) => ({
+  query: `SELECT ${dayJson} FROM working_days d WHERE d.id=?`,
+  params: [id2]
+}), "dayResult");
+var shiftResult = /* @__PURE__ */ __name((id2) => ({
+  query: `SELECT ${jsonRow("s", shiftColumns, {
+    closing_counts: `json((SELECT json_group_array(json_object('payment_type_id',payment_type_id,
+      'payment_type_name',payment_type_name,'currency',currency,'expected_minor',expected_minor,
+      'declared_minor',declared_minor,'variance_minor',variance_minor) ORDER BY payment_type_id,currency)
+      FROM cashier_shift_closing_counts WHERE shift_id=s.id))`
+  })} AS value FROM cashier_shifts s WHERE s.id=?`,
+  params: [id2]
+}), "shiftResult");
+async function currentOperations(context) {
+  const { db, identity, profile, config } = context;
+  const [day, shift] = await Promise.all([
+    config.working_day_enabled ? sql(
+      db,
+      `SELECT ${dayColumns.replaceAll(" ", ",")} FROM working_days
+      WHERE business_id=? AND branch_id=? AND closed_at IS NULL`,
+      identity.business_id,
+      profile.branch_id
+    ).first() : null,
+    config.cashier_shift_enabled ? sql(
+      db,
+      `SELECT ${shiftColumns.replaceAll(" ", ",")} FROM cashier_shifts
+      WHERE business_id=? AND profile_id=? AND closed_at IS NULL`,
+      identity.business_id,
+      profile.id
+    ).first() : null
+  ]);
+  return { working_day: day, cashier_shift: shift };
+}
+__name(currentOperations, "currentOperations");
+async function readOperations(context, url, resource, id2, action) {
+  const { db, identity, profile } = context;
+  const days = resource === "working-days";
+  if (!id2) {
+    const table = days ? "working_days" : "cashier_shifts";
+    const columns = (days ? dayColumns : shiftColumns).replaceAll(" ", ",");
+    return respond(
+      await pageOf(
+        db,
+        url,
+        table,
+        `SELECT ${columns} FROM ${table}
+      WHERE business_id=? AND ${days ? "branch_id" : "profile_id"}=? ORDER BY opened_at DESC,id DESC`,
+        [identity.business_id, days ? profile.branch_id : profile.id]
+      )
+    );
+  }
+  if (days && !action) {
+    const row2 = await sql(
+      db,
+      `SELECT ${dayColumns.replaceAll(" ", ",")} FROM working_days
+      WHERE business_id=? AND branch_id=? AND id=?`,
+      identity.business_id,
+      profile.branch_id,
+      id2
+    ).first();
+    if (!row2) missing("Working day");
+    return respond(row2);
+  }
+  if (days) missing("Endpoint");
+  const shift = await selectShift(context, id2);
+  if (!shift) missing("Cashier shift");
+  if (action === "cash-floats") {
+    return respond(
+      await pageOf(
+        db,
+        url,
+        "cash_floats",
+        `SELECT * FROM cash_floats
+      WHERE shift_id=? ORDER BY created_at,id`,
+        [id2]
+      )
+    );
+  }
+  if (action === "reconciliation") {
+    if (shift.closed_at) {
+      const { results } = await sql(
+        db,
+        `SELECT payment_type_id,payment_type_name,currency,expected_minor,declared_minor,variance_minor
+        FROM cashier_shift_closing_counts WHERE shift_id=? ORDER BY payment_type_id,currency`,
+        id2
+      ).all();
+      return respond({
+        shift_id: id2,
+        activity_revision: shift.activity_revision,
+        counts: results
+      });
+    }
+    const [revision, totals] = await db.batch([
+      sql(db, "SELECT activity_revision FROM cashier_shifts WHERE id=?", id2),
+      expectedCounts(db, id2)
+    ]);
+    return respond({
+      shift_id: id2,
+      activity_revision: revision.results[0].activity_revision,
+      counts: totals.results
+    });
+  }
+  if (action) missing("Endpoint");
+  const result = shiftResult(id2);
+  const row = await sql(db, result.query, ...result.params).first(
+    "value"
+  );
+  return respond(JSON.parse(row));
+}
+__name(readOperations, "readOperations");
+async function writeDay(context, command, id2) {
+  const { db, identity, profile, now } = context;
+  const { business_id: businessId, user_id: actor } = identity;
+  requireManager(identity.role);
+  if (!id2) {
+    if (!context.config.working_day_enabled)
+      conflict("Working days are disabled on this profile", "FEATURE_DISABLED");
+    if (await selectDay(context))
+      conflict(
+        "A working day is already open for this branch",
+        "WORKING_DAY_OPEN"
+      );
+    const day2 = context.storeImport?.resourceId ?? newId("posd");
+    return command.commit(
+      201,
+      { query: "1", params: [], manager: true },
+      [
+        sql(
+          db,
+          `INSERT INTO working_days(id,business_id,branch_id,business_date,timezone,opened_at,opened_by)
+        VALUES (?,?,?,?,?,?,?)`,
+          day2,
+          businessId,
+          profile.branch_id,
+          context.localDate,
+          identity.timezone,
+          now,
+          actor
+        )
+      ],
+      dayResult(day2)
+    );
+  }
+  const day = await selectDay(context, id2);
+  if (!day) missing("Working day");
+  if (day.closed_at) conflict("This working day is already closed");
+  const canClose = `NOT EXISTS (SELECT 1 FROM cashier_shifts WHERE working_day_id=? AND closed_at IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM sales WHERE working_day_id=? AND status='open')`;
+  const allowed = await sql(
+    db,
+    "SELECT " + canClose + " AS allowed",
+    id2,
+    id2
+  ).first("allowed");
+  if (!allowed)
+    conflict(
+      "Close the working day's shifts and settle or cancel its open bills",
+      "WORKING_DAY_HAS_ACTIVITY"
+    );
+  return command.commit(
+    200,
+    {
+      query: `EXISTS (SELECT 1 FROM working_days WHERE id=? AND closed_at IS NULL) AND ${canClose}`,
+      params: [id2, id2, id2],
+      manager: true,
+      allowReadOnly: true
+    },
+    [
+      sql(
+        db,
+        "UPDATE working_days SET closed_at=?,closed_by=? WHERE id=?",
+        now,
+        actor,
+        id2
+      )
+    ],
+    dayResult(id2)
+  );
+}
+__name(writeDay, "writeDay");
+var countKey = /* @__PURE__ */ __name((row) => `${row.payment_type_id}:${row.currency}`, "countKey");
+function expectedCounts(db, shiftId) {
+  return sql(
+    db,
+    `WITH configured(payment_type_id,payment_type_name,payment_kind,currency) AS (
+      SELECT json_extract(t.value,'$.id'),json_extract(t.value,'$.name'),json_extract(t.value,'$.kind'),currency.value
+      FROM cashier_shifts s,json_each(s.payment_types_json) t,json_each(t.value,'$.currencies') currency WHERE s.id=?1
+    ), entries(payment_type_id,payment_type_name,payment_kind,currency,amount_minor) AS (
+      SELECT payment_type_id,payment_type_name,payment_kind,currency,0 FROM configured
+      UNION ALL
+      SELECT cf.payment_type_id,tender.payment_type_name,tender.payment_kind,cf.currency,
+        CASE WHEN cf.kind='cash_out' THEN -cf.amount_minor ELSE cf.amount_minor END
+      FROM cash_floats cf JOIN configured tender
+        ON tender.payment_type_id=cf.payment_type_id AND tender.currency=cf.currency
+      WHERE cf.shift_id=?1
+      UNION ALL
+      SELECT COALESCE(drawer.payment_type_id,p.payment_type_id),COALESCE(drawer.payment_type_name,p.payment_type_name),
+        p.payment_kind,p.currency,p.amount_minor
+      FROM sales sale JOIN sale_payments p ON p.sale_id=sale.id
+      LEFT JOIN configured drawer ON p.payment_kind='cash' AND drawer.payment_kind='cash' AND drawer.currency=p.currency
+      WHERE sale.shift_id=?1 AND sale.status='paid'
+    ) SELECT payment_type_id,max(payment_type_name) AS payment_type_name,max(payment_kind) AS payment_kind,
+      currency,sum(amount_minor) AS expected_minor
+      FROM entries GROUP BY payment_type_id,currency ORDER BY payment_type_id,currency`,
+    shiftId
+  );
+}
+__name(expectedCounts, "expectedCounts");
+function validateFloatTender(entry, types) {
+  const currency = currencyOf(entry.currency);
+  const id2 = recordId(entry.payment_type_id, "payment_type_id");
+  const type = types.find(
+    (type2) => type2.id === id2 && type2.currencies.includes(currency)
+  );
+  if (!type || !allowsCashFloat(type))
+    invalid2("Choose a payment type and currency that allow cash floats");
+  return { currency, payment_type_id: id2 };
+}
+__name(validateFloatTender, "validateFloatTender");
+async function writeShift(context, command, id2, action) {
+  const { db, identity, profile, config, now } = context;
+  const actor = identity.user_id;
+  if (!id2) {
+    if (!config.cashier_shift_enabled)
+      conflict(
+        "Cashier shifts are disabled on this profile",
+        "FEATURE_DISABLED"
+      );
+    if (await selectShift(context))
+      conflict(
+        "A cashier shift is already open on this profile",
+        "CASHIER_SHIFT_OPEN"
+      );
+    const [{ day }, types] = await Promise.all([
+      operatingContext(context, false),
+      context.storeImport?.shiftPaymentTypes ?? paymentTypes(context)
+    ]);
+    const opening = list(
+      command.body.opening_cash ?? [],
+      "opening_cash",
+      40
+    ).map((raw) => {
+      const entry = object2(raw);
+      return {
+        ...validateFloatTender(entry, types),
+        amount_minor: integer2(entry.amount_minor, "amount_minor", 0)
+      };
+    });
+    const keys = new Set(opening.map(countKey));
+    if (keys.size !== opening.length)
+      invalid2("Provide one opening balance per payment type and currency");
+    const shift2 = context.storeImport?.resourceId ?? newId("poss");
+    const writes = [
+      sql(
+        db,
+        `INSERT INTO cashier_shifts
+      (id,business_id,branch_id,profile_id,working_day_id,opened_at,opened_by,payment_types_json)
+      VALUES (?,?,?,?,?,?,?,?)`,
+        shift2,
+        identity.business_id,
+        profile.branch_id,
+        profile.id,
+        day?.id ?? null,
+        now,
+        actor,
+        JSON.stringify(types)
+      )
+    ];
+    for (const type of types.filter(allowsCashFloat)) {
+      for (const currency of type.currencies) {
+        const amount = opening.find(
+          (entry) => entry.payment_type_id === type.id && entry.currency === currency
+        )?.amount_minor ?? 0;
+        writes.push(
+          sql(
+            db,
+            `INSERT INTO cash_floats(id,shift_id,payment_type_id,currency,kind,amount_minor,created_at,created_by)
+          VALUES (?,?,?,?,'opening',?,?,?)`,
+            newId("posf"),
+            shift2,
+            type.id,
+            currency,
+            amount,
+            now,
+            actor
+          )
+        );
+      }
+    }
+    return command.commit(
+      201,
+      openGuard(day, null),
+      writes,
+      shiftResult(shift2)
+    );
+  }
+  const shift = await selectShift(context, id2);
+  if (!shift) missing("Cashier shift");
+  if (shift.closed_at)
+    conflict("This cashier shift is closed", "CASHIER_SHIFT_CLOSED");
+  if (action === "cash-floats") {
+    const { currency, payment_type_id } = validateFloatTender(
+      command.body,
+      JSON.parse(shift.payment_types_json)
+    );
+    const kind = choice(command.body.kind, "kind", [
+      "cash_in",
+      "cash_out"
+    ]);
+    const amount = integer2(command.body.amount_minor, "amount_minor", 1);
+    const reason = string(command.body.reason, "reason", 500);
+    const float = context.storeImport?.resourceId ?? newId("posf");
+    return command.commit(
+      201,
+      openGuard(null, shift),
+      [
+        sql(
+          db,
+          `INSERT INTO cash_floats(id,shift_id,payment_type_id,currency,kind,amount_minor,reason,created_at,created_by)
+        VALUES (?,?,?,?,?,?,?,?,?)`,
+          float,
+          id2,
+          payment_type_id,
+          currency,
+          kind,
+          amount,
+          reason,
+          now,
+          actor
+        ),
+        ...updateShiftActivity(context, shift)
+      ],
+      {
+        query: `SELECT ${jsonRow("f", "id shift_id payment_type_id currency kind amount_minor reason created_at created_by")}
+      FROM cash_floats f WHERE id=?`,
+        params: [float]
+      }
+    );
+  }
+  const revision = integer2(
+    command.body.activity_revision,
+    "activity_revision",
+    1
+  );
+  if (revision !== shift.activity_revision)
+    conflict("Refresh the shift reconciliation", "RECONCILIATION_CHANGED");
+  const { results } = await expectedCounts(db, id2).all();
+  const input = list(command.body.counts, "counts", 1e3).map((raw) => {
+    const count = object2(raw);
+    return {
+      payment_type_id: recordId(count.payment_type_id, "payment_type_id"),
+      currency: currencyOf(count.currency),
+      declared_minor: integer2(
+        count.declared_minor,
+        "declared_minor",
+        -MAX_AMOUNT
+      ),
+      expected_minor: context.storeImport ? integer2(
+        count.expected_minor,
+        "expected_minor",
+        Number.MIN_SAFE_INTEGER,
+        Number.MAX_SAFE_INTEGER
+      ) : void 0
+    };
+  });
+  const declared = new Map(
+    input.map((entry) => [countKey(entry), entry.declared_minor])
+  );
+  if (input.length !== results.length || declared.size !== input.length || results.some((row) => !declared.has(countKey(row)))) {
+    invalid2(
+      "Send one declared amount for every payment type and currency in the reconciliation"
+    );
+  }
+  if (context.storeImport) {
+    const expected = new Map(
+      input.map((row) => [countKey(row), row.expected_minor])
+    );
+    if (results.some((row) => expected.get(countKey(row)) !== row.expected_minor)) {
+      conflict(
+        "The saved drawer amounts differ from the server ledger",
+        "RECONCILIATION_CHANGED"
+      );
+    }
+  }
+  if (results.some(
+    (row) => row.payment_kind === "cash" && declared.get(countKey(row)) < 0
+  )) {
+    invalid2("Declared cash amounts must be zero or positive");
+  }
+  return command.commit(
+    200,
+    {
+      query: "EXISTS (SELECT 1 FROM cashier_shifts WHERE id=? AND closed_at IS NULL AND activity_revision=?)",
+      params: [id2, revision],
+      allowReadOnly: true
+    },
+    [
+      sql(
+        db,
+        "UPDATE cashier_shifts SET closed_at=?,closed_by=? WHERE id=?",
+        now,
+        actor,
+        id2
+      ),
+      sql(
+        db,
+        `INSERT INTO cashier_shift_closing_counts
+      (shift_id,payment_type_id,payment_type_name,currency,expected_minor,declared_minor)
+      SELECT ?,json_extract(value,'$.payment_type_id'),json_extract(value,'$.payment_type_name'),json_extract(value,'$.currency'),
+        json_extract(value,'$.expected_minor'),json_extract(value,'$.declared_minor') FROM json_each(?)`,
+        id2,
+        JSON.stringify(
+          results.map((row) => ({
+            ...row,
+            declared_minor: declared.get(countKey(row))
+          }))
+        )
+      ),
+      promoteProfile(context)
+    ],
+    shiftResult(id2)
+  );
+}
+__name(writeShift, "writeShift");
+
+// worker/posApiSales.ts
+var salesColumns = `id branch_id profile_id working_day_id shift_id reverses_sale_id status revision business_date
+  currency secondary_exchange_rate tax_mode tax_rate_bps subtotal_minor tax_minor total_minor table_id table_code
+  table_label customer_id customer_name note reason created_at created_by updated_at updated_by settled_at settled_by`;
+var lineColumns = `id line_number product_id product_code product_name portion_id portion_name
+  price_list_id quantity unit_price_minor subtotal_minor tax_minor total_minor note`;
+var paymentColumns = `id line_number payment_type_id payment_type_name payment_kind currency
+  entry_type amount_minor reference reverses_payment_id`;
+var reversalId = "(SELECT r.id FROM sales r WHERE r.reverses_sale_id=s.id)";
+var lineJson = jsonRow("l", lineColumns, {
+  modifiers: "json(l.modifiers_json)"
+});
+var paymentJson = jsonRow("p", paymentColumns);
+var saleJson = jsonRow("s", salesColumns, {
+  reversed_by_sale_id: reversalId,
+  receipt: "json(s.receipt_json)",
+  lines: `json((SELECT json_group_array(${lineJson} ORDER BY l.line_number) FROM sale_products l WHERE l.sale_id=s.id))`,
+  payments: `json((SELECT json_group_array(${paymentJson} ORDER BY p.line_number) FROM sale_payments p WHERE p.sale_id=s.id))`
+});
+var resultOf = /* @__PURE__ */ __name((id2) => ({
+  query: `SELECT ${saleJson} AS value FROM sales s WHERE s.id=?`,
+  params: [id2]
+}), "resultOf");
+function findSale(context, id2) {
+  return sql(
+    context.db,
+    "SELECT * FROM sales WHERE id=? AND business_id=? AND profile_id=?",
+    id2,
+    context.identity.business_id,
+    context.profile.id
+  ).first();
+}
+__name(findSale, "findSale");
+function validateBusinessDate(value) {
+  const parsed = /* @__PURE__ */ new Date(value + "T00:00:00Z");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== value)
+    invalid2("Invalid business_date");
+}
+__name(validateBusinessDate, "validateBusinessDate");
+async function readBusinessSales(db, url, businessId) {
+  const filters = ["s.business_id=?"];
+  const values = [businessId];
+  const status = url.searchParams.get("status");
+  const date = url.searchParams.get("business_date");
+  if (status !== null) {
+    choice(status, "status", ["open", "paid", "cancelled"]);
+    filters.push("s.status=?");
+    values.push(status);
+  }
+  if (date !== null) {
+    validateBusinessDate(date);
+    filters.push("s.business_date=?");
+    values.push(date);
+  }
+  return respond(await pageOf(db, url, "sales", `
+    SELECT s.id,s.business_date,s.created_at,s.customer_name,s.table_label,s.status,
+      s.currency,s.total_minor,s.reverses_sale_id,${reversalId} AS reversed_by_sale_id,
+      b.name AS branch_name,p.name AS profile_name
+    FROM sales s
+    JOIN pos_profiles p ON p.id=s.profile_id AND p.business_id=s.business_id
+    JOIN branches b ON b.id=s.branch_id AND b.business_id=s.business_id
+    WHERE ${filters.join(" AND ")}
+    ORDER BY s.created_at DESC,s.id DESC
+  `, values));
+}
+__name(readBusinessSales, "readBusinessSales");
+async function readSellingOverview(db, businessId, date) {
+  const { results } = await sql(db, `
+    SELECT currency,
+      COUNT(CASE WHEN status='paid' AND reverses_sale_id IS NULL THEN 1 END) AS completed_count,
+      COUNT(CASE WHEN status='open' THEN 1 END) AS open_count,
+      SUM(CASE WHEN status='paid' THEN total_minor ELSE 0 END) AS net_minor
+    FROM sales WHERE business_id=? AND (status='open' OR (status='paid' AND business_date=?))
+    GROUP BY currency ORDER BY currency
+  `, businessId, date).all();
+  return respond({ business_date: date, currencies: results });
+}
+__name(readSellingOverview, "readSellingOverview");
+async function readSales(context, url, id2) {
+  const { db, identity, profile } = context;
+  if (id2) {
+    const result = resultOf(id2);
+    const row = await sql(
+      db,
+      result.query + " AND s.business_id=? AND s.profile_id=?",
+      id2,
+      identity.business_id,
+      profile.id
+    ).first("value");
+    if (!row) missing("Sale");
+    return respond(JSON.parse(row));
+  }
+  const filters = ["s.business_id=?", "s.profile_id=?"];
+  const values = [identity.business_id, profile.id];
+  for (const field of [
+    "status",
+    "business_date",
+    "table_id",
+    "shift_id",
+    "working_day_id"
+  ]) {
+    const value = url.searchParams.get(field);
+    if (value === null) continue;
+    if (field === "status")
+      choice(value, "status", ["open", "paid", "cancelled"]);
+    else if (field === "business_date") validateBusinessDate(value);
+    else recordId(value, field);
+    filters.push(`s.${field}=?`);
+    values.push(value);
+  }
+  const columns = salesColumns.split(/\s+/).map((column) => "s." + column).join(",");
+  return respond(
+    await pageOf(
+      db,
+      url,
+      "sales",
+      `SELECT ${columns},${reversalId} AS reversed_by_sale_id
+    FROM sales s WHERE ${filters.join(" AND ")} ORDER BY s.created_at DESC,s.id DESC`,
+      values
+    )
+  );
+}
+__name(readSales, "readSales");
+async function chooseTable(context, input, previous) {
+  const tableId = input === void 0 ? previous?.table_id ?? null : input === null ? null : recordId(input, "table_id");
+  if (!tableId) {
+    if (context.config.table_mode === "required")
+      invalid2("This profile requires a table");
+    return { id: null, code: null, label: null, check: false };
+  }
+  if (context.config.table_mode === "disabled")
+    invalid2("Tables are disabled on this profile");
+  if (tableId === previous?.table_id)
+    return {
+      id: tableId,
+      code: previous.table_code,
+      label: previous.table_label,
+      check: false
+    };
+  const row = await sql(
+    context.db,
+    `SELECT t.id,t.code,t.label,t.group_id FROM restaurant_tables t JOIN table_groups g
+    ON g.id=t.group_id AND g.business_id=t.business_id AND g.branch_id=t.branch_id
+    WHERE t.business_id=?1 AND t.branch_id=?2 AND t.id=?3 AND t.is_active=1 AND g.is_active=1
+      AND (?4 IS NULL OR g.id IN (SELECT value FROM json_each(?4)))`,
+    context.identity.business_id,
+    context.profile.branch_id,
+    tableId,
+    context.config.table_group_ids ? JSON.stringify(context.config.table_group_ids) : null
+  ).first();
+  if (!row) missing("Table");
+  return { ...row, check: true };
+}
+__name(chooseTable, "chooseTable");
+async function chooseCustomer(context, input, previous) {
+  if (input === void 0 && previous)
+    return { id: previous.customer_id, name: previous.customer_name };
+  const id2 = input == null ? context.config.default_customer_id : recordId(input, "customer_id");
+  const customer = await sql(
+    context.db,
+    "SELECT id,name FROM pos_customers WHERE business_id=? AND id=?",
+    context.identity.business_id,
+    id2
+  ).first();
+  if (!customer) missing("Customer");
+  return customer;
+}
+__name(chooseCustomer, "chooseCustomer");
+function openSaleGuard(guard, sale, revision) {
+  return {
+    ...guard,
+    query: `${guard.query} AND EXISTS (SELECT 1 FROM sales WHERE id=? AND status='open' AND revision=?)`,
+    params: [...guard.params, sale.id, revision]
+  };
+}
+__name(openSaleGuard, "openSaleGuard");
+function assertRevision(sale, body) {
+  const revision = integer2(body.revision, "revision", 1);
+  if (sale.status !== "open")
+    conflict("This bill is no longer open", "BILL_CLOSED");
+  if (revision !== sale.revision)
+    conflict("Refresh the bill and use its current revision", "BILL_CHANGED");
+  return revision;
+}
+__name(assertRevision, "assertRevision");
+function assertExpectedContext(body, operating) {
+  if (body.expected_context === void 0) return;
+  const expected = object2(body.expected_context);
+  const date = string(expected.business_date, "business_date", 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) invalid2("Invalid business date");
+  const day = expected.working_day_id === null ? null : recordId(expected.working_day_id, "working_day_id");
+  const shift = expected.shift_id === null ? null : recordId(expected.shift_id, "shift_id");
+  if (date !== operating.businessDate || day !== (operating.day?.id ?? null) || shift !== (operating.shift?.id ?? null)) {
+    conflict(
+      "The expected working day or cashier shift has changed",
+      "SALE_CONTEXT_CHANGED"
+    );
+  }
+}
+__name(assertExpectedContext, "assertExpectedContext");
+async function saveSale(env, deps, context, command, id2) {
+  const { db, identity, profile, config, now } = context;
+  const actor = identity.user_id;
+  const body = command.body;
+  const existing = id2 ? await findSale(context, id2) : null;
+  if (id2 && !existing) missing("Sale");
+  const revision = existing ? assertRevision(existing, body) : 1;
+  const operating = await operatingContext(context);
+  assertExpectedContext(body, operating);
+  const { day, shift, businessDate } = operating;
+  if (existing && (day?.id ?? null) !== existing.working_day_id)
+    conflict("The bill belongs to a different working day");
+  const currency = existing?.currency ?? identity.currency;
+  const taxMode = existing?.tax_mode ?? config.tax_mode;
+  const taxRate = existing?.tax_rate_bps ?? config.tax_rate_bps;
+  const note = body.note === void 0 ? existing?.note ?? null : optionalText(body.note, "note");
+  if (body.lines !== void 0 && currency !== identity.currency) {
+    conflict(
+      "The business currency changed. Settle the existing quote or cancel the bill before starting another.",
+      "CURRENCY_CHANGED"
+    );
+  }
+  const [table, customer, lines] = await Promise.all([
+    chooseTable(context, body.table_id, existing),
+    chooseCustomer(context, body.customer_id, existing),
+    !existing || body.lines !== void 0 ? saleLines(env, deps, context, body.lines, currency, taxMode, taxRate) : null
+  ]);
+  const amounts = lines?.reduce(
+    (sum, line) => ({
+      subtotal: sum.subtotal + line.subtotal_minor,
+      tax: sum.tax + line.tax_minor,
+      total: sum.total + line.total_minor
+    }),
+    { subtotal: 0, tax: 0, total: 0 }
+  );
+  if (amounts && amounts.total > MAX_AMOUNT)
+    conflict("The bill exceeds the POS amount limit", "AMOUNT_LIMIT");
+  const sale = id2 ?? newId("possale");
+  const guard = existing ? openSaleGuard(openGuard(day, shift), existing, revision) : openGuard(day, shift);
+  if (lines) {
+    guard.query += " AND EXISTS (SELECT 1 FROM businesses WHERE id=? AND menu_cache_version=?)";
+    guard.params.push(identity.business_id, identity.catalog_version);
+  }
+  if (table.check) {
+    guard.query += ` AND EXISTS (SELECT 1 FROM restaurant_tables t JOIN table_groups g
+      ON g.id=t.group_id AND g.business_id=t.business_id AND g.branch_id=t.branch_id
+      WHERE t.id=? AND t.business_id=? AND t.branch_id=? AND t.is_active=1 AND g.is_active=1
+        AND t.code=? AND t.label=? AND g.id=?)`;
+    guard.params.push(
+      table.id,
+      identity.business_id,
+      profile.branch_id,
+      table.code,
+      table.label,
+      table.group_id
+    );
+  }
+  const writes = [];
+  if (existing) {
+    writes.push(
+      sql(
+        db,
+        `UPDATE sales SET table_id=?,table_code=?,table_label=?,customer_id=?,customer_name=?,note=?,
+      subtotal_minor=COALESCE(?,subtotal_minor),tax_minor=COALESCE(?,tax_minor),total_minor=COALESCE(?,total_minor),
+      revision=revision+1,updated_at=?,updated_by=? WHERE id=?`,
+        table.id,
+        table.code,
+        table.label,
+        customer.id,
+        customer.name,
+        note,
+        amounts?.subtotal ?? null,
+        amounts?.tax ?? null,
+        amounts?.total ?? null,
+        now,
+        actor,
+        sale
+      )
+    );
+  } else {
+    const receipt = JSON.stringify({
+      business_name: identity.business_name,
+      profile_name: profile.name,
+      branch_name: profile.branch_name,
+      template: config.receipt_template,
+      copies: config.print_copies
+    });
+    writes.push(
+      sql(
+        db,
+        `INSERT INTO sales (id,business_id,branch_id,profile_id,working_day_id,status,business_date,
+      currency,secondary_exchange_rate,tax_mode,tax_rate_bps,subtotal_minor,tax_minor,total_minor,table_id,table_code,
+      table_label,customer_id,customer_name,receipt_json,note,created_at,created_by,updated_at,updated_by)
+      VALUES (?,?,?,?,?,'open',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        sale,
+        identity.business_id,
+        profile.branch_id,
+        profile.id,
+        day?.id ?? null,
+        businessDate,
+        currency,
+        String(identity.secondary_exchange_rate),
+        taxMode,
+        taxRate,
+        amounts.subtotal,
+        amounts.tax,
+        amounts.total,
+        table.id,
+        table.code,
+        table.label,
+        customer.id,
+        customer.name,
+        receipt,
+        note,
+        now,
+        actor,
+        now,
+        actor
+      )
+    );
+  }
+  if (lines) {
+    const serialized = JSON.stringify(lines);
+    if (new TextEncoder().encode(serialized).length > 384e3)
+      invalid2("The bill contains too much product and modifier data");
+    if (existing)
+      writes.push(sql(db, "DELETE FROM sale_products WHERE sale_id=?", sale));
+    writes.push(
+      sql(
+        db,
+        `INSERT INTO sale_products (sale_id,${lineColumns.replaceAll(/\s+/g, ",")},modifiers_json)
+      SELECT ?,${lineColumns.split(/\s+/).map((column) => `json_extract(value,'$.${column}')`).join(",")},
+        json_extract(value,'$.modifiers') FROM json_each(?)`,
+        sale,
+        serialized
+      )
+    );
+  }
+  return command.commit(existing ? 200 : 201, guard, writes, resultOf(sale));
+}
+__name(saveSale, "saveSale");
+function salePayments(input, types, sale) {
+  const entries = list(input, "payments", 60).map((raw, index) => {
+    const entry = object2(raw);
+    const id2 = recordId(entry.payment_type_id, "payment_type_id");
+    const currency = currencyOf(entry.currency);
+    const type = types.find(
+      (type2) => type2.id === id2 && type2.currencies.includes(currency)
+    );
+    if (!type)
+      invalid2("Use a payment type and currency accepted by this profile");
+    const entryType = choice(entry.entry_type ?? "tender", "entry_type", [
+      "tender",
+      "change"
+    ]);
+    if (entryType === "change" && type.kind !== "cash")
+      invalid2("Change requires a cash payment type");
+    const amount = integer2(entry.amount_minor, "amount_minor", 1);
+    return {
+      id: newId("pospay"),
+      line_number: index + 1,
+      payment_type_id: type.id,
+      payment_type_name: type.name,
+      payment_kind: type.kind,
+      currency,
+      entry_type: entryType,
+      amount_minor: entryType === "change" ? -amount : amount,
+      reference: optionalText(entry.reference, "payment reference", 160),
+      reverses_payment_id: null
+    };
+  });
+  const net = { USD: 0, KHR: 0 };
+  const cash = { USD: 0, KHR: 0 };
+  for (const entry of entries) {
+    net[entry.currency] += entry.amount_minor;
+    if (entry.payment_kind === "cash")
+      cash[entry.currency] += entry.amount_minor;
+  }
+  if (cash.USD < 0 || cash.KHR < 0)
+    invalid2("Change cannot exceed cash tendered in that currency");
+  const secondary = sale.currency === "USD" ? "KHR" : "USD";
+  const paid = net[sale.currency] + secondaryToPrimary(
+    net[secondary],
+    sale.currency,
+    sale.secondary_exchange_rate
+  );
+  if (paid !== sale.total_minor)
+    conflict(
+      "Net payments must match the bill total",
+      "PAYMENT_TOTAL_MISMATCH"
+    );
+  return entries;
+}
+__name(salePayments, "salePayments");
+function insertSalePayments(db, id2, entries) {
+  return sql(
+    db,
+    `INSERT INTO sale_payments(sale_id,${paymentColumns.replaceAll(/\s+/g, ",")})
+    SELECT ?,${paymentColumns.split(/\s+/).map((column) => `json_extract(value,'$.${column}')`).join(",")}
+    FROM json_each(?)`,
+    id2,
+    JSON.stringify(entries)
+  );
+}
+__name(insertSalePayments, "insertSalePayments");
+async function checkout(context, command, sale, revision) {
+  const { db, identity, now } = context;
+  const expected = integer2(
+    command.body.expected_total_minor,
+    "expected_total_minor",
+    0
+  );
+  if (expected !== sale.total_minor)
+    conflict("Refresh the bill and confirm its saved total", "BILL_CHANGED");
+  const operating = await operatingContext(context);
+  assertExpectedContext(command.body, operating);
+  const { day, shift, businessDate } = operating;
+  if ((day?.id ?? null) !== sale.working_day_id)
+    conflict("The bill belongs to a different working day");
+  const entries = salePayments(
+    command.body.payments,
+    await paymentTypes(context),
+    sale
+  );
+  const guard = openSaleGuard(openGuard(day, shift), sale, revision);
+  return command.commit(
+    200,
+    guard,
+    [
+      sql(
+        db,
+        `UPDATE sales SET status='paid',revision=revision+1,shift_id=?,business_date=?,
+      updated_at=?,updated_by=?,settled_at=?,settled_by=? WHERE id=?`,
+        shift?.id ?? null,
+        businessDate,
+        now,
+        identity.user_id,
+        now,
+        identity.user_id,
+        sale.id
+      ),
+      insertSalePayments(db, sale.id, entries),
+      ...updateShiftActivity(context, shift),
+      promoteProfile(context)
+    ],
+    resultOf(sale.id)
+  );
+}
+__name(checkout, "checkout");
+async function importStoreSale(context, command, types) {
+  const { db, identity, profile, now } = context;
+  const body = command.body;
+  const id2 = context.storeImport.resourceId;
+  const currency = currencyOf(body.currency);
+  const rate = string(body.exchange_rate, "exchange_rate", 80);
+  const taxMode = choice(body.tax_mode, "tax_mode", [
+    "disabled",
+    "inclusive",
+    "exclusive"
+  ]);
+  const taxRate = integer2(body.tax_rate_bps, "tax_rate_bps", 0, 1e4);
+  const operating = await operatingContext(context);
+  if (body.expected_context === void 0)
+    invalid2("The saved sale needs its operating context");
+  assertExpectedContext(body, operating);
+  const { day, shift, businessDate } = operating;
+  const lines = list(body.lines, "lines", 60).map((raw, index) => {
+    const line = object2(raw);
+    const quantity = integer2(line.quantity, "quantity", 1, 999);
+    const unit = integer2(line.unit_price_minor, "unit_price_minor", 0);
+    if (unit * quantity > MAX_AMOUNT) invalid2("The line exceeds the POS limit");
+    const amounts2 = saleLineTotals(unit * quantity, taxMode, taxRate);
+    if (amounts2.subtotal_minor !== line.subtotal_minor || amounts2.tax_minor !== line.tax_minor || amounts2.total_minor !== line.total_minor) {
+      invalid2("The saved line amounts do not match the saved price and tax");
+    }
+    const modifiers2 = list(line.modifiers ?? [], "modifiers", 120).map(
+      (rawModifier) => {
+        const modifier = object2(rawModifier);
+        return {
+          id: recordId(modifier.id, "modifier_id"),
+          group_id: recordId(modifier.group_id, "group_id"),
+          label_km: optionalText(modifier.label_km, "modifier label", 250) ?? "",
+          label_en: optionalText(modifier.label_en, "modifier label", 250) ?? "",
+          label_zh: optionalText(modifier.label_zh, "modifier label", 250) ?? "",
+          price_minor: integer2(
+            modifier.price_minor,
+            "modifier price",
+            -MAX_AMOUNT
+          )
+        };
+      }
+    );
+    if (new Set(modifiers2.map((modifier) => modifier.id)).size !== modifiers2.length) {
+      invalid2("Use distinct modifiers for each line");
+    }
+    return {
+      id: newId("posl"),
+      line_number: index + 1,
+      product_id: recordId(line.product_id, "product_id"),
+      product_code: optionalText(line.product_code, "product code", 250),
+      product_name: string(line.product_name, "product name", 250),
+      portion_id: line.portion_id == null ? null : recordId(line.portion_id, "portion_id"),
+      portion_name: optionalText(line.portion_name, "portion name", 250),
+      price_list_id: line.price_list_id === "" ? "" : recordId(line.price_list_id, "price_list_id"),
+      quantity,
+      unit_price_minor: unit,
+      ...amounts2,
+      modifiers: modifiers2,
+      note: optionalText(line.note, "line note")
+    };
+  });
+  if (!lines.length) invalid2("A bill needs at least one line");
+  const amounts = lines.reduce(
+    (sum, line) => ({
+      subtotal: sum.subtotal + line.subtotal_minor,
+      tax: sum.tax + line.tax_minor,
+      total: sum.total + line.total_minor
+    }),
+    { subtotal: 0, tax: 0, total: 0 }
+  );
+  if (amounts.total > MAX_AMOUNT || amounts.total !== body.total_minor) {
+    invalid2("The saved total must match the lines");
+  }
+  const entries = salePayments(body.payments, types, {
+    currency,
+    secondary_exchange_rate: rate,
+    total_minor: amounts.total
+  });
+  const tableMode = choice(body.table_mode, "table_mode", [
+    "disabled",
+    "optional",
+    "required"
+  ]);
+  const table = body.table_id == null ? null : recordId(body.table_id, "table_id");
+  if (tableMode === "required" && !table || tableMode === "disabled" && table) {
+    invalid2("The table does not match the saved profile mode");
+  }
+  const customer = recordId(body.customer_id, "customer_id");
+  const receipt = object2(body.receipt);
+  const template = object2(receipt.template);
+  const savedReceipt = {
+    business_name: string(receipt.business_name, "business name", 250),
+    profile_name: optionalText(receipt.profile_name, "profile name", 250) ?? profile.name,
+    branch_name: optionalText(receipt.branch_name, "branch name", 250) ?? profile.branch_name,
+    template: {
+      title: optionalText(template.title, "receipt title", 500) ?? "",
+      footer: optionalText(template.footer, "receipt footer", 500) ?? "",
+      show_tax: boolean(template.show_tax, "show_tax")
+    },
+    copies: integer2(receipt.copies, "copies", 1, 10)
+  };
+  const guard = openGuard(day, shift);
+  guard.query += ` AND NOT EXISTS (
+    SELECT 1 FROM restaurant_tables WHERE id=? AND (business_id<>? OR branch_id<>?)
+  ) AND NOT EXISTS (
+    SELECT 1 FROM pos_customers WHERE id=? AND business_id<>?
+  ) AND NOT EXISTS (
+    SELECT 1 FROM products WHERE id IN (SELECT value FROM json_each(?)) AND business_id<>?
+  )`;
+  guard.params.push(
+    table,
+    identity.business_id,
+    profile.branch_id,
+    customer,
+    identity.business_id,
+    JSON.stringify(lines.map((line) => line.product_id)),
+    identity.business_id
+  );
+  return command.commit(
+    201,
+    guard,
+    [
+      sql(
+        db,
+        `INSERT INTO sales (id,business_id,branch_id,profile_id,working_day_id,shift_id,status,business_date,
+        currency,secondary_exchange_rate,tax_mode,tax_rate_bps,subtotal_minor,tax_minor,total_minor,
+        table_id,table_code,table_label,customer_id,customer_name,receipt_json,
+        created_at,created_by,updated_at,updated_by,settled_at,settled_by)
+        VALUES (?,?,?,?,?,?,'paid',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        id2,
+        identity.business_id,
+        profile.branch_id,
+        profile.id,
+        day?.id ?? null,
+        shift?.id ?? null,
+        businessDate,
+        currency,
+        rate,
+        taxMode,
+        taxRate,
+        amounts.subtotal,
+        amounts.tax,
+        amounts.total,
+        table,
+        optionalText(body.table_code, "table code", 250),
+        optionalText(body.table_label, "table label", 250),
+        customer,
+        string(body.customer_name, "customer name", 250),
+        JSON.stringify(savedReceipt),
+        now,
+        identity.user_id,
+        now,
+        identity.user_id,
+        now,
+        identity.user_id
+      ),
+      sql(
+        db,
+        `INSERT INTO sale_products (sale_id,${lineColumns.replaceAll(/\s+/g, ",")},modifiers_json)
+      SELECT ?,${lineColumns.split(/\s+/).map((column) => `json_extract(value,'$.${column}')`).join(",")},
+        json_extract(value,'$.modifiers') FROM json_each(?)`,
+        id2,
+        JSON.stringify(lines)
+      ),
+      insertSalePayments(db, id2, entries),
+      ...updateShiftActivity(context, shift)
+    ],
+    resultOf(id2)
+  );
+}
+__name(importStoreSale, "importStoreSale");
+async function reverse(context, command, original) {
+  const { db, identity, now } = context;
+  requireManager(identity.role);
+  const reason = string(command.body.reason, "reason", 500);
+  if (original.status !== "paid" || original.reverses_sale_id)
+    conflict("Only an original paid sale can be reversed");
+  const operating = await operatingContext(context);
+  if (context.storeImport && (command.body.expected_context === void 0 || command.body.expected_total_minor === void 0)) {
+    invalid2("The reversal needs its operating context and original total");
+  }
+  assertExpectedContext(command.body, operating);
+  if (command.body.expected_total_minor !== void 0 && integer2(command.body.expected_total_minor, "expected_total_minor", 0) !== original.total_minor) {
+    conflict("The original paid total does not match", "BILL_CHANGED");
+  }
+  if (await sql(
+    db,
+    "SELECT 1 FROM sales WHERE reverses_sale_id=?",
+    original.id
+  ).first()) {
+    conflict("This sale already has a reversal", "SALE_ALREADY_REVERSED");
+  }
+  const { day, shift, businessDate } = operating;
+  const sale = context.storeImport?.resourceId ?? newId("possale");
+  const guard = openGuard(day, shift);
+  return command.commit(
+    201,
+    {
+      query: `${guard.query} AND NOT EXISTS (SELECT 1 FROM sales WHERE reverses_sale_id=?)`,
+      params: [...guard.params, original.id],
+      manager: true
+    },
+    [
+      sql(
+        db,
+        `INSERT INTO sales(id,business_id,branch_id,profile_id,working_day_id,shift_id,reverses_sale_id,status,
+      business_date,currency,secondary_exchange_rate,tax_mode,tax_rate_bps,subtotal_minor,tax_minor,total_minor,
+      table_id,table_code,table_label,customer_id,customer_name,receipt_json,note,reason,created_at,created_by,
+      updated_at,updated_by,settled_at,settled_by)
+      SELECT ?,business_id,branch_id,profile_id,?,?,id,'paid',?,currency,secondary_exchange_rate,tax_mode,tax_rate_bps,
+        -subtotal_minor,-tax_minor,-total_minor,table_id,table_code,table_label,customer_id,customer_name,receipt_json,
+        note,?,?,?,?,?,?,? FROM sales WHERE id=?`,
+        sale,
+        day?.id ?? null,
+        shift?.id ?? null,
+        businessDate,
+        reason,
+        now,
+        identity.user_id,
+        now,
+        identity.user_id,
+        now,
+        identity.user_id,
+        original.id
+      ),
+      sql(
+        db,
+        `INSERT INTO sale_products(id,sale_id,line_number,product_id,product_code,product_name,portion_id,portion_name,
+      price_list_id,modifiers_json,quantity,unit_price_minor,subtotal_minor,tax_minor,total_minor,note)
+      SELECT 'posl_'||lower(hex(randomblob(16))),?,line_number,product_id,product_code,product_name,portion_id,portion_name,
+        price_list_id,modifiers_json,-quantity,unit_price_minor,-subtotal_minor,-tax_minor,-total_minor,note
+      FROM sale_products WHERE sale_id=?`,
+        sale,
+        original.id
+      ),
+      sql(
+        db,
+        `INSERT INTO sale_payments(id,sale_id,line_number,payment_type_id,payment_type_name,payment_kind,currency,
+      entry_type,amount_minor,reference,reverses_payment_id)
+      SELECT 'pospay_'||lower(hex(randomblob(16))),?,line_number,payment_type_id,payment_type_name,payment_kind,currency,
+        'reversal',-amount_minor,reference,id FROM sale_payments WHERE sale_id=?`,
+        sale,
+        original.id
+      ),
+      ...updateShiftActivity(context, shift)
+    ],
+    resultOf(sale)
+  );
+}
+__name(reverse, "reverse");
+async function saleAction(context, command, id2, action) {
+  const sale = await findSale(context, id2);
+  if (!sale) missing("Sale");
+  if (action === "reverse") return reverse(context, command, sale);
+  const revision = assertRevision(sale, command.body);
+  if (action === "checkout") return checkout(context, command, sale, revision);
+  const reason = string(command.body.reason, "reason", 500);
+  const guard = openSaleGuard(
+    { query: "1", params: [], allowReadOnly: true },
+    sale,
+    revision
+  );
+  return command.commit(
+    200,
+    guard,
+    [
+      sql(
+        context.db,
+        `UPDATE sales SET status='cancelled',revision=revision+1,reason=?,updated_at=?,updated_by=? WHERE id=?`,
+        reason,
+        context.now,
+        context.identity.user_id,
+        id2
+      ),
+      promoteProfile(context)
+    ],
+    resultOf(id2)
+  );
+}
+__name(saleAction, "saleAction");
+
+// worker/posApiStaff.ts
+function staffUsername(value) {
+  const username = string(value, "username", 40);
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$/.test(username)) {
+    invalid2(
+      "Use 2\u201340 letters, digits, dots, hyphens or underscores, starting with a letter or digit"
+    );
+  }
+  return username.toLowerCase();
+}
+__name(staffUsername, "staffUsername");
+var eligibleStaff = `m.business_id=? AND m.role<>'owner' AND (
+  m.role='manager' OR EXISTS (
+    SELECT 1 FROM pos_profile_grants g
+    WHERE g.business_id=m.business_id AND g.profile_id=? AND g.user_id=m.user_id
+  )
+)`;
+async function resolveStaffUsername(context, request) {
+  requireManager(context.identity.role);
+  const { username } = await bodyOf(request);
+  const member = await sql(
+    context.db,
+    `SELECT u.email FROM memberships m JOIN users u ON u.id=m.user_id
+    WHERE ${eligibleStaff} AND m.pos_username=?`,
+    context.identity.business_id,
+    context.profile.id,
+    staffUsername(username)
+  ).first();
+  if (!member) missing("Staff username");
+  return respond(member);
+}
+__name(resolveStaffUsername, "resolveStaffUsername");
+async function listStaffUsernames(context, url) {
+  requireManager(context.identity.role);
+  return respond(
+    await pageOf(
+      context.db,
+      url,
+      "staff",
+      `SELECT m.user_id,u.display_name AS name,m.role,m.pos_username AS username
+    FROM memberships m JOIN users u ON u.id=m.user_id
+    WHERE ${eligibleStaff} ORDER BY u.display_name COLLATE NOCASE,m.user_id`,
+      [context.identity.business_id, context.profile.id]
+    )
+  );
+}
+__name(listStaffUsernames, "listStaffUsernames");
+async function setStaffUsername(context, request, userId) {
+  requireManager(context.identity.role);
+  const command = await Command.read(request, context);
+  if (command instanceof Response) return command;
+  const username = command.body.username === null ? null : staffUsername(command.body.username);
+  const { db, identity, profile } = context;
+  const matching = `FROM memberships m WHERE ${eligibleStaff} AND m.user_id=?`;
+  const params = [identity.business_id, profile.id, userId];
+  if (!await sql(db, `SELECT 1 ${matching}`, ...params).first())
+    missing("Staff member");
+  try {
+    return await command.commit(
+      200,
+      {
+        query: `EXISTS (SELECT 1 ${matching})`,
+        params,
+        manager: true,
+        allowReadOnly: true,
+        allowStoreAuthority: true
+      },
+      [
+        sql(
+          db,
+          "UPDATE memberships SET pos_username=? WHERE business_id=? AND user_id=?",
+          username,
+          identity.business_id,
+          userId
+        )
+      ],
+      {
+        query: `SELECT json_object('user_id',m.user_id,'username',m.pos_username) ${matching}`,
+        params
+      }
+    );
+  } catch (error3) {
+    const replay = await command.replay();
+    if (replay) return replay;
+    if (error3 instanceof Error && error3.message.includes(
+      "UNIQUE constraint failed: memberships.business_id, memberships.pos_username"
+    )) {
+      conflict(
+        "That username is already in use in this business",
+        "POS_USERNAME_TAKEN"
+      );
+    }
+    throw error3;
+  }
+}
+__name(setStaffUsername, "setStaffUsername");
+
+// worker/posApiSetup.ts
+async function findProfile(db, businessId, profileId) {
+  return sql(
+    db,
+    `SELECT ${profileColumns} FROM pos_profiles p JOIN branches b ON b.id=p.branch_id
+    WHERE p.business_id=? AND p.id=?`,
+    businessId,
+    profileId
+  ).first();
+}
+__name(findProfile, "findProfile");
+async function readConfig(db, businessId, branchId, currency, value, walkIn) {
+  const input = object2(value);
+  const tableMode = choice(input.table_mode ?? "disabled", "table_mode", [
+    "disabled",
+    "optional",
+    "required"
+  ]);
+  const tableGroups = input.table_group_ids == null ? null : list(input.table_group_ids, "table_group_ids", 500).map(
+    (id2) => recordId(id2, "table group ID")
+  );
+  if (tableGroups) {
+    if (!tableGroups.length || new Set(tableGroups).size !== tableGroups.length)
+      invalid2("Choose distinct table groups or use all groups");
+    const count = await sql(db, `
+      SELECT count(*) AS count FROM table_groups
+      WHERE business_id=? AND branch_id=? AND is_active=1
+        AND id IN (SELECT value FROM json_each(?))
+    `, businessId, branchId, JSON.stringify(tableGroups)).first("count");
+    if (count !== tableGroups.length) invalid2("Choose active table groups from this branch");
+  }
+  const catalogMode = choice(input.catalog_mode ?? "category", "catalog_mode", [
+    "category",
+    "menu"
+  ]);
+  const selected = input.selected_ids == null ? null : list(input.selected_ids, "selected_ids", 100).map(
+    (id2) => recordId(id2, "selected_ids")
+  );
+  if (selected && (!selected.length || new Set(selected).size !== selected.length)) {
+    invalid2("selected_ids must be null or a nonempty list of distinct IDs");
+  }
+  if (selected) {
+    const count = await sql(
+      db,
+      `${activeCatalogNodes(catalogMode)} SELECT count(*) AS count FROM active_nodes
+      WHERE id IN (SELECT value FROM json_each(?2))`,
+      businessId,
+      JSON.stringify(selected)
+    ).first("count");
+    if (count !== selected.length)
+      invalid2("Choose active menus or categories from this business");
+  }
+  const types = list(input.payment_types, "payment_types", 20).map((value2) => {
+    const type = object2(value2);
+    const currencies = list(type.currencies, "currencies", 2).map(currencyOf);
+    if (!currencies.length || new Set(currencies).size !== currencies.length)
+      invalid2("Each payment type needs distinct currencies");
+    return {
+      id: recordId(type.id, "payment type ID"),
+      currencies,
+      ...type.allow_cash_float === void 0 ? {} : { allow_cash_float: boolean(type.allow_cash_float, "allow_cash_float") }
+    };
+  });
+  if (!types.length || new Set(types.map((type) => type.id)).size !== types.length) {
+    invalid2("Choose at least one payment type and list each type once");
+  }
+  if (!types.some((type) => type.currencies.includes(currency))) {
+    invalid2("At least one payment type must accept the business currency");
+  }
+  const defaultType = recordId(
+    input.default_payment_type_id,
+    "default_payment_type_id"
+  );
+  if (!types.some((type) => type.id === defaultType))
+    invalid2("The default payment type must be accepted");
+  const { results: storedTypes } = await sql(
+    db,
+    `SELECT id,kind,currency FROM pos_payment_types
+    WHERE business_id=? AND id IN (SELECT value FROM json_each(?))`,
+    businessId,
+    JSON.stringify(types.map((type) => type.id))
+  ).all();
+  const paymentTypesById = new Map(storedTypes.map((type) => [type.id, type]));
+  const cashCurrencies = types.flatMap((type) => {
+    const stored = paymentTypesById.get(type.id);
+    if (!stored) invalid2("Choose payment types from this business");
+    if (stored.currency && type.currencies.some((value2) => value2 !== stored.currency))
+      invalid2(`This payment type accepts only ${stored.currency}`);
+    return stored.kind === "cash" ? type.currencies : [];
+  });
+  if (new Set(cashCurrencies).size !== cashCurrencies.length)
+    invalid2("Configure at most one cash payment type per currency");
+  const customerId = input.default_customer_id == null ? walkIn : recordId(input.default_customer_id, "default_customer_id");
+  if (customerId !== walkIn && !await sql(
+    db,
+    "SELECT 1 FROM pos_customers WHERE business_id=? AND id=?",
+    businessId,
+    customerId
+  ).first())
+    invalid2("Choose a customer from this business");
+  const template = input.receipt_template == null ? {} : object2(input.receipt_template);
+  const taxMode = choice(input.tax_mode ?? "disabled", "tax_mode", [
+    "disabled",
+    "inclusive",
+    "exclusive"
+  ]);
+  const taxRate = integer2(input.tax_rate_bps ?? 0, "tax_rate_bps", 0, 1e4);
+  if (taxMode === "disabled" && taxRate)
+    invalid2("A disabled tax rule must have a zero rate");
+  const cashierShiftEnabled = boolean(input.cashier_shift_enabled ?? false, "cashier_shift_enabled");
+  return {
+    working_day_enabled: boolean(
+      input.working_day_enabled ?? false,
+      "working_day_enabled"
+    ),
+    cashier_shift_enabled: cashierShiftEnabled || types.some((type) => type.allow_cash_float === true),
+    table_mode: tableMode,
+    table_group_ids: tableGroups,
+    catalog_mode: catalogMode,
+    selected_ids: selected,
+    payment_types: types,
+    default_payment_type_id: defaultType,
+    default_customer_id: customerId,
+    receipt_template: {
+      title: optionalText(template.title, "receipt title", 120) ?? "",
+      footer: optionalText(template.footer, "receipt footer", 500) ?? "",
+      show_tax: boolean(template.show_tax ?? true, "show_tax")
+    },
+    print_copies: integer2(input.print_copies ?? 1, "print_copies", 1, 10),
+    tax_mode: taxMode,
+    tax_rate_bps: taxRate
+  };
+}
+__name(readConfig, "readConfig");
+async function profileSetup(request, url, db, businessId, id2) {
+  if (request.method === "GET" && !id2) {
+    const page = await pageOf(
+      db,
+      url,
+      "profiles",
+      `SELECT ${profileColumns} FROM pos_profiles p
+      JOIN branches b ON b.id=p.branch_id WHERE p.business_id=? ORDER BY p.id`,
+      [businessId]
+    );
+    return respond({
+      ...page,
+      profiles: page.profiles.map(
+        (profile2) => profileView(profile2, true)
+      )
+    });
+  }
+  const profile = id2 ? await findProfile(db, businessId, id2) : null;
+  if (id2 && !profile) missing("POS profile");
+  if (profile && request.method === "GET")
+    return respond(profileView(profile, true));
+  if (!id2 && request.method !== "POST" || id2 && request.method !== "PATCH") {
+    return respond(
+      { error: "Method not allowed", code: "METHOD_NOT_ALLOWED" },
+      405
+    );
+  }
+  const body = await bodyOf(request);
+  const name = body.name === void 0 && profile ? profile.name : string(body.name, "name");
+  const active = body.is_active === void 0 ? profile?.is_active ?? 1 : Number(boolean(body.is_active, "is_active"));
+  const branchId = profile?.branch_id ?? recordId(body.branch_id, "branch_id");
+  if (profile && body.branch_id !== void 0 && body.branch_id !== branchId)
+    invalid2("A profile's branch is fixed");
+  const business2 = await sql(
+    db,
+    `SELECT business.currency FROM branches b JOIN businesses business ON business.id=b.business_id
+    WHERE b.business_id=? AND b.id=? AND (b.is_active=1 OR ?=0)`,
+    businessId,
+    branchId,
+    active
+  ).first();
+  if (!business2) invalid2("Choose an active branch from this business");
+  const walkIn = "walkin_" + businessId;
+  const config = body.config === void 0 && profile ? null : JSON.stringify(
+    await readConfig(
+      db,
+      businessId,
+      branchId,
+      business2.currency,
+      body.config,
+      walkIn
+    )
+  );
+  const profileId = id2 ?? newId("posp");
+  const ensureWalkIn = sql(
+    db,
+    `INSERT INTO pos_customers (id,business_id,name,is_walk_in)
+    VALUES (?,?,'Walk-in',1) ON CONFLICT DO NOTHING`,
+    walkIn,
+    businessId
+  );
+  if (!profile) {
+    await db.batch([
+      ensureWalkIn,
+      sql(
+        db,
+        `INSERT INTO pos_profiles
+      (id,business_id,branch_id,name,is_active,config_json) VALUES (?,?,?,?,?,?)`,
+        profileId,
+        businessId,
+        branchId,
+        name,
+        active,
+        config
+      )
+    ]);
+  } else {
+    const canDeactivate = `${idleProfile} AND NOT EXISTS (
+      SELECT 1 FROM pos_store_authorities a
+      WHERE a.business_id=pos_profiles.business_id AND a.branch_id=pos_profiles.branch_id
+    ) AND (
+      NOT EXISTS (SELECT 1 FROM working_days d WHERE d.business_id=pos_profiles.business_id
+        AND d.branch_id=pos_profiles.branch_id AND d.closed_at IS NULL)
+      OR EXISTS (SELECT 1 FROM pos_profiles other WHERE other.business_id=pos_profiles.business_id
+        AND other.branch_id=pos_profiles.branch_id AND other.id<>pos_profiles.id AND other.is_active=1)
+    )`;
+    const [, result] = await db.batch([
+      ensureWalkIn,
+      sql(
+        db,
+        `UPDATE pos_profiles SET
+      name=?1,is_active=?2,
+      config_json=CASE WHEN ?3 IS NOT NULL AND ${idleProfile} THEN ?3 ELSE config_json END,
+      pending_config_json=CASE WHEN ?3 IS NULL THEN pending_config_json
+        WHEN ${idleProfile} THEN NULL ELSE ?3 END,
+      version=version+CASE WHEN (?3 IS NOT NULL AND ${idleProfile}) OR is_active<>?2 THEN 1 ELSE 0 END
+      WHERE business_id=?4 AND id=?5 AND (?2=1 OR (${canDeactivate}))`,
+        name,
+        active,
+        config,
+        businessId,
+        profileId
+      )
+    ]);
+    if (!result.meta.changes)
+      conflict("Resolve open POS activity before deactivating this profile");
+  }
+  return respond(
+    profileView(await findProfile(db, businessId, profileId), true),
+    profile ? 200 : 201
+  );
+}
+__name(profileSetup, "profileSetup");
+async function grants(request, db, businessId, profileId) {
+  if (!await findProfile(db, businessId, profileId)) missing("POS profile");
+  if (request.method === "PUT") {
+    const body = await bodyOf(request);
+    const userIds = list(body.user_ids, "user_ids", 100).map(
+      (id2) => recordId(id2, "user ID")
+    );
+    if (new Set(userIds).size !== userIds.length)
+      invalid2("Grant IDs must be distinct");
+    const ids = JSON.stringify(userIds);
+    const count = await sql(
+      db,
+      `SELECT count(*) AS count FROM memberships
+      WHERE business_id=? AND user_id IN (SELECT value FROM json_each(?))`,
+      businessId,
+      ids
+    ).first("count");
+    if (count !== userIds.length) invalid2("Choose staff from this business");
+    await db.batch([
+      sql(
+        db,
+        `DELETE FROM pos_profile_grants WHERE business_id=? AND profile_id=?
+          AND user_id NOT IN (SELECT value FROM json_each(?))`,
+        businessId,
+        profileId,
+        ids
+      ),
+      sql(
+        db,
+        `INSERT INTO pos_profile_grants(business_id,profile_id,user_id)
+        SELECT ?,?,value FROM json_each(?) WHERE 1
+        ON CONFLICT (business_id,profile_id,user_id) DO NOTHING`,
+        businessId,
+        profileId,
+        ids
+      )
+    ]);
+  } else if (request.method !== "GET") {
+    return respond(
+      { error: "Method not allowed", code: "METHOD_NOT_ALLOWED" },
+      405
+    );
+  }
+  const rows = await sql(
+    db,
+    `SELECT user_id FROM pos_profile_grants
+    WHERE business_id=? AND profile_id=? ORDER BY user_id`,
+    businessId,
+    profileId
+  ).all();
+  return respond({ user_ids: rows.results.map((row) => row.user_id) });
+}
+__name(grants, "grants");
+async function directory(request, url, db, businessId, resource, id2) {
+  const customers = resource === "customers";
+  const table = customers ? "pos_customers" : "pos_payment_types";
+  const columns = customers ? "id,name,external_reference,is_walk_in" : "id,name,kind,currency";
+  const select = `SELECT ${columns} FROM ${table} WHERE business_id=?`;
+  if (request.method === "GET" && !id2) {
+    return respond(
+      await pageOf(
+        db,
+        url,
+        resource.replace("-", "_"),
+        select + " ORDER BY id",
+        [businessId]
+      )
+    );
+  }
+  const existing = id2 ? await sql(db, select + " AND id=?", businessId, id2).first() : null;
+  if (id2 && !existing) missing(customers ? "Customer" : "Payment type");
+  if (request.method === "GET") return respond(existing);
+  if (!id2 && request.method !== "POST" || id2 && request.method !== "PATCH") {
+    return respond(
+      { error: "Method not allowed", code: "METHOD_NOT_ALLOWED" },
+      405
+    );
+  }
+  const body = await bodyOf(request);
+  const name = string(body.name ?? existing?.name, "name");
+  const record = id2 ?? newId(customers ? "posc" : "pospmt");
+  if (customers) {
+    const reference2 = body.external_reference === void 0 ? existing?.external_reference ?? null : optionalText(body.external_reference, "external_reference", 120);
+    if (id2)
+      await sql(
+        db,
+        `UPDATE pos_customers SET name=?,external_reference=? WHERE business_id=? AND id=?`,
+        name,
+        reference2,
+        businessId,
+        id2
+      ).run();
+    else
+      await sql(
+        db,
+        "INSERT INTO pos_customers(id,business_id,name,external_reference) VALUES (?,?,?,?)",
+        record,
+        businessId,
+        name,
+        reference2
+      ).run();
+  } else {
+    if (existing && body.kind !== void 0 && body.kind !== existing.kind)
+      invalid2("A payment type's kind is fixed");
+    if (existing && body.currency !== void 0 && body.currency !== existing.currency)
+      invalid2("A payment type's currency is fixed");
+    if (id2)
+      await sql(
+        db,
+        "UPDATE pos_payment_types SET name=? WHERE business_id=? AND id=?",
+        name,
+        businessId,
+        id2
+      ).run();
+    else
+      await sql(
+        db,
+        "INSERT INTO pos_payment_types(id,business_id,name,kind,currency) VALUES (?,?,?,?,?)",
+        record,
+        businessId,
+        name,
+        choice(body.kind, "kind", ["cash", "card", "qr", "other"]),
+        body.currency === void 0 ? null : currencyOf(body.currency)
+      ).run();
+  }
+  return respond(
+    await sql(db, select + " AND id=?", businessId, record).first(),
+    id2 ? 200 : 201
+  );
+}
+__name(directory, "directory");
+async function profileOptions(db, businessId) {
+  const [branches, tableGroups, categories, menus, payments, customers] = await Promise.all([
+    sql(db, `SELECT id,name FROM branches WHERE business_id=? AND is_active=1 ORDER BY is_default DESC,name,id`, businessId).all(),
+    sql(db, `SELECT id,name,branch_id FROM table_groups WHERE business_id=? AND is_active=1 ORDER BY sort_order,name,id`, businessId).all(),
+    sql(db, `${activeCatalogNodes("category")}
+      SELECT node.id,node.parent_id,c.name FROM active_nodes node JOIN categories c ON c.id=node.id
+      ORDER BY c.sort_order,c.name,c.id`, businessId).all(),
+    sql(db, `${activeCatalogNodes("menu")}
+      SELECT node.id,node.parent_id,
+        COALESCE(NULLIF(m.name_en,''),NULLIF(m.name_km,''),NULLIF(m.name_zh,''),m.slug) AS name
+      FROM active_nodes node JOIN menus m ON m.id=node.id AND m.business_id=?1 ORDER BY m.sort_order,name,m.id`, businessId).all(),
+    sql(db, `SELECT id,name,kind,currency FROM pos_payment_types WHERE business_id=? ORDER BY name,id`, businessId).all(),
+    sql(db, `SELECT id,name FROM pos_customers WHERE business_id=? AND is_walk_in=0 ORDER BY name,id`, businessId).all()
+  ]);
+  return respond({
+    branches: branches.results,
+    table_groups: tableGroups.results,
+    categories: categories.results,
+    menus: menus.results,
+    payment_types: payments.results,
+    customers: customers.results
+  });
+}
+__name(profileOptions, "profileOptions");
+async function handlePosSetup(request, url, db, auth, path, businessDate) {
+  try {
+    requireManager(auth.role);
+    if (auth.sessionType !== "customer") {
+      return respond(
+        { error: "Use a business staff session", code: "FORBIDDEN" },
+        403
+      );
+    }
+    const enabled = await sql(db, `SELECT ${posPlanEnabled("?")} AS enabled`, auth.businessId).first("enabled");
+    requirePosPlan(enabled ?? 0);
+    if (request.method === "GET") {
+      if (path === "/overview") return await readSellingOverview(db, auth.businessId, businessDate());
+      if (path === "/sales") return await readBusinessSales(db, url, auth.businessId);
+      if (path === "/profile-options") return await profileOptions(db, auth.businessId);
+    }
+    const match = path.match(
+      /^\/(profiles|payment-types|customers)(?:\/([a-zA-Z0-9_-]{1,80})(\/grants)?)?$/
+    );
+    if (!match) missing("Endpoint");
+    const [, resource, id2, grantPath] = match;
+    if (resource === "profiles") {
+      return await (grantPath ? grants(request, db, auth.businessId, id2) : profileSetup(request, url, db, auth.businessId, id2));
+    }
+    if (grantPath) missing("Endpoint");
+    return await directory(request, url, db, auth.businessId, resource, id2);
+  } catch (error3) {
+    return errorResponse(error3);
+  }
+}
+__name(handlePosSetup, "handlePosSetup");
+
+// worker/posApiStore.ts
+function storeAuthority(context) {
+  return sql(
+    context.db,
+    `SELECT device_id,public_key,epoch,last_sequence,timezone,enrolled_at FROM pos_store_authorities
+      WHERE business_id=? AND branch_id=?`,
+    context.identity.business_id,
+    context.profile.branch_id
+  ).first();
+}
+__name(storeAuthority, "storeAuthority");
+function currentDevice(context) {
+  return sql(
+    context.db,
+    `SELECT d.device_id,d.public_key FROM pos_sessions s
+      JOIN pos_device_credentials d ON d.id=s.device_credential_id
+      WHERE s.token_hash=? AND s.expires_at>unixepoch() AND ${activeDeviceSession}`,
+    context.identity.token_hash
+  ).first();
+}
+__name(currentDevice, "currentDevice");
+function ownsAuthority(authority, device) {
+  return device !== null && authority.device_id === device.device_id && (authority.public_key === null || authority.public_key === device.public_key);
+}
+__name(ownsAuthority, "ownsAuthority");
+var branchIsIdle = `
+  NOT EXISTS (SELECT 1 FROM working_days WHERE business_id=?1 AND branch_id=?2 AND closed_at IS NULL)
+  AND NOT EXISTS (SELECT 1 FROM cashier_shifts WHERE business_id=?1 AND branch_id=?2 AND closed_at IS NULL)
+  AND NOT EXISTS (SELECT 1 FROM sales WHERE business_id=?1 AND branch_id=?2 AND status='open')`;
+var ownerSession = `EXISTS (
+  SELECT 1 FROM pos_sessions s
+  JOIN pos_device_credentials device ON device.id=s.device_credential_id AND device.device_id=?3 AND device.public_key=?5
+  JOIN memberships m ON m.business_id=s.business_id AND m.user_id=s.user_id AND m.role='owner'
+  JOIN users u ON u.id=m.user_id AND u.password_salt=s.credential_version
+  JOIN pos_profiles p ON p.business_id=s.business_id AND p.id=s.profile_id AND p.is_active=1
+  JOIN branches b ON b.business_id=p.business_id AND b.id=p.branch_id AND b.is_active=1
+  JOIN businesses business ON business.id=p.business_id AND business.is_active=1
+  WHERE s.token_hash=?4 AND s.business_id=?1 AND b.id=?2
+    AND s.expires_at>unixepoch() AND ${activeDeviceSession}
+)`;
+async function manageStoreAuthority(context, request) {
+  const { db, identity, profile } = context;
+  const existing = await storeAuthority(context);
+  const device = await currentDevice(context);
+  if (request.method === "GET") {
+    const owned = existing !== null && ownsAuthority(existing, device);
+    return respond({
+      authority: existing && {
+        epoch: owned ? existing.epoch : null,
+        last_sequence: existing.last_sequence,
+        timezone: existing.timezone,
+        owned_by_device: owned
+      }
+    });
+  }
+  if (identity.role !== "owner" || !device) {
+    throw new PosError(
+      403,
+      "STORE_OWNER_REQUIRED",
+      "Use an owner's enrolled POS device"
+    );
+  }
+  const scope = [
+    identity.business_id,
+    profile.branch_id,
+    device.device_id,
+    identity.token_hash,
+    device.public_key
+  ];
+  if (request.method === "POST") {
+    if (!existing) {
+      await sql(
+        db,
+        `INSERT INTO pos_store_authorities
+          (business_id,branch_id,device_id,public_key,epoch,timezone,enrolled_at,enrolled_by)
+          SELECT ?1,?2,?3,?5,?6,?7,?8,?9 WHERE ${branchIsIdle} AND ${ownerSession}
+          ON CONFLICT (business_id,branch_id) DO NOTHING`,
+        ...scope,
+        newId("posstore"),
+        identity.timezone,
+        context.now,
+        identity.user_id
+      ).run();
+    }
+    const claimed = await storeAuthority(context);
+    if (!claimed) {
+      conflict(
+        "Close existing days, shifts and bills before assigning the register",
+        "STORE_BRANCH_BUSY"
+      );
+    }
+    if (!ownsAuthority(claimed, device)) {
+      conflict(
+        "The branch is assigned to another store register",
+        "STORE_REGISTER_REQUIRED"
+      );
+    }
+    return respond(
+      {
+        epoch: claimed.epoch,
+        last_sequence: claimed.last_sequence,
+        timezone: claimed.timezone
+      },
+      existing ? 200 : 201
+    );
+  }
+  const input = await bodyOf(request);
+  const epoch = recordId(input.epoch, "epoch");
+  const sequence = integer2(input.last_sequence, "last_sequence", 0);
+  if (!existing || existing.epoch !== epoch) return respond({ ok: true });
+  if (!ownsAuthority(existing, device)) {
+    conflict(
+      "The branch is assigned to another store register",
+      "STORE_REGISTER_REQUIRED"
+    );
+  }
+  const released = await sql(
+    db,
+    `DELETE FROM pos_store_authorities WHERE business_id=?1 AND branch_id=?2 AND device_id=?3
+      AND (public_key IS NULL OR public_key=?5) AND epoch=?6 AND last_sequence=?7 AND ${branchIsIdle} AND ${ownerSession}
+      RETURNING epoch`,
+    ...scope,
+    epoch,
+    sequence
+  ).first();
+  if (!released && (await storeAuthority(context))?.epoch === epoch)
+    conflict(
+      "Close the branch and sync its queued operations before releasing it",
+      "STORE_BRANCH_BUSY"
+    );
+  return respond({ ok: true });
+}
+__name(manageStoreAuthority, "manageStoreAuthority");
+async function recoverStoreOperation(context, request, deps, readOnly) {
+  if (context.identity.role !== "owner") {
+    throw new PosError(
+      403,
+      "STORE_OWNER_REQUIRED",
+      "An owner must approve the recovery on the store register"
+    );
+  }
+  const input = await bodyOf(request, 1008e3);
+  const profileId = recordId(input.profile_id, "profile_id");
+  const operator = recordId(input.operator_id, "operator_id");
+  const reason = string(input.reason, "reason", 500);
+  const operation = object2(input.operation);
+  const profile = await findProfile(
+    context.db,
+    context.identity.business_id,
+    profileId
+  );
+  if (!profile?.is_active || profile.branch_id !== context.profile.branch_id) {
+    throw new PosError(
+      403,
+      "WRONG_REGISTER_SESSION",
+      "Choose an active profile in this store register's branch"
+    );
+  }
+  return importOperation(
+    {
+      ...context,
+      profile,
+      config: JSON.parse(profile.config_json),
+      identity: { ...context.identity, user_id: operator }
+    },
+    request,
+    deps,
+    readOnly,
+    operation,
+    {
+      approvedBy: context.identity.user_id,
+      approvedAt: context.now,
+      reason
+    }
+  );
+}
+__name(recoverStoreOperation, "recoverStoreOperation");
+async function listStoreRecoveries(context, url) {
+  requireManager(context.identity.role);
+  return respond(
+    await pageOf(
+      context.db,
+      url,
+      "recoveries",
+      `SELECT epoch,sequence,profile_id,command_id,operator_id,approved_by,reason,approved_at FROM pos_store_recoveries
+    WHERE business_id=? AND branch_id=? ORDER BY approved_at DESC,epoch,sequence`,
+      [context.identity.business_id, context.profile.branch_id]
+    )
+  );
+}
+__name(listStoreRecoveries, "listStoreRecoveries");
+async function savedTenderTypes(context, value) {
+  const types = list(value, "payment_types", 20).map((raw) => {
+    const row = object2(raw);
+    const currencies = list(row.currencies, "currencies", 2).map(currencyOf);
+    if (!currencies.length || new Set(currencies).size !== currencies.length) {
+      invalid2("Use distinct currencies for a payment type");
+    }
+    return {
+      id: recordId(row.id, "payment type ID"),
+      name: string(row.name, "payment type name", 120),
+      kind: choice(row.kind, "payment kind", [
+        "cash",
+        "card",
+        "qr",
+        "other"
+      ]),
+      currencies,
+      ...row.allow_cash_float === void 0 ? {} : { allow_cash_float: boolean(row.allow_cash_float, "allow_cash_float") }
+    };
+  });
+  const drawerCurrencies = types.filter((row) => row.kind === "cash").flatMap((row) => row.currencies);
+  if (!types.length || new Set(types.map((row) => row.id)).size !== types.length || new Set(drawerCurrencies).size !== drawerCurrencies.length) {
+    invalid2("Use distinct payment types and one cash drawer per currency");
+  }
+  const invalidType = await sql(
+    context.db,
+    `SELECT t.business_id,t.currency
+    FROM pos_payment_types t JOIN json_each(?) saved ON t.id=json_extract(saved.value,'$.id')
+    WHERE t.business_id<>? OR (t.currency IS NOT NULL AND EXISTS (
+      SELECT 1 FROM json_each(saved.value,'$.currencies') accepted WHERE accepted.value<>t.currency
+    ))`,
+    JSON.stringify(types),
+    context.identity.business_id
+  ).first();
+  if (invalidType)
+    invalid2(invalidType.business_id === context.identity.business_id ? `This payment type accepts only ${invalidType.currency}` : "Use payment types from this business");
+  return types;
+}
+__name(savedTenderTypes, "savedTenderTypes");
+async function importStoreOperation(context, request, deps, readOnly) {
+  return importOperation(
+    context,
+    request,
+    deps,
+    readOnly,
+    await bodyOf(request, 1e6)
+  );
+}
+__name(importStoreOperation, "importStoreOperation");
+async function importOperation(context, request, deps, readOnly, raw, recovery) {
+  if (raw.profile_id !== void 0 && recordId(raw.profile_id, "profile_id") !== context.profile.id) {
+    throw new PosError(
+      403,
+      "WRONG_REGISTER_SESSION",
+      "Use the profile that recorded this operation"
+    );
+  }
+  const kind = choice(raw.kind, "kind", [
+    "open_day",
+    "close_day",
+    "open_shift",
+    "close_shift",
+    "cash_movement",
+    "checkout",
+    "reversal"
+  ]);
+  const epoch = recordId(raw.epoch, "epoch");
+  const sequence = integer2(raw.sequence, "sequence", 1);
+  const resourceId = recordId(raw.resource_id, "resource_id");
+  const timestamp2 = string(raw.occurred_at, "occurred_at", 32);
+  const occurredAt = new Date(timestamp2);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3,6})?Z$/.test(timestamp2) || !Number.isFinite(occurredAt.valueOf()) || occurredAt.valueOf() > Date.now() + 3e5) {
+    invalid2("Use an occurred_at timestamp from the register clock");
+  }
+  const body = object2(raw.payload);
+  const settings = object2(raw.settings);
+  const authority = await storeAuthority(context);
+  if (!authority || authority.epoch !== epoch || !ownsAuthority(authority, await currentDevice(context))) {
+    conflict(
+      "Use the designated store register for this branch",
+      "STORE_REGISTER_REQUIRED"
+    );
+  }
+  const imported = {
+    ...context,
+    identity: { ...context.identity, timezone: authority.timezone },
+    config: {
+      ...context.config,
+      working_day_enabled: boolean(
+        settings.working_day_enabled,
+        "working_day_enabled"
+      ),
+      cashier_shift_enabled: boolean(
+        settings.cashier_shift_enabled,
+        "cashier_shift_enabled"
+      )
+    },
+    now: occurredAt.toISOString(),
+    localDate: deps.localDate(occurredAt, authority.timezone),
+    storeImport: { epoch, sequence, resourceId, recovery }
+  };
+  const command = await Command.read(request, imported, {
+    envelope: raw,
+    body
+  });
+  if (command instanceof Response) return command;
+  if (sequence !== authority.last_sequence + 1) {
+    conflict(
+      "Upload the preceding store operation first",
+      "STORE_SEQUENCE_CHANGED"
+    );
+  }
+  if (recovery) {
+    const actor = context.identity.user_id;
+    const status = await sql(
+      context.db,
+      `SELECT ${storeOperatorRegistered} AS registered, ${storeOperatorActive} AS active
+      FROM pos_store_authorities authority WHERE authority.epoch=?`,
+      context.profile.id,
+      actor,
+      context.profile.id,
+      actor,
+      epoch
+    ).first();
+    if (!status?.registered) {
+      conflict(
+        "The register has no enrollment record for this operator and profile",
+        "STORE_OPERATOR_UNKNOWN"
+      );
+    }
+    if (status.active) {
+      conflict(
+        "The original operator can still synchronize this entry",
+        "STORE_OPERATOR_ACTIVE"
+      );
+    }
+  }
+  if (readOnly && kind !== "close_day" && kind !== "close_shift") {
+    throw new PosError(
+      402,
+      "SUBSCRIPTION_EXPIRED",
+      "The subscription allows reads and closing existing activity"
+    );
+  }
+  try {
+    switch (kind) {
+      case "open_day":
+        return await writeDay(imported, command);
+      case "close_day":
+        return await writeDay(imported, command, resourceId);
+      case "open_shift":
+        imported.storeImport.shiftPaymentTypes = await savedTenderTypes(
+          imported,
+          body.payment_types
+        );
+        return await writeShift(imported, command);
+      case "close_shift":
+        return await writeShift(imported, command, resourceId, "close");
+      case "cash_movement":
+        return await writeShift(
+          imported,
+          command,
+          recordId(body.shift_id, "shift_id"),
+          "cash-floats"
+        );
+      case "checkout":
+        return await importStoreSale(
+          imported,
+          command,
+          await savedTenderTypes(imported, body.payment_types)
+        );
+      case "reversal":
+        return await saleAction(
+          imported,
+          command,
+          recordId(body.original_sale_id, "original_sale_id"),
+          "reverse"
+        );
+    }
+  } catch (error3) {
+    const replay = await command.replay();
+    if (replay) return replay;
+    throw error3;
+  }
+}
+__name(importOperation, "importOperation");
+
+// worker/posApi.ts
+function unauthenticated() {
+  throw new PosError(401, "INVALID_POS_SESSION", "Sign in to the POS API");
+}
+__name(unauthenticated, "unauthenticated");
+function methodNotAllowed() {
+  return respond(
+    { error: "Method not allowed", code: "METHOD_NOT_ALLOWED" },
+    405
+  );
+}
+__name(methodNotAllowed, "methodNotAllowed");
+var managerOrGrant = `(? IN ('owner','manager') OR EXISTS (
+  SELECT 1 FROM pos_profile_grants g WHERE g.profile_id=p.id AND g.business_id=p.business_id AND g.user_id=?
+))`;
+async function throttle(db, request, email) {
+  const address = request.headers.get("cf-connecting-ip") ?? "local";
+  const keys = await Promise.all([
+    digest("address:" + address),
+    digest("account:" + address + ":" + email)
+  ]);
+  const now = Math.floor(Date.now() / 1e3);
+  const windowStart = now - now % 600;
+  const rows = await db.batch(
+    keys.map(
+      (key) => sql(
+        db,
+        `INSERT INTO pos_login_limits
+    (bucket,window_start,attempts) VALUES (?,?,1) ON CONFLICT(bucket) DO UPDATE SET
+    attempts=CASE WHEN pos_login_limits.window_start=excluded.window_start THEN min(pos_login_limits.attempts+1,121) ELSE 1 END,
+    window_start=excluded.window_start RETURNING attempts`,
+        key,
+        windowStart
+      )
+    )
+  );
+  if (rows[0].results[0].attempts > 120 || rows[1].results[0].attempts > 20) {
+    throw new PosError(
+      429,
+      "LOGIN_RATE_LIMIT",
+      "Too many login attempts. Retry after the current ten-minute window."
+    );
+  }
+}
+__name(throttle, "throttle");
+async function login(request, env, deps) {
+  const body = await bodyOf(request);
+  const email = string(body.email, "email", 254).toLowerCase();
+  const slug2 = string(body.business_slug, "business_slug", 100).toLowerCase();
+  const proof = string(body.password_proof, "password_proof", 64).toLowerCase();
+  const version = string(body.auth_version, "auth_version", 80);
+  const username = body.username === void 0 ? null : staffUsername(body.username);
+  await throttle(env.DB, request, email);
+  const account = await deps.verifyCredentials(email, proof, version, env);
+  if (!account)
+    throw new PosError(
+      401,
+      "INVALID_CREDENTIALS",
+      "Invalid email, password, or business"
+    );
+  const membership = await sql(
+    env.DB,
+    `SELECT b.id, ${posPlanEnabled("b.id")} AS pos_enabled FROM businesses b
+    JOIN memberships m ON m.business_id=b.id AND m.user_id=?
+    WHERE b.is_active=1 AND (b.slug=? OR b.id=(SELECT business_id FROM business_slug_aliases WHERE slug=?))
+      AND (? IS NULL OR (m.role<>'owner' AND m.pos_username=?))`,
+    account.id,
+    slug2,
+    slug2,
+    username,
+    username
+  ).first();
+  if (membership) requirePosPlan(membership.pos_enabled);
+  const { token, expiresAt } = issuePosToken(900);
+  const result = membership && await sql(
+    env.DB,
+    `INSERT INTO pos_sessions
+    (token_hash,business_id,user_id,credential_version,expires_at)
+    SELECT ?,b.id,m.user_id,u.password_salt,? FROM businesses b
+    JOIN memberships m ON m.business_id=b.id AND m.user_id=?
+    JOIN users u ON u.id=m.user_id AND u.password_salt=?
+    WHERE b.is_active=1 AND b.id=? AND ${posPlanEnabled("b.id")}
+      AND (? IS NULL OR (m.role<>'owner' AND m.pos_username=?))
+    RETURNING business_id,user_id`,
+    await digest(token),
+    expiresAt,
+    account.id,
+    account.passwordSalt,
+    membership.id,
+    username,
+    username
+  ).first();
+  if (!result)
+    throw new PosError(
+      401,
+      "INVALID_CREDENTIALS",
+      "Invalid email, password, or business"
+    );
+  return respond({
+    token,
+    expires_at: new Date(expiresAt * 1e3).toISOString(),
+    ...result
+  });
+}
+__name(login, "login");
+async function authenticate(request, db) {
+  const token = request.headers.get("authorization")?.match(/^Bearer (possession_[0-9a-f]{64})$/i)?.[1];
+  if (!token) unauthenticated();
+  const identity = await sql(
+    db,
+    `SELECT s.business_id,b.name AS business_name,s.user_id,u.display_name,m.role,s.profile_id,
+    b.timezone,b.currency,b.secondary_exchange_rate,b.menu_cache_version AS catalog_version,b.pricing_mode,
+    b.default_price_list_id,s.credential_version,s.token_hash,sub.status AS subscriptionStatus,
+    sub.current_period_end_at AS currentPeriodEndAt,
+    COALESCE(plan.pos_enabled,1) AS pos_enabled
+    FROM pos_sessions s JOIN memberships m ON m.business_id=s.business_id AND m.user_id=s.user_id
+    JOIN users u ON u.id=m.user_id AND u.password_salt=s.credential_version
+    JOIN businesses b ON b.id=m.business_id AND b.is_active=1
+    LEFT JOIN business_subscriptions sub ON sub.business_id=b.id
+    LEFT JOIN subscription_plans plan ON plan.id=sub.plan_id
+    WHERE s.token_hash=? AND s.expires_at>unixepoch() AND ${activeDeviceSession}`,
+    await digest(token)
+  ).first();
+  if (!identity) unauthenticated();
+  return identity;
+}
+__name(authenticate, "authenticate");
+async function startSession(request, db, identity) {
+  if (identity.profile_id)
+    throw new PosError(
+      403,
+      "DISCOVERY_SESSION_REQUIRED",
+      "Sign in to select a POS profile"
+    );
+  const body = await bodyOf(request);
+  const profileId = recordId(body.profile_id, "profile_id");
+  const { token, expiresAt } = issuePosToken(accessLifetime);
+  const result = await sql(
+    db,
+    `INSERT INTO pos_sessions
+    (token_hash,business_id,user_id,profile_id,credential_version,expires_at)
+    SELECT ?,p.business_id,m.user_id,p.id,u.password_salt,? FROM pos_profiles p
+    JOIN branches b ON b.id=p.branch_id AND b.is_active=1
+    JOIN businesses business ON business.id=p.business_id AND business.is_active=1
+    JOIN pos_sessions discovery ON discovery.business_id=p.business_id AND discovery.token_hash=?
+      AND discovery.profile_id IS NULL AND discovery.expires_at>unixepoch()
+    JOIN memberships m ON m.business_id=p.business_id AND m.user_id=discovery.user_id
+    JOIN users u ON u.id=m.user_id AND u.password_salt=discovery.credential_version
+    WHERE p.business_id=? AND p.id=? AND p.is_active=1
+      AND ${posPlanEnabled("p.business_id")}
+      AND (m.role IN ('owner','manager') OR EXISTS (
+        SELECT 1 FROM pos_profile_grants g WHERE g.business_id=m.business_id AND g.profile_id=p.id AND g.user_id=m.user_id
+      )) RETURNING profile_id`,
+    await digest(token),
+    expiresAt,
+    identity.token_hash,
+    identity.business_id,
+    profileId
+  ).first();
+  if (!result) missing("Available POS profile");
+  return respond(
+    {
+      token,
+      expires_at: new Date(expiresAt * 1e3).toISOString(),
+      profile_id: profileId
+    },
+    201
+  );
+}
+__name(startSession, "startSession");
+async function activeProfile(db, identity) {
+  if (!identity.profile_id)
+    throw new PosError(
+      403,
+      "PROFILE_REQUIRED",
+      "Start a session with a POS profile first"
+    );
+  const profile = await sql(
+    db,
+    `SELECT ${profileColumns} FROM pos_profiles p JOIN branches b ON b.id=p.branch_id
+    WHERE p.business_id=? AND p.id=? AND p.is_active=1 AND b.is_active=1 AND ${managerOrGrant}`,
+    identity.business_id,
+    identity.profile_id,
+    identity.role,
+    identity.user_id
+  ).first();
+  if (!profile)
+    throw new PosError(
+      403,
+      "PROFILE_ACCESS_REVOKED",
+      "This POS profile is no longer available to this operator"
+    );
+  return profile;
+}
+__name(activeProfile, "activeProfile");
+async function tables(context, url) {
+  if (context.config.table_mode === "disabled") {
+    const { page, limit } = pagination(url);
+    return respond({ tables: [], page, page_size: limit, has_more: false });
+  }
+  return respond(
+    await pageOf(
+      context.db,
+      url,
+      "tables",
+      `SELECT t.id,t.code,t.label,t.group_id,g.name AS group_name,
+    s.id AS open_sale_id,CASE WHEN s.id IS NULL THEN 'available' ELSE 'occupied' END AS status
+    FROM restaurant_tables t JOIN table_groups g ON g.id=t.group_id AND g.business_id=t.business_id AND g.branch_id=t.branch_id
+    LEFT JOIN sales s ON s.business_id=t.business_id AND s.profile_id=?1 AND s.table_id=t.id AND s.status='open'
+    LEFT JOIN json_each(?4) selected ON selected.value=g.id
+    WHERE t.business_id=?2 AND t.branch_id=?3 AND t.is_active=1 AND g.is_active=1
+      AND (?4 IS NULL OR selected.key IS NOT NULL)
+    ORDER BY selected.key,g.sort_order,g.name,g.id,t.sort_order,t.id`,
+      [
+        context.profile.id,
+        context.identity.business_id,
+        context.profile.branch_id,
+        context.config.table_group_ids ? JSON.stringify(context.config.table_group_ids) : null
+      ]
+    )
+  );
+}
+__name(tables, "tables");
+async function handlePosApi(request, env, deps) {
+  try {
+    const url = new URL(request.url);
+    const path = url.pathname.slice(posApiPath.length);
+    if (path === "/auth/login")
+      return request.method === "POST" ? await login(request, env, deps) : methodNotAllowed();
+    const db = env.DB;
+    if (path === "/auth/device-session")
+      return request.method === "POST" ? await renewDeviceSession(db, request) : methodNotAllowed();
+    const identity = await authenticate(request, db);
+    if (path === "/sessions/current") {
+      if (request.method !== "DELETE") return methodNotAllowed();
+      await sql(
+        db,
+        "DELETE FROM pos_sessions WHERE token_hash=?",
+        identity.token_hash
+      ).run();
+      return respond({ ok: true });
+    }
+    requirePosPlan(identity.pos_enabled);
+    if (path === "/sessions")
+      return request.method === "POST" ? await startSession(request, db, identity) : methodNotAllowed();
+    if (path === "/profiles") {
+      if (request.method !== "GET") return methodNotAllowed();
+      if (identity.profile_id)
+        throw new PosError(
+          403,
+          "DISCOVERY_SESSION_REQUIRED",
+          "Sign in to list available POS profiles"
+        );
+      const page = await pageOf(
+        db,
+        url,
+        "profiles",
+        `SELECT ${profileColumns} FROM pos_profiles p
+        JOIN branches b ON b.id=p.branch_id AND b.is_active=1
+        WHERE p.business_id=? AND p.is_active=1 AND ${managerOrGrant} ORDER BY b.name,p.name,p.id`,
+        [identity.business_id, identity.role, identity.user_id]
+      );
+      return respond({
+        ...page,
+        profiles: page.profiles.map(
+          (profile2) => profileView(profile2)
+        )
+      });
+    }
+    const profile = await activeProfile(db, identity);
+    const now = /* @__PURE__ */ new Date();
+    const context = {
+      db,
+      identity,
+      profile,
+      config: JSON.parse(profile.config_json),
+      now: now.toISOString(),
+      localDate: deps.localDate(now, identity.timezone)
+    };
+    const { readOnly } = deps.subscription(identity);
+    if (path === "/auth/resolve-username")
+      return request.method === "POST" ? await resolveStaffUsername(context, request) : methodNotAllowed();
+    if (path === "/staff")
+      return request.method === "GET" ? await listStaffUsernames(context, url) : methodNotAllowed();
+    const staff = path.match(/^\/staff\/([a-zA-Z0-9_-]{1,80})\/username$/);
+    if (staff)
+      return request.method === "PUT" ? await setStaffUsername(context, request, staff[1]) : methodNotAllowed();
+    if (path === "/store-authority")
+      return ["GET", "POST", "DELETE"].includes(request.method) ? await manageStoreAuthority(context, request) : methodNotAllowed();
+    if (path === "/store-operations")
+      return request.method === "POST" ? await importStoreOperation(context, request, deps, readOnly) : methodNotAllowed();
+    if (path === "/store-operations/recover")
+      return request.method === "POST" ? await recoverStoreOperation(context, request, deps, readOnly) : methodNotAllowed();
+    if (path === "/store-operations/recoveries")
+      return request.method === "GET" ? await listStoreRecoveries(context, url) : methodNotAllowed();
+    if (path === "/context") {
+      if (request.method !== "GET") return methodNotAllowed();
+      const [current, accepted, authority] = await Promise.all([
+        currentOperations(context),
+        paymentTypes(context),
+        storeAuthority(context)
+      ]);
+      return respond({
+        profile: profileView(profile),
+        operator: {
+          id: identity.user_id,
+          name: identity.display_name,
+          role: identity.role
+        },
+        business: {
+          id: identity.business_id,
+          name: identity.business_name,
+          timezone: identity.timezone,
+          currency: identity.currency,
+          secondary_currency: identity.currency === "USD" ? "KHR" : "USD",
+          secondary_exchange_rate: String(identity.secondary_exchange_rate)
+        },
+        payment_types: accepted,
+        local_date: context.localDate,
+        read_only: readOnly,
+        store_authority_required: authority !== null,
+        capabilities: {
+          sale_context_guard: true,
+          device_sessions: true,
+          store_operations: true,
+          store_recovery: true,
+          reversal_context_guard: true,
+          staff_usernames: true
+        },
+        ...current
+      });
+    }
+    if (path === "/devices") {
+      if (request.method === "POST")
+        return await registerDevice(context, request);
+      if (request.method === "GET") return await listDevices(context, url);
+      return methodNotAllowed();
+    }
+    const device = path.match(/^\/devices\/([a-zA-Z0-9_-]{1,80})$/);
+    if (device)
+      return request.method === "DELETE" ? await revokeDevice(context, device[1]) : methodNotAllowed();
+    if (path === "/catalog")
+      return request.method === "GET" ? await getCatalog(env, deps, context, url) : methodNotAllowed();
+    if (path === "/tables")
+      return request.method === "GET" ? await tables(context, url) : methodNotAllowed();
+    if (path === "/customers") {
+      if (request.method !== "GET") return methodNotAllowed();
+      return respond(
+        await pageOf(
+          db,
+          url,
+          "customers",
+          `SELECT id,name,external_reference,is_walk_in
+        FROM pos_customers WHERE business_id=? ORDER BY is_walk_in DESC,name,id`,
+          [identity.business_id]
+        )
+      );
+    }
+    const match = path.match(
+      /^\/(working-days|cashier-shifts|sales)(?:\/([a-zA-Z0-9_-]{1,80})(?:\/([a-z-]+))?)?$/
+    );
+    if (!match) missing("Endpoint");
+    const [, resource, id2, action] = match;
+    if (resource === "sales") {
+      if (action && !["checkout", "cancel", "reverse"].includes(action))
+        missing("Endpoint");
+      if (request.method === "GET" && !action)
+        return await readSales(context, url, id2);
+      if (!id2 && request.method !== "POST" || id2 && request.method !== (action ? "POST" : "PATCH")) {
+        return methodNotAllowed();
+      }
+    } else {
+      const actions = resource === "working-days" ? ["close"] : ["close", "cash-floats", "reconciliation"];
+      if (action && !actions.includes(action)) missing("Endpoint");
+      if (request.method === "GET" && action !== "close")
+        return await readOperations(context, url, resource, id2, action);
+      if (request.method !== "POST" || id2 && (!action || action === "reconciliation"))
+        return methodNotAllowed();
+    }
+    const command = await Command.read(request, context);
+    if (command instanceof Response) return command;
+    try {
+      if (await storeAuthority(context)) {
+        conflict(
+          "Use the designated store register for this branch",
+          "STORE_REGISTER_REQUIRED"
+        );
+      }
+      if (readOnly && action !== "close" && action !== "cancel") {
+        throw new PosError(
+          402,
+          "SUBSCRIPTION_EXPIRED",
+          "The subscription allows reads and closing existing activity"
+        );
+      }
+      if (resource === "working-days")
+        return await writeDay(context, command, id2);
+      if (resource === "cashier-shifts")
+        return await writeShift(context, command, id2, action);
+      if (action) return await saleAction(context, command, id2, action);
+      return await saveSale(env, deps, context, command, id2);
+    } catch (error3) {
+      const replay = await command.replay();
+      if (replay) return replay;
+      throw error3;
+    }
+  } catch (error3) {
+    return errorResponse(error3);
+  }
+}
+__name(handlePosApi, "handlePosApi");
 
 // worker/bookingSettings.ts
 var bookingPolicyJoins = `
@@ -2623,9 +6376,14 @@ async function manageBookingSettings(env, businessId, action, method, input, aud
     if (typeof input.enabled === "boolean" && Object.keys(input).length === 1) {
       await db.batch([
         db.prepare(
-          `INSERT INTO business_booking_settings (business_id,enabled) VALUES (?,?)
+          `INSERT INTO business_booking_settings (business_id,enabled,min_pax,max_pax) VALUES (?,?,?,?)
           ON CONFLICT(business_id) DO UPDATE SET enabled=excluded.enabled,revision=revision+1`
-        ).bind(businessId, Number(input.enabled)),
+        ).bind(
+          businessId,
+          Number(input.enabled),
+          bookingDefaults.minPax,
+          bookingDefaults.maxPax
+        ),
         audit("booking.feature_updated")
       ]);
     } else if (typeof input.userId === "string" && typeof input.canView === "boolean" && Object.keys(input).length === 2) {
@@ -3633,14 +7391,14 @@ ${text2}`;
   const encrypted = token ? await encryptTelegramToken(env, businessId, token) : null;
   try {
     if (creating) {
-      const newId = `tgn_${crypto.randomUUID().replaceAll("-", "")}`;
+      const newId2 = `tgn_${crypto.randomUUID().replaceAll("-", "")}`;
       const result2 = await db.prepare(
         `INSERT INTO telegram_notifications
         (id,business_id,branch_id,source,telegram_token,chat_id,title,message,enabled,history_days,
         show_accept_button,accept_url,show_cancel_button,cancel_url)
         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM telegram_notifications WHERE business_id=?)<?`
       ).bind(
-        newId,
+        newId2,
         businessId,
         branchId,
         source,
@@ -3657,7 +7415,7 @@ ${text2}`;
         businessId,
         maxRules
       ).run();
-      return result2.meta.changes ? json({ id: newId }, 201) : error(`This business can have up to ${maxRules} notifications.`, 409);
+      return result2.meta.changes ? json({ id: newId2 }, 201) : error(`This business can have up to ${maxRules} notifications.`, 409);
     }
     if (!id2) return error("Notification not found.", 404);
     const result = await db.prepare(
@@ -4234,7 +7992,7 @@ function targetsFor(scope, selections) {
   const targets = [];
   const add = /* @__PURE__ */ __name((name, where = own) => targets.push({ name, where }), "add");
   const orders = selected("orders");
-  const tables = selected("tables") || selected("tableGroups");
+  const tables2 = selected("tables") || selected("tableGroups");
   const bookings = selected("bookings");
   const ordersWhere = orders ? branchOnly : `${branchOnly} AND table_id IN (
     SELECT id FROM restaurant_tables WHERE ${branchOnly})`;
@@ -4243,22 +8001,22 @@ function targetsFor(scope, selections) {
   const logOrders = selected("telegramLogs") ? `${sourceOrders} WHERE ${branchOnly}` : orderIds;
   const logs = selected("telegramLogs");
   const allLogs = logs && scope === "business";
-  if (logs || orders || tables || bookings) {
+  if (logs || orders || tables2 || bookings) {
     const sources = [];
-    if (logs || orders || tables) sources.push(`(source='Order' AND source_id IN (${logOrders}))`);
+    if (logs || orders || tables2) sources.push(`(source='Order' AND source_id IN (${logOrders}))`);
     if (logs || bookings) sources.push(`(source='Booking' AND source_id IN (${bookingIds}))`);
     add("telegram_notification_deliveries", allLogs ? own : `${own} AND (${sources.join(" OR ")})`);
   }
-  if (logs || orders || tables)
+  if (logs || orders || tables2)
     add("telegram_order_deliveries", `${own} AND order_id IN (${allLogs ? `${sourceOrders} WHERE ${own}` : logOrders})`);
   if (logs || bookings)
     add("telegram_booking_deliveries", `booking_id IN (${allLogs ? `${sourceBookings} WHERE ${own}` : bookingIds})`);
-  if (orders || tables) {
+  if (orders || tables2) {
     add("order_products", `order_id IN (${orderIds})`);
     add("orders", ordersWhere);
   }
   if (bookings) add("bookings", branchOnly);
-  if (tables) add("restaurant_tables", branchOnly);
+  if (tables2) add("restaurant_tables", branchOnly);
   if (selected("tableGroups")) add("table_groups", branchOnly);
   if (selected("analytics")) add("analytics_events", branchOnly);
   const products = selected("products") || selected("categories");
@@ -4302,16 +8060,16 @@ async function readSnapshot(db, targets, businessId, branchId) {
   const schemas = await db.batch(
     targets.map(({ name }) => db.prepare(`PRAGMA table_info(${name})`))
   );
-  const tables = targets.map((target, index) => {
+  const tables2 = targets.map((target, index) => {
     const columns = schemas[index].results.map(({ name }) => name);
     return { ...target, columns, query: snapshotQuery(target, columns) };
   });
   const values = await db.batch(
-    tables.map(({ query }) => db.prepare(query).bind(...scopeBindings(query, businessId, branchId)))
+    tables2.map(({ query }) => db.prepare(query).bind(...scopeBindings(query, businessId, branchId)))
   );
   const snapshots = [];
   let totalBytes = 0;
-  for (const [index, table] of tables.entries()) {
+  for (const [index, table] of tables2.entries()) {
     const { count, content } = values[index].results[0];
     if (content === null) return null;
     totalBytes += encoder3.encode(content).length;
@@ -4321,8 +8079,8 @@ async function readSnapshot(db, targets, businessId, branchId) {
   return snapshots;
 }
 __name(readSnapshot, "readSnapshot");
-function scopeBindings(sql, businessId, branchId) {
-  return sql.includes("?2") ? [businessId, branchId] : [businessId];
+function scopeBindings(sql2, businessId, branchId) {
+  return sql2.includes("?2") ? [businessId, branchId] : [businessId];
 }
 __name(scopeBindings, "scopeBindings");
 async function snapshotSignature(secret, metadata, snapshots, signature) {
@@ -4387,8 +8145,8 @@ async function resetBusinessData(env, actor, businessId, action, input) {
   const ownership = tenantChecks(targets);
   const blockers = menus && await db.prepare(`SELECT ${menuOrderReference} AS inUse`).bind(businessId).first("inUse") ? ["Saved orders still reference these menus. Reset those orders in their branches before removing the menus."] : [];
   if (ownership.length) {
-    const sql = `SELECT (${ownership.join(" AND ")}) AS valid`;
-    if (!await db.prepare(sql).bind(...scopeBindings(sql, businessId, branchId)).first("valid"))
+    const sql2 = `SELECT (${ownership.join(" AND ")}) AS valid`;
+    if (!await db.prepare(sql2).bind(...scopeBindings(sql2, businessId, branchId)).first("valid"))
       blockers.push("A related record belongs to another business. This selection cannot be reset.");
   }
   if (deleting && blockers.length) return fail(409, blockers[0]);
@@ -4479,6 +8237,36 @@ var ruleJoin = `FROM branch_webhooks rule JOIN branch_webhook_revisions config
   ON config.webhook_id=rule.id AND config.revision=rule.revision`;
 var fail2 = /* @__PURE__ */ __name((status, error3) => ({ ok: false, status, error: error3 }), "fail");
 var success3 = /* @__PURE__ */ __name((data) => ({ ok: true, data }), "success");
+async function clearWebhookHistory(env, actor, businessId, branchId, webhookId) {
+  const db = env.DB;
+  if (webhookId !== null) {
+    const rule = await db.prepare("SELECT 1 FROM branch_webhooks WHERE business_id=? AND branch_id=? AND id=?").bind(businessId, branchId, webhookId).first();
+    if (!rule) return fail2(404, "Webhook rule not found.");
+  } else {
+    const exists = branchId === null ? await db.prepare("SELECT 1 FROM businesses WHERE id=?").bind(businessId).first() : await db.prepare("SELECT 1 FROM branches WHERE business_id=? AND id=?").bind(businessId, branchId).first();
+    if (!exists) return fail2(404, branchId === null ? "Business not found." : "Branch not found.");
+  }
+  const eventScope = branchId === null ? "business_id=?" : "business_id=? AND branch_id=?";
+  const eventBindings = branchId === null ? [businessId] : [businessId, branchId];
+  const deliveryScope = `event_sequence IN (SELECT sequence FROM branch_webhook_events WHERE ${eventScope})
+    ${webhookId === null ? "" : "AND webhook_id=?"}`;
+  const deliveryBindings = webhookId === null ? eventBindings : [...eventBindings, webhookId];
+  const [deleted, hidden] = await db.batch([
+    db.prepare(`DELETE FROM branch_webhook_deliveries
+      WHERE ${deliveryScope} AND status IN ('succeeded','expired')`).bind(...deliveryBindings),
+    // Unresolved deliveries can still retry or block later deliveries for the same record.
+    db.prepare(`UPDATE branch_webhook_deliveries SET history_hidden=1
+      WHERE ${deliveryScope} AND history_hidden=0`).bind(...deliveryBindings),
+    db.prepare(`DELETE FROM branch_webhook_events
+      WHERE ${eventScope} AND NOT EXISTS (
+        SELECT 1 FROM branch_webhook_deliveries WHERE event_sequence=branch_webhook_events.sequence
+      )`).bind(...eventBindings),
+    db.prepare(`INSERT INTO super_admin_audit_log (id,actor_email,action,business_id,details_json)
+      VALUES (?,?,'branch.webhook.clear_history',?,?)`).bind("aud_" + crypto.randomUUID(), actor, businessId, JSON.stringify({ branchId, webhookId }))
+  ]);
+  return success3({ cleared: deleted.meta.changes + hidden.meta.changes });
+}
+__name(clearWebhookHistory, "clearWebhookHistory");
 function publicRule(row) {
   const { id: id2, revision, name, table, event, url, method } = row;
   return {
@@ -4552,7 +8340,7 @@ function parseHeaders(input) {
   return Object.fromEntries([...seen].map((name) => [name, headers.get(name)]));
 }
 __name(parseHeaders, "parseHeaders");
-function validateRule(input) {
+function validateRule(env, input) {
   if (typeof input.name !== "string" || !input.name.trim() || input.name.trim().length > 100)
     throw new Error("Enter a rule name of up to 100 characters.");
   if (typeof input.table !== "string" || !Object.hasOwn(webhookTables, input.table))
@@ -4566,7 +8354,7 @@ function validateRule(input) {
   if (contact && table !== "bookings" || input.includeBookingContact !== void 0 && typeof input.includeBookingContact !== "boolean")
     throw new Error("Booking contact data is available only for booking rules.");
   if (input.enabled !== void 0 && typeof input.enabled !== "boolean") throw new Error("Invalid enabled value.");
-  const destination = webhookDestination(input.url);
+  const destination = webhookDestination(env, input.url);
   const bodyless = method === "GET" || method === "HEAD";
   const bodyFormat = input.bodyFormat ?? (bodyless ? "none" : "json");
   if (!["json", "text", "none"].includes(bodyFormat) || bodyless && bodyFormat !== "none")
@@ -4581,7 +8369,7 @@ async function manageBranchWebhooks(env, actor, businessId, branchId, action, id
   const db = env.DB;
   if (!await db.prepare("SELECT 1 FROM branches WHERE business_id=? AND id=?").bind(businessId, branchId).first())
     return fail2(404, "Branch not found.");
-  const audit = /* @__PURE__ */ __name((operation, recordId, details = {}) => db.prepare(`
+  const audit = /* @__PURE__ */ __name((operation, recordId2, details = {}) => db.prepare(`
     INSERT INTO super_admin_audit_log (id,actor_email,action,business_id,details_json)
     SELECT ?,?,?,?,? WHERE changes()=1
   `).bind(
@@ -4589,7 +8377,7 @@ async function manageBranchWebhooks(env, actor, businessId, branchId, action, id
     actor,
     "branch.webhook." + operation,
     businessId,
-    JSON.stringify({ branchId, id: recordId, ...details })
+    JSON.stringify({ branchId, id: recordId2, ...details })
   ), "audit");
   if (action === "list") {
     const { results } = await db.prepare(`SELECT ${ruleColumns} ${ruleJoin}
@@ -4597,8 +8385,6 @@ async function manageBranchWebhooks(env, actor, businessId, branchId, action, id
     return success3({ rules: results.map(publicRule) });
   }
   if (action === "deliveries") {
-    const offset = input.offset === void 0 ? 0 : Number(input.offset);
-    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1e5) return fail2(400, "Invalid history offset.");
     const { results } = await db.prepare(`
       SELECT d.id, e.id AS eventId, config.name AS ruleName, e.table_key AS "table", e.event, e.record_id AS recordId,
         CASE WHEN d.status='pending' AND ${webhookBlocked} THEN 'blocked' ELSE d.status END AS status,
@@ -4607,10 +8393,11 @@ async function manageBranchWebhooks(env, actor, businessId, branchId, action, id
         d.http_status AS httpStatus, d.error
       FROM branch_webhook_events e JOIN branch_webhook_deliveries d ON d.event_sequence=e.sequence
       JOIN branch_webhook_revisions config ON config.webhook_id=d.webhook_id AND config.revision=d.revision
-      WHERE e.business_id=? AND e.branch_id=?
-      ORDER BY e.sequence DESC, d.id LIMIT 51 OFFSET ?
-    `).bind(businessId, branchId, offset).all();
-    return success3({ deliveries: results.slice(0, 50), nextOffset: results.length > 50 ? offset + 50 : null });
+      WHERE e.business_id=? AND e.branch_id=? AND d.history_hidden=0
+        AND e.created_at>unixepoch()-${webhookRetentionSeconds}
+      ORDER BY e.sequence DESC, d.id LIMIT 5
+    `).bind(businessId, branchId).all();
+    return success3({ deliveries: results });
   }
   if (action === "retry") {
     const scope = `FROM branch_webhook_deliveries d JOIN branch_webhook_events e ON e.sequence=d.event_sequence
@@ -4621,7 +8408,7 @@ async function manageBranchWebhooks(env, actor, businessId, branchId, action, id
     const [updated2] = await db.batch([
       db.prepare(`UPDATE branch_webhook_deliveries SET status='pending', retry_count=0, due_at=unixepoch()
         WHERE id IN (SELECT d.id ${scope} AND d.status='failed' AND rule.enabled=1 AND rule.archived=0
-          AND e.created_at>unixepoch()-2592000 AND NOT ${webhookBlocked})`).bind(id2, businessId, branchId),
+          AND e.created_at>unixepoch()-${webhookRetentionSeconds} AND NOT ${webhookBlocked})`).bind(id2, businessId, branchId),
       audit("retry", id2)
     ]);
     return updated2.meta.changes ? success3({ id: id2 }) : fail2(409, "This delivery is blocked, expired, or no longer failed.");
@@ -4651,7 +8438,7 @@ async function manageBranchWebhooks(env, actor, businessId, branchId, action, id
     if (enabled2 === current.enabled) return success3({ id: current.id });
     if (enabled2) {
       try {
-        webhookDestination(current.url);
+        webhookDestination(env, current.url);
       } catch (error3) {
         return fail2(400, error3.message);
       }
@@ -4667,10 +8454,10 @@ async function manageBranchWebhooks(env, actor, businessId, branchId, action, id
   let config;
   let headers;
   try {
-    config = validateRule(input);
+    config = validateRule(env, input);
     if (input.headers !== void 0) headers = parseHeaders(input.headers);
-    if (current && current.host !== config.host && !headers && JSON.parse(current.headerNamesJson).length)
-      throw new Error("Replace or clear the saved headers when changing the destination hostname.");
+    if (current && !headers && JSON.parse(current.headerNamesJson).length && new URL(current.url).origin !== new URL(config.url).origin)
+      throw new Error("Replace or clear the saved headers when changing the destination origin.");
   } catch (error3) {
     return fail2(400, error3.message);
   }
@@ -4709,76 +8496,13 @@ async function manageBranchWebhooks(env, actor, businessId, branchId, action, id
 }
 __name(manageBranchWebhooks, "manageBranchWebhooks");
 
-// worker/subscriptionPlans.ts
-var DEFAULT_PLAN_ID = "plan_standard";
-var planOfferJoin = `
-  JOIN subscription_plan_prices price ON price.id=(
-    SELECT id FROM subscription_plan_prices
-    WHERE plan_id=plan.id AND is_active=1 AND currency='USD'
-      AND provider IS NULL AND interval_count=1
-    ORDER BY created_at DESC,id DESC LIMIT 1
-  )`;
-var planOfferFields = `
-  plan.id,plan.code,plan.name,plan.description,plan.features_json AS featuresJson,
-  plan.max_branches AS maxBranches,plan.max_menus AS maxMenus,
-  plan.max_products AS maxProducts,plan.max_daily_orders AS maxDailyOrders,
-  price.id AS priceId,price.amount_minor AS amountMinor,price.billing_interval AS billingInterval`;
-var planFeatures = /* @__PURE__ */ __name((value) => {
-  try {
-    const keys = JSON.parse(value);
-    return Array.isArray(keys) ? controlPageIds.filter((key) => keys.includes(key)) : [];
-  } catch {
-    return [];
-  }
-}, "planFeatures");
-var serializePlan = /* @__PURE__ */ __name(({ featuresJson, maxBranches, maxMenus, maxProducts, maxDailyOrders, ...row }) => ({
-  ...row,
-  features: planFeatures(featuresJson),
-  limits: { branches: maxBranches, menus: maxMenus, products: maxProducts, dailyOrders: maxDailyOrders }
-}), "serializePlan");
-function parsePlanLimits(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const { branches, menus, products, dailyOrders } = value;
-  const isLimit = /* @__PURE__ */ __name((input, minimum, maximum = Number.MAX_SAFE_INTEGER) => input === null || typeof input === "number" && Number.isSafeInteger(input) && input >= minimum && input <= maximum, "isLimit");
-  if (Object.keys(value).length !== 4 || !isLimit(branches, 1) || !isLimit(menus, 0) || !isLimit(products, 0) || !isLimit(dailyOrders, 0, MAX_DAILY_ORDERS)) return null;
-  return { branches, menus, products, dailyOrders };
-}
-__name(parsePlanLimits, "parsePlanLimits");
-var limitErrors = {
-  PLAN_BRANCH_LIMIT: { code: "PLAN_BRANCH_LIMIT", error: "This business has reached its subscription plan\u2019s branch limit." },
-  PLAN_MENU_LIMIT: { code: "PLAN_MENU_LIMIT", error: "This business has reached its subscription plan\u2019s menu limit." },
-  PLAN_PRODUCT_LIMIT: { code: "PLAN_PRODUCT_LIMIT", error: "This business has reached its subscription plan\u2019s product limit." },
-  PLAN_DAILY_ORDER_LIMIT: { code: "order_limit_reached", error: "The business has reached its daily order limit." }
-};
-function planLimitError(error3) {
-  const message = String(error3);
-  const code = Object.keys(limitErrors).find((key) => message.includes(key));
-  return code ? limitErrors[code] : null;
-}
-__name(planLimitError, "planLimitError");
-function selectedPlan(db, planId, publicOnly) {
-  return db.prepare(
-    `SELECT ${planOfferFields} FROM subscription_plans plan ${planOfferJoin}
-     WHERE plan.id=? AND plan.is_active=1 AND (?=0 OR plan.is_public=1)`
-  ).bind(planId, Number(publicOnly)).first();
-}
-__name(selectedPlan, "selectedPlan");
-async function publicPlans(db) {
-  const { results } = await db.prepare(
-    `SELECT ${planOfferFields} FROM subscription_plans plan ${planOfferJoin}
-     WHERE plan.is_active=1 AND plan.is_public=1 ORDER BY plan.display_order,plan.name,plan.id`
-  ).all();
-  return results.map(serializePlan);
-}
-__name(publicPlans, "publicPlans");
-
 // worker/index.ts
 var json3 = /* @__PURE__ */ __name((body, status = 200, headers = {}) => new Response(JSON.stringify(body), {
   status,
   headers: { "content-type": "application/json; charset=utf-8", ...headers }
 }), "json");
 var slugify = /* @__PURE__ */ __name((value) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""), "slugify");
-var recordSlug = /* @__PURE__ */ __name((value, fallback, recordId) => `${slugify(value) || fallback}-${recordId.slice(-8)}`, "recordSlug");
+var recordSlug = /* @__PURE__ */ __name((value, fallback, recordId2) => `${slugify(value) || fallback}-${recordId2.slice(-8)}`, "recordSlug");
 var catalogCacheKey = /* @__PURE__ */ __name((slug2, version, priceListId, bannerState, env) => {
   const mediaBase = env.PUBLIC_MEDIA_BASE?.trim().replace(/\/$/, "") || "worker";
   return `catalog:v13:${mediaBase}:${slug2}:${version}:${priceListId}:${bannerState}`;
@@ -4930,16 +8654,16 @@ var QR_FONTS = /* @__PURE__ */ new Set([
 ]);
 var HEX_COLOR = /^#[0-9a-f]{6}$/i;
 var blendHexColors = /* @__PURE__ */ __name((foreground, background, opacity = 0.5) => {
-  const channel = /* @__PURE__ */ __name((hex, offset) => Number.parseInt(hex.slice(offset, offset + 2), 16), "channel");
+  const channel = /* @__PURE__ */ __name((hex2, offset) => Number.parseInt(hex2.slice(offset, offset + 2), 16), "channel");
   return `#${[1, 3, 5].map(
     (offset) => Math.round(
       channel(foreground, offset) * opacity + channel(background, offset) * (1 - opacity)
     ).toString(16).padStart(2, "0")
   ).join("")}`;
 }, "blendHexColors");
-var relativeLuminance = /* @__PURE__ */ __name((hex) => {
+var relativeLuminance = /* @__PURE__ */ __name((hex2) => {
   const channels = [1, 3, 5].map((offset) => {
-    const value = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    const value = Number.parseInt(hex2.slice(offset, offset + 2), 16) / 255;
     return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
   });
   return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
@@ -5059,7 +8783,7 @@ var defaultMenuTheme = /* @__PURE__ */ __name((primaryColor = "#e84231") => ({
 function menuTheme(value, legacyPrimary = "#e84231") {
   const input = value && typeof value === "object" ? value : {};
   const base = defaultMenuTheme(legacyPrimary);
-  const choice = /* @__PURE__ */ __name((key, allowed, fallback) => {
+  const choice2 = /* @__PURE__ */ __name((key, allowed, fallback) => {
     const candidate = String(input[key] ?? "");
     return allowed.has(candidate) ? candidate : fallback;
   }, "choice");
@@ -5096,8 +8820,8 @@ function menuTheme(value, legacyPrimary = "#e84231") {
   ) || readableColor(resolvedSurfaceColor);
   return {
     version: 1,
-    preset: choice("preset", MENU_THEME_PRESETS, base.preset),
-    mode: choice("mode", MENU_THEME_MODES, base.mode),
+    preset: choice2("preset", MENU_THEME_PRESETS, base.preset),
+    mode: choice2("mode", MENU_THEME_MODES, base.mode),
     primaryColor: resolvedPrimaryColor,
     accentColor: resolvedAccentColor,
     backgroundColor: color("backgroundColor", base.backgroundColor),
@@ -5158,13 +8882,13 @@ function menuTheme(value, legacyPrimary = "#e84231") {
       8,
       24
     ),
-    headingFont: choice("headingFont", MENU_THEME_FONTS, base.headingFont),
-    bodyFont: choice("bodyFont", MENU_THEME_FONTS, base.bodyFont),
-    khmerFont: choice("khmerFont", MENU_THEME_KHMER_FONTS, base.khmerFont),
-    cardStyle: choice("cardStyle", MENU_CARD_STYLES, base.cardStyle),
-    cornerStyle: choice("cornerStyle", MENU_CORNER_STYLES, base.cornerStyle),
-    imageRatio: choice("imageRatio", MENU_IMAGE_RATIOS, base.imageRatio),
-    defaultProductView: choice(
+    headingFont: choice2("headingFont", MENU_THEME_FONTS, base.headingFont),
+    bodyFont: choice2("bodyFont", MENU_THEME_FONTS, base.bodyFont),
+    khmerFont: choice2("khmerFont", MENU_THEME_KHMER_FONTS, base.khmerFont),
+    cardStyle: choice2("cardStyle", MENU_CARD_STYLES, base.cardStyle),
+    cornerStyle: choice2("cornerStyle", MENU_CORNER_STYLES, base.cornerStyle),
+    imageRatio: choice2("imageRatio", MENU_IMAGE_RATIOS, base.imageRatio),
+    defaultProductView: choice2(
       "defaultProductView",
       MENU_PRODUCT_VIEWS,
       base.defaultProductView
@@ -5179,7 +8903,7 @@ function menuTheme(value, legacyPrimary = "#e84231") {
     ),
     showBottomNav: typeof input.showBottomNav === "boolean" ? input.showBottomNav : base.showBottomNav,
     showSearchNav: typeof input.showSearchNav === "boolean" ? input.showSearchNav : base.showSearchNav,
-    bottomNavStyle: choice(
+    bottomNavStyle: choice2(
       "bottomNavStyle",
       MENU_BOTTOM_NAV_STYLES,
       base.bottomNavStyle
@@ -5199,18 +8923,18 @@ function menuTheme(value, legacyPrimary = "#e84231") {
       10,
       18
     ),
-    headerStyle: choice("headerStyle", MENU_HEADER_STYLES, base.headerStyle),
-    categoryStyle: choice(
+    headerStyle: choice2("headerStyle", MENU_HEADER_STYLES, base.headerStyle),
+    categoryStyle: choice2(
       "categoryStyle",
       MENU_CATEGORY_STYLES,
       base.categoryStyle
     ),
-    backgroundType: choice(
+    backgroundType: choice2(
       "backgroundType",
       MENU_BACKGROUND_TYPES,
       base.backgroundType
     ),
-    backgroundPattern: choice(
+    backgroundPattern: choice2(
       "backgroundPattern",
       MENU_BACKGROUND_PATTERNS,
       base.backgroundPattern
@@ -5229,7 +8953,7 @@ function menuTheme(value, legacyPrimary = "#e84231") {
     backgroundImageUrl: storedImageUrl,
     productPlaceholderMediaId: RECORD_ID_PATTERN.test(placeholderId) ? placeholderId : "",
     productPlaceholderUrl: String(input.productPlaceholderUrl ?? "").trim().slice(0, 1e3),
-    backgroundImageFit: choice(
+    backgroundImageFit: choice2(
       "backgroundImageFit",
       MENU_BACKGROUND_FITS,
       base.backgroundImageFit
@@ -5432,11 +9156,26 @@ function safeEqual(left, right) {
   return difference === 0;
 }
 __name(safeEqual, "safeEqual");
+async function verifyAccount(env, email, proof) {
+  const account = await env.DB.prepare(
+    "SELECT id,email,display_name AS displayName,password_hash AS passwordHash,password_salt AS passwordSalt FROM users WHERE email=?"
+  ).bind(email).first();
+  if (!account) return { status: "invalid" };
+  if (!account.passwordSalt.startsWith(`${AUTH_SCHEME}$`)) return { status: "reset_required" };
+  const incoming = await credentialHash(proof, env.AUTH_PEPPER, account.passwordSalt);
+  return safeEqual(incoming.hash, account.passwordHash) ? { status: "verified", account } : { status: "invalid" };
+}
+__name(verifyAccount, "verifyAccount");
 function cors(request, env) {
-  if (new URL(request.url).pathname.startsWith("/api/public/")) {
+  const path = new URL(request.url).pathname;
+  if (path.startsWith("/api/public/")) {
     return { "access-control-allow-origin": "*" };
   }
   const origin = request.headers.get("origin") ?? "";
+  if (isPosApiPath(path)) {
+    const allowed2 = (env.POS_ALLOWED_ORIGINS ?? "").split(",").map((value) => value.trim());
+    return origin && allowed2.includes(origin) ? { "access-control-allow-origin": origin, vary: "Origin" } : { vary: "Origin" };
+  }
   const allowed = env.ALLOWED_ORIGINS.split(",").map((x) => x.trim());
   return allowed.includes(origin) ? {
     "access-control-allow-origin": origin,
@@ -6099,7 +9838,7 @@ async function productOptions(body, db, businessId) {
     };
   if (portions2.some(({ branchId }) => branchId != null && (typeof branchId !== "string" || !PRODUCT_OPTION_ID_PATTERN.test(branchId))))
     return { error: "Every portion branch must be a valid branch ID or null" };
-  const modifierGroups = rawGroups.map((value) => {
+  const modifierGroups2 = rawGroups.map((value) => {
     const group = value ?? {};
     const rawOptions = Array.isArray(group.options) ? group.options : [];
     return {
@@ -6125,7 +9864,7 @@ async function productOptions(body, db, businessId) {
       })
     };
   });
-  if (modifierGroups.some(
+  if (modifierGroups2.some(
     (group) => !validLabels(group) || !group.options.length || group.options.length > 30 || group.options.some(
       (option) => !validLabels(option) || option.priceCents != null && !Number.isFinite(option.priceCents)
     )
@@ -6134,12 +9873,12 @@ async function productOptions(body, db, businessId) {
       error: "Every modifier group and option needs a Khmer label"
     };
   const portionsJson = JSON.stringify(portions2);
-  const modifierGroupsJson = JSON.stringify(modifierGroups);
+  const modifierGroupsJson = JSON.stringify(modifierGroups2);
   if (portionsJson.length + modifierGroupsJson.length > 64e3)
     return { error: "Product options are too large" };
   if (!await ownsPortionBranches(db, businessId, portions2))
     return { error: "Choose portion branches that belong to this business" };
-  return { unit, portions: portions2, modifierGroups };
+  return { unit, portions: portions2, modifierGroups: modifierGroups2 };
 }
 __name(productOptions, "productOptions");
 function productPriceRange(portions2, fallbackPrice) {
@@ -6163,6 +9902,7 @@ async function sessionFrom(request, env) {
       s.expires_at AS expiresAt, b.timezone,
       b.disabled_control_pages_json AS disabledControlPagesJson, m.can_view_bookings AS canViewBookings,
       sp.features_json AS subscriptionFeaturesJson,
+      COALESCE(sp.pos_enabled,1) AS posEnabled,
       sp.code AS subscriptionPlanCode, sp.name AS subscriptionPlanName,
       bs.source AS subscriptionSource, bs.status AS subscriptionStatus,
       bs.trial_ends_at AS trialEndsAt,
@@ -6208,6 +9948,12 @@ function controlPagesForResource(path, method) {
       return ["orders"];
     case "reports":
       return ["reports"];
+    case "pos":
+      if (path === `${posAdminPath}/overview`) return ["sellingOverview"];
+      if (path === `${posAdminPath}/sales`) return ["salesList"];
+      if (path === `${posAdminPath}/payment-types` || path.startsWith(`${posAdminPath}/payment-types/`))
+        return ["posPaymentTypes"];
+      return ["posProfiles"];
     case "tables":
     case "table-groups":
       return readOnly ? ["tables", "qrDesigns"] : ["tables"];
@@ -6278,14 +10024,15 @@ async function provisionBusiness(env, input) {
     env.DB.prepare(
       `INSERT INTO businesses
        (id, name, slug, tagline, locale, currency, timezone, pricing_mode,
-        default_price_list_id)
-       VALUES (?, ?, ?, ?, 'km', 'KHR', 'Asia/Phnom_Penh', 'automatic', ?)`
+        default_price_list_id, disabled_control_pages_json)
+       VALUES (?, ?, ?, ?, 'km', 'KHR', 'Asia/Phnom_Penh', 'automatic', ?, ?)`
     ).bind(
       businessId,
       input.businessName,
       input.businessSlug,
       "Freshly made, beautifully served.",
-      priceListId
+      priceListId,
+      JSON.stringify(["sellingOverview", "posProfiles", "posPaymentTypes"])
     ),
     env.DB.prepare(
       `INSERT INTO price_lists (id,business_id,name,is_normal)
@@ -6465,8 +10212,8 @@ function countAdminCatalogProducts(db, businessId, includeMenuCounts = false) {
 }
 __name(countAdminCatalogProducts, "countAdminCatalogProducts");
 var maxProductSelection = 1e4;
-async function matchingProductIds(db, sql, bindings) {
-  const { results } = await db.prepare(`${sql} LIMIT ?`).bind(...bindings, maxProductSelection + 1).all();
+async function matchingProductIds(db, sql2, bindings) {
+  const { results } = await db.prepare(`${sql2} LIMIT ?`).bind(...bindings, maxProductSelection + 1).all();
   if (results.length > maxProductSelection)
     return json3({ error: "Select up to 10,000 products at a time. Narrow your search or category." }, 400);
   return json3({ productIds: results.map(({ id: id2 }) => id2) });
@@ -6633,11 +10380,11 @@ async function activeBanners(env, businessId, timezone) {
 __name(activeBanners, "activeBanners");
 async function bannerStateKey(banners) {
   const ids = banners.map((banner) => String(banner.id)).join(":");
-  const digest = await crypto.subtle.digest(
+  const digest2 = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(ids)
   );
-  return bytesToHex(digest).slice(0, 16);
+  return bytesToHex(digest2).slice(0, 16);
 }
 __name(bannerStateKey, "bannerStateKey");
 async function cachedPublicMenu(slug2, env, branchSlug, menuSlug) {
@@ -6806,9 +10553,9 @@ async function publicMenu(slug2, env, branch2, root, resolvedPricing, resolvedBa
   const activePrices = priceMap(priceRows, pricing.activeId);
   const productRows = products.results.flatMap(
     ({ menuOrdersJson, ...product }) => {
-      const priced = applyResolvedPrices(product, normalPrices, activePrices, branch2.id);
+      const priced2 = applyResolvedPrices(product, normalPrices, activePrices, branch2.id);
       const menuOrders = root ? jsonArray(menuOrdersJson) : null;
-      return priced ? [{ product: priced, menuOrders }] : [];
+      return priced2 ? [{ product: priced2, menuOrders }] : [];
     }
   );
   const parentByCategoryId = new Map(
@@ -7128,8 +10875,8 @@ async function submitOrder(request, env, slug2, execution) {
   const activePrices = priceMap(prices.results, pricing.activeId);
   const catalog = new Map(
     products.results.flatMap((product) => {
-      const priced = applyResolvedPrices(product, normalPrices, activePrices, branchId);
-      return priced ? [[product.id, priced]] : [];
+      const priced2 = applyResolvedPrices(product, normalPrices, activePrices, branchId);
+      return priced2 ? [[product.id, priced2]] : [];
     })
   );
   const invalidSelection = /* @__PURE__ */ __name(() => json3(
@@ -7442,19 +11189,32 @@ async function handle(request, env, execution) {
       headers: {
         ...cors(request, env),
         "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-        "access-control-allow-headers": "content-type,authorization"
+        "access-control-allow-headers": isPosApiPath(path) ? "content-type,authorization,idempotency-key" : "content-type,authorization"
       }
     });
   const publicBusiness = path.match(/^\/api\/public\/businesses\/([a-z0-9-]+)(\/.*)$/);
   if (publicBusiness) {
-    const canonical = await env.DB.prepare(
+    const canonical2 = await env.DB.prepare(
       `SELECT b.slug FROM business_slug_aliases a JOIN businesses b ON b.id=a.business_id
        WHERE a.slug=?`
     ).bind(publicBusiness[1]).first("slug");
-    if (canonical) path = `/api/public/businesses/${canonical}${publicBusiness[2]}`;
+    if (canonical2) path = `/api/public/businesses/${canonical2}${publicBusiness[2]}`;
   }
   if (path === "/health")
     return json3({ ok: true, service: "angkor-emenu-api" });
+  if (isPosApiPath(path)) return handlePosApi(request, env, {
+    verifyCredentials: /* @__PURE__ */ __name(async (email, proof, version, bindings) => {
+      if (version !== AUTH_SCHEME || !PASSWORD_PROOF_PATTERN.test(proof)) return null;
+      if (!authConfigured(bindings)) return null;
+      const result = await verifyAccount(bindings, email, proof);
+      return result.status === "verified" ? result.account : null;
+    }, "verifyCredentials"),
+    localDate: localDateKey,
+    subscription: /* @__PURE__ */ __name((identity) => subscriptionSummary(identity, identity.timezone), "subscription"),
+    pricing: resolvePriceList,
+    priceMap,
+    pricedProduct: applyResolvedPrices
+  });
   if (path === "/api/integrations/pos/orders/ws")
     return connectPosOrderEvents(request, env);
   const posOrderMatch = path.match(
@@ -7537,7 +11297,7 @@ async function handle(request, env, execution) {
     if (url.searchParams.get("details") !== "1")
       return json3({ status: order.status }, 200, headers);
     const items = await env.DB.prepare(
-      `SELECT line.product_id AS productId, line.quantity, line.portion_name AS portionName, line.modifiers,
+      `SELECT line.product_id AS productId, line.quantity, line.portion_name AS portionName, line.modifiers, line.status,
         COALESCE(NULLIF(product.name_km,''),product.name,line.product_id) AS name,
         product.name_en AS nameEn, product.name_zh AS nameZh
        FROM order_products line
@@ -7701,12 +11461,12 @@ async function handle(request, env, execution) {
        WHERE m.id = ? AND b.is_active = 1`
     ).bind(publicMediaMatch[1]).first();
     if (!item) return json3({ error: "Media not found" }, 404);
-    const object2 = await env.MEDIA.get(item.objectKey);
-    return object2 ? new Response(object2.body, {
+    const object3 = await env.MEDIA.get(item.objectKey);
+    return object3 ? new Response(object3.body, {
       headers: {
         "content-type": item.contentType,
         "cache-control": "public, max-age=86400",
-        etag: object2.httpEtag
+        etag: object3.httpEtag
       }
     }) : json3({ error: "Media not found" }, 404);
   }
@@ -7827,19 +11587,12 @@ async function handle(request, env, execution) {
       return json3({ error: "Invalid email or password" }, 401);
     if (!authConfigured(env))
       return json3({ error: "Authentication is not configured" }, 503);
-    const user = await env.DB.prepare(
-      "SELECT id, email, display_name AS displayName, password_hash AS passwordHash, password_salt AS passwordSalt FROM users WHERE email = ?"
-    ).bind(email).first();
-    if (!user) return json3({ error: "Invalid email or password" }, 401);
-    if (!user.passwordSalt.startsWith(`${AUTH_SCHEME}$`))
+    const result = await verifyAccount(env, email, passwordProof);
+    if (result.status === "reset_required")
       return json3({ error: "This account requires a password reset" }, 409);
-    const incoming = await credentialHash(
-      passwordProof,
-      env.AUTH_PEPPER,
-      user.passwordSalt
-    );
-    if (!safeEqual(incoming.hash, user.passwordHash))
+    if (result.status !== "verified")
       return json3({ error: "Invalid email or password" }, 401);
+    const user = result.account;
     const session = await createSession(user.id, env);
     return json3(
       {
@@ -7853,7 +11606,7 @@ async function handle(request, env, execution) {
     );
   }
   const auth = await sessionFrom(request, env);
-  if (!auth) return json3({ error: "Authentication required" }, 401);
+  if (!auth) return json3(isPosAdminPath(path) ? { error: "Authentication required", code: "AUTHENTICATION_REQUIRED" } : { error: "Authentication required" }, 401);
   if (request.method === "POST" && path === "/api/auth/logout") {
     const token = sessionTokenFrom(request);
     if (token) {
@@ -7914,9 +11667,10 @@ async function handle(request, env, execution) {
   if (auth.subscriptionFeaturesJson !== null) {
     const included = new Set(planFeatures(auth.subscriptionFeaturesJson));
     for (const page of controlPageIds)
-      if (!included.has(page)) disabledControlPages.add(page);
+      if (!sellingControlPages.includes(page) && !included.has(page)) disabledControlPages.add(page);
   }
   const canViewBusinessActivity = auth.role === "owner" || auth.role === "manager";
+  const canAccessSelling = canViewBusinessActivity && auth.sessionType === "customer" && Boolean(auth.posEnabled);
   const workspaceAccessPath = ["/api/admin/workspace", "/api/admin/workspace-access", "/api/admin/overview"].includes(path);
   const bookingPath = path === "/api/admin/bookings" || path.startsWith("/api/admin/bookings/");
   const bookingAccess = bookingPath || workspaceAccessPath ? await bookingWorkspaceAccess(env.DB, auth) : { visible: false, canManage: false };
@@ -7925,7 +11679,7 @@ async function handle(request, env, execution) {
   const telegramAccess = (telegramPath || workspaceAccessPath) && await canManageTelegramNotifications(env.DB, auth);
   if (telegramPath) return telegramAccess ? adminTelegramNotifications(request, env, path, auth.businessId) : json3({ error: "Telegram notifications are unavailable for this account or plan" }, 403);
   const accessibleControlPages = controlPageIds.filter(
-    (page) => page === "bookings" ? bookingAccess.visible : page === "telegramNotifications" ? telegramAccess : !disabledControlPages.has(page) && (page !== "orders" && page !== "reports" || canViewBusinessActivity)
+    (page) => page === "bookings" ? bookingAccess.visible : page === "telegramNotifications" ? telegramAccess : sellingControlPages.includes(page) ? canAccessSelling && !disabledControlPages.has(page) : !disabledControlPages.has(page) && (page !== "orders" && page !== "reports" || canViewBusinessActivity)
   );
   if (request.method === "GET" && path === "/api/admin/workspace-access")
     return json3({ accessibleControlPages });
@@ -7953,6 +11707,15 @@ async function handle(request, env, execution) {
   }
   if (path === "/api/admin/integrations/pos")
     return handlePosIntegration(request, env, auth);
+  if (isPosAdminPath(path))
+    return handlePosSetup(
+      request,
+      url,
+      env.DB,
+      auth,
+      path.slice(posAdminPath.length),
+      () => localDateKey(/* @__PURE__ */ new Date(), auth.timezone || "UTC")
+    );
   if (request.method === "GET" && path === "/api/admin/branches") {
     const { results } = await listBranches(env.DB, auth.businessId);
     return json3({ branches: results.map(({ id: id2, slug: slug2, name, isDefault, isActive }) => ({ id: id2, slug: slug2, name, isDefault, isActive })) });
@@ -8286,7 +12049,7 @@ async function handle(request, env, execution) {
         env.DB.prepare(
           `SELECT line.line_number AS lineNumber, line.product_id AS productId,
             COALESCE(NULLIF(product.name_km,''),product.name) AS name,
-            product.name_en AS nameEn, line.quantity, line.price,
+            product.name_en AS nameEn, line.quantity, line.price, line.status,
             line.portion_name AS portionName, line.price_list AS priceList,
             price_list.name AS priceListName, line.modifiers,
             line.total_amount AS totalAmount, line.note
@@ -8817,7 +12580,7 @@ async function handle(request, env, execution) {
     const amount = body.priceCents === "" || body.priceCents == null ? null : validPriceAmount(body.priceCents);
     if (body.priceCents !== "" && body.priceCents != null && amount == null)
       return json3({ error: "Price must be zero or greater" }, 400);
-    const [product, list] = await Promise.all([
+    const [product, list2] = await Promise.all([
       env.DB.prepare(
         `SELECT id,price_cents AS priceCents,max_price AS maxPrice,
           portions_json AS portionsJson
@@ -8829,7 +12592,7 @@ async function handle(request, env, execution) {
       ).bind(priceListId, auth.businessId).first()
     ]);
     if (!product) return json3({ error: "Menu item not found" }, 404);
-    if (!list) return json3({ error: "Price list not found" }, 404);
+    if (!list2) return json3({ error: "Price list not found" }, 404);
     const portions2 = jsonArray(product.portionsJson);
     const portion = portions2.find((item) => item.id === targetKey);
     if (targetKey === "base" && portions2.length)
@@ -8839,7 +12602,7 @@ async function handle(request, env, execution) {
       );
     if (targetKey !== "base" && !portion)
       return json3({ error: "Product portion not found" }, 404);
-    if (list.isNormal && amount == null)
+    if (list2.isNormal && amount == null)
       return json3({ error: "Normal Rate prices cannot be empty" }, 400);
     const statements = [];
     if (amount == null) {
@@ -8860,7 +12623,7 @@ async function handle(request, env, execution) {
         ).bind(auth.businessId, priceListId, productId, targetKey, amount)
       );
     }
-    if (list.isNormal && amount != null) {
+    if (list2.isNormal && amount != null) {
       if (targetKey === "base")
         statements.push(
           env.DB.prepare(
@@ -8892,7 +12655,7 @@ async function handle(request, env, execution) {
     const normalId = await normalPriceListId(env, auth.businessId);
     let effectivePriceCents = amount;
     let inherited = false;
-    if (!list.isNormal && amount == null) {
+    if (!list2.isNormal && amount == null) {
       inherited = true;
       const normal = await env.DB.prepare(
         `SELECT price_amount AS priceCents FROM product_prices
@@ -9158,7 +12921,7 @@ async function handle(request, env, execution) {
   }
   if (request.method === "GET" && path === "/api/admin/tables") {
     const branchId = url.searchParams.get("branchId") || "";
-    const tables = await env.DB.prepare(
+    const tables2 = await env.DB.prepare(
       `SELECT tables.id,tables.group_id AS groupId,tables.branch_id AS branchId,tables.code,tables.label,
         tables.public_token AS publicToken,tables.sort_order AS sortOrder,
         tables.is_active AS isActive,groups.name AS groupName,
@@ -9169,7 +12932,7 @@ async function handle(request, env, execution) {
        WHERE tables.business_id=? AND (?='' OR tables.branch_id=?)
        ORDER BY groups.sort_order,tables.sort_order,tables.code`
     ).bind(auth.businessId, branchId, branchId).all();
-    return json3({ tables: tables.results });
+    return json3({ tables: tables2.results });
   }
   if (request.method === "POST" && path === "/api/admin/tables/bulk-delete") {
     const body = await readJson(request).catch(() => null);
@@ -9180,7 +12943,7 @@ async function handle(request, env, execution) {
       return json3({ error: "Choose the tables or table groups to delete" }, 400);
     }
     const businessId = auth.businessId;
-    const tables = JSON.stringify([...new Set(tableIds)]);
+    const tables2 = JSON.stringify([...new Set(tableIds)]);
     const groups = JSON.stringify([...new Set(groupIds)]);
     const [deletedTables, deletedGroups, retained] = await env.DB.batch([
       env.DB.prepare(`WITH selected_tables AS (
@@ -9205,7 +12968,7 @@ async function handle(request, env, execution) {
             AND id NOT IN (SELECT id FROM protected_tables)
           )
         )
-        RETURNING id`).bind(businessId, tables, groups, includeGroupTables ? 1 : 0),
+        RETURNING id`).bind(businessId, tables2, groups, includeGroupTables ? 1 : 0),
       env.DB.prepare(`DELETE FROM table_groups
         WHERE business_id=?1 AND id IN (SELECT value FROM json_each(?2))
           AND id NOT IN (
@@ -9216,7 +12979,7 @@ async function handle(request, env, execution) {
         (SELECT COUNT(*) FROM restaurant_tables
           WHERE business_id=?1 AND id IN (SELECT value FROM json_each(?2))) AS keptTableCount,
         (SELECT COUNT(*) FROM table_groups
-          WHERE business_id=?1 AND id IN (SELECT value FROM json_each(?3))) AS keptGroupCount`).bind(businessId, tables, groups)
+          WHERE business_id=?1 AND id IN (SELECT value FROM json_each(?3))) AS keptGroupCount`).bind(businessId, tables2, groups)
     ]);
     return json3({
       deletedTableIds: deletedTables.results.map(({ id: id2 }) => id2),
@@ -9898,13 +13661,13 @@ async function handle(request, env, execution) {
         `SELECT id,code FROM products
          WHERE business_id=? AND lower(code) IN (${placeholders})`
       ).bind(auth.businessId, ...codeChunk).all();
-      const conflict = conflicts.results.find(
+      const conflict2 = conflicts.results.find(
         (product) => !productIds.has(product.id)
       );
-      if (conflict)
+      if (conflict2)
         return json3(
           {
-            error: `Menu item code ${conflict.code} is already used by your business`
+            error: `Menu item code ${conflict2.code} is already used by your business`
           },
           409
         );
@@ -10336,8 +14099,8 @@ function parsedJsonObject(value) {
   }
 }
 __name(parsedJsonObject, "parsedJsonObject");
-async function cloneRows(env, sql, ...bindings) {
-  return (await env.DB.prepare(sql).bind(...bindings).all()).results;
+async function cloneRows(env, sql2, ...bindings) {
+  return (await env.DB.prepare(sql2).bind(...bindings).all()).results;
 }
 __name(cloneRows, "cloneRows");
 function cloneCountRow(row) {
@@ -10549,9 +14312,9 @@ function jsonRowChunks(rows) {
   return chunks;
 }
 __name(jsonRowChunks, "jsonRowChunks");
-function cloneInsertStatements(env, rows, sql, ...bindings) {
+function cloneInsertStatements(env, rows, sql2, ...bindings) {
   return jsonRowChunks(rows).map(
-    (chunk) => env.DB.prepare(sql).bind(...bindings, JSON.stringify(chunk))
+    (chunk) => env.DB.prepare(sql2).bind(...bindings, JSON.stringify(chunk))
   );
 }
 __name(cloneInsertStatements, "cloneInsertStatements");
@@ -10590,8 +14353,8 @@ async function stageCloneMedia(env, targetBusinessId, sourceMedia) {
   try {
     await withConcurrency(sourceMedia, 2, async (item) => {
       const sourceKey = String(item.object_key || "");
-      const object2 = sourceKey ? await env.MEDIA.get(sourceKey) : null;
-      if (!object2)
+      const object3 = sourceKey ? await env.MEDIA.get(sourceKey) : null;
+      if (!object3)
         throw new CloneDataError(
           `Source image ${String(item.filename || item.id)} could not be read`,
           409,
@@ -10600,9 +14363,9 @@ async function stageCloneMedia(env, targetBusinessId, sourceMedia) {
       const filename = String(item.filename || "image").slice(0, 255);
       const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "-");
       const objectKey = `businesses/${targetBusinessId}/${crypto.randomUUID()}-${safeName}`;
-      await env.MEDIA.put(objectKey, object2.body, {
-        httpMetadata: object2.httpMetadata,
-        customMetadata: object2.customMetadata
+      await env.MEDIA.put(objectKey, object3.body, {
+        httpMetadata: object3.httpMetadata,
+        customMetadata: object3.customMetadata
       });
       stagedKeys.push(objectKey);
       const mediaId = id("med");
@@ -10616,9 +14379,9 @@ async function stageCloneMedia(env, targetBusinessId, sourceMedia) {
         ),
         filename,
         contentType: String(
-          item.content_type || object2.httpMetadata?.contentType || ""
+          item.content_type || object3.httpMetadata?.contentType || ""
         ),
-        sizeBytes: Number(item.size_bytes || object2.size || 0)
+        sizeBytes: Number(item.size_bytes || object3.size || 0)
       });
     });
     return { mediaMap, stagedKeys };
@@ -10917,7 +14680,7 @@ async function executeBusinessClone(env, context, actorEmail) {
     ])
       setFromSource(column);
     const sourceDefaultId = String(context.source.default_price_list_id || "");
-    const mappedDefault = priceListIds.get(sourceDefaultId) || mappedPriceLists.find((list) => Number(list.is_normal) === 1)?.id;
+    const mappedDefault = priceListIds.get(sourceDefaultId) || mappedPriceLists.find((list2) => Number(list2.is_normal) === 1)?.id;
     if (!mappedDefault) {
       await discardStagedMedia(env, stagedKeys);
       throw new CloneDataError(
@@ -11035,8 +14798,11 @@ var SuperAdminService = class extends WorkerEntrypoint {
     const limits = input.limits === void 0 ? null : parsePlanLimits(input.limits);
     if (input.limits !== void 0 && !limits)
       return rpcFailure(400, "Enter valid whole-number plan limits or leave them blank");
+    const pos = input.pos === void 0 ? null : parsePlanPos(input.pos);
+    if (input.pos !== void 0 && !pos)
+      return rpcFailure(400, "Choose whether to include POS and enter whole-number POS limits or leave them blank");
     const db = this.env.DB;
-    const recordId = planId ?? id("plan");
+    const recordId2 = planId ?? id("plan");
     const planValues = [
       name.trim(),
       description.trim(),
@@ -11049,19 +14815,23 @@ var SuperAdminService = class extends WorkerEntrypoint {
     const priceId = id("price");
     const limitValues = limits ? [limits.branches, limits.menus, limits.products, limits.dailyOrders] : [null, null, null, null];
     const limitUpdate = limits ? ",max_branches=?,max_menus=?,max_products=?,max_daily_orders=?" : "";
-    const [planWrite] = await db.batch([
-      planId ? db.prepare(`UPDATE subscription_plans SET name=?,description=?,features_json=?,
-            is_active=?,is_public=?,display_order=?,updated_at=CURRENT_TIMESTAMP${limitUpdate} WHERE id=?`).bind(...planValues, ...limits ? limitValues : [], recordId) : db.prepare(`INSERT INTO subscription_plans
-            (id,code,name,description,features_json,is_active,is_public,display_order,
-             max_branches,max_menus,max_products,max_daily_orders) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).bind(recordId, recordSlug(name, "plan", recordId), ...planValues, ...limitValues),
+    const posValues = pos ? [Number(pos.enabled), pos.profiles, pos.dailySales] : [0, null, null];
+    const posUpdate = pos ? ",pos_enabled=?,max_pos_profiles=?,max_daily_pos_sales=?" : "";
+    const planStatement = planId ? db.prepare(`UPDATE subscription_plans SET name=?,description=?,features_json=?,
+          is_active=?,is_public=?,display_order=?,updated_at=CURRENT_TIMESTAMP${limitUpdate}${posUpdate} WHERE id=?`).bind(...planValues, ...limits ? limitValues : [], ...pos ? posValues : [], recordId2) : db.prepare(`INSERT INTO subscription_plans
+          (id,code,name,description,features_json,is_active,is_public,display_order,
+           max_branches,max_menus,max_products,max_daily_orders,pos_enabled,max_pos_profiles,max_daily_pos_sales)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(recordId2, recordSlug(name, "plan", recordId2), ...planValues, ...limitValues, ...posValues);
+    const writes = [
+      planStatement,
       db.prepare(`UPDATE subscription_plan_prices SET is_active=0,updated_at=CURRENT_TIMESTAMP
         WHERE plan_id=? AND is_active=1 AND currency='USD' AND provider IS NULL AND interval_count=1
-          AND (amount_minor<>? OR billing_interval<>?)`).bind(recordId, amountMinor, interval),
+          AND (amount_minor<>? OR billing_interval<>?)`).bind(recordId2, amountMinor, interval),
       db.prepare(`INSERT INTO subscription_plan_prices
         (id,plan_id,code,currency,amount_minor,billing_interval)
         SELECT ?,plan.id,?,'USD',?,? FROM subscription_plans plan WHERE plan.id=?
           AND NOT EXISTS (SELECT 1 FROM subscription_plan_prices
-            WHERE plan_id=plan.id AND is_active=1 AND currency='USD' AND provider IS NULL AND interval_count=1)`).bind(priceId, priceId, amountMinor, interval, recordId),
+            WHERE plan_id=plan.id AND is_active=1 AND currency='USD' AND provider IS NULL AND interval_count=1)`).bind(priceId, priceId, amountMinor, interval, recordId2),
       auditStatement(
         this.env,
         actor,
@@ -11069,19 +14839,27 @@ var SuperAdminService = class extends WorkerEntrypoint {
         null,
         null,
         {
-          planId: recordId,
+          planId: recordId2,
           name: name.trim(),
           isPublic,
           isActive,
           features,
           amountMinor,
           billingInterval: interval,
-          ...limits ? { limits } : {}
+          ...limits ? { limits } : {},
+          ...pos ? { pos } : {}
         }
       )
-    ]);
-    if (!planWrite.meta.changes) return rpcFailure(404, "Plan not found");
-    return rpcSuccess({ id: recordId });
+    ];
+    try {
+      const [planWrite] = await db.batch(writes);
+      if (!planWrite.meta.changes) return rpcFailure(404, "Plan not found");
+    } catch (error3) {
+      const limit = planLimitError(error3);
+      if (limit) return rpcFailure(409, limit.error, limit.code);
+      throw error3;
+    }
+    return rpcSuccess({ id: recordId2 });
   }
   async removeSubscriptionPlan(actorEmail, planId) {
     const actor = normalizedAdminEmail(actorEmail);
@@ -11126,6 +14904,8 @@ var SuperAdminService = class extends WorkerEntrypoint {
       ]);
     } catch (error3) {
       if (planChangedDuringSignup(error3)) return rpcFailure(409, "Choose a currently available plan", "PLAN_UNAVAILABLE");
+      const limit = planLimitError(error3);
+      if (limit) return rpcFailure(409, limit.error, limit.code);
       throw error3;
     }
     return rpcSuccess({ planId: plan.id });
@@ -11168,7 +14948,7 @@ var SuperAdminService = class extends WorkerEntrypoint {
     if (enabled && (!validCoordinate(latitude ?? business2.latitude, 90) || !validCoordinate(longitude ?? business2.longitude, 180)))
       return rpcFailure(400, "Set the branch or business location before enabling order submission");
     if (!existing?.isDefault && input.mapUrl && !mapUrl) return rpcFailure(400, "Enter a valid map URL");
-    const recordId = branchId ?? id("br");
+    const recordId2 = branchId ?? id("br");
     const policy = [
       latitude,
       longitude,
@@ -11181,19 +14961,21 @@ var SuperAdminService = class extends WorkerEntrypoint {
       has_order_location_override=?,enable_submit_order=?,order_radius_meters=?,use_business_order_radius=?`;
     const profile = [branchAddress, phone, mapUrl ?? "", isActive];
     const write = existing?.isDefault ? db.prepare(`UPDATE branches SET name=?,${updatePolicy}
-          WHERE business_id=? AND id=?`).bind(name, ...policy, businessId, recordId) : branchId ? db.prepare(`UPDATE branches SET name=?,address=?,phone=?,map_url=?,is_active=?,${updatePolicy}
-            WHERE business_id=? AND id=?`).bind(name, ...profile, ...policy, businessId, recordId) : db.prepare(`INSERT INTO branches (id,business_id,slug,name,address,phone,map_url,is_active,
+          WHERE business_id=? AND id=?`).bind(name, ...policy, businessId, recordId2) : branchId ? db.prepare(`UPDATE branches SET name=?,address=?,phone=?,map_url=?,is_active=?,${updatePolicy}
+            WHERE business_id=? AND id=?`).bind(name, ...profile, ...policy, businessId, recordId2) : db.prepare(`INSERT INTO branches (id,business_id,slug,name,address,phone,map_url,is_active,
             latitude,longitude,has_order_location_override,enable_submit_order,order_radius_meters,use_business_order_radius)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(recordId, businessId, slug2, name, ...profile, ...policy);
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(recordId2, businessId, slug2, name, ...profile, ...policy);
     try {
       await db.batch([
         write,
         publicMenuVersionStatement(db, businessId),
-        auditStatement(this.env, actor, branchId ? "branch.updated" : "branch.created", businessId, null, { branchId: recordId, name, isActive })
+        auditStatement(this.env, actor, branchId ? "branch.updated" : "branch.created", businessId, null, { branchId: recordId2, name, isActive })
       ]);
     } catch (error3) {
       if (String(error3).includes("UNIQUE constraint failed: branches.business_id, branches.slug"))
         return rpcFailure(409, "This branch slug is already in use");
+      if (String(error3).includes("POS_BRANCH_HAS_ACTIVITY"))
+        return rpcFailure(409, "Resolve this branch's open POS bills, shifts, and working day before disabling it", "POS_BRANCH_HAS_ACTIVITY");
       const limit = planLimitError(error3);
       if (limit) return rpcFailure(409, limit.error, limit.code);
       throw error3;
@@ -11207,6 +14989,13 @@ var SuperAdminService = class extends WorkerEntrypoint {
     const result = await manageBranchWebhooks(this.env, actor, businessId, branchId, action, id2, input);
     if (result.ok && action === "retry") scheduleBranchWebhooks(this.env, this.ctx, businessId);
     return result;
+  }
+  async clearWebhookHistory(actorEmail, businessId, branchId, webhookId) {
+    const actor = normalizedAdminEmail(actorEmail);
+    if (!validAccountEmail(actor)) return rpcFailure(403, "Super-admin identity is invalid");
+    if (!RECORD_ID_PATTERN.test(businessId) || branchId !== null && !RECORD_ID_PATTERN.test(branchId) || webhookId !== null && (branchId === null || !RECORD_ID_PATTERN.test(webhookId)))
+      return rpcFailure(400, "Invalid webhook scope or ID");
+    return clearWebhookHistory(this.env, actor, businessId, branchId, webhookId);
   }
   async resetData(actorEmail, businessId, action, input) {
     const actor = normalizedAdminEmail(actorEmail);
@@ -12098,6 +15887,12 @@ var index_default = {
         path: new URL(request.url).pathname,
         ...details
       });
+      const failurePath = new URL(request.url).pathname;
+      if (isPosApiPath(failurePath) || isPosAdminPath(failurePath)) return json3(
+        { error: "Request could not be completed", code: "INTERNAL_ERROR", request_id: requestId },
+        500,
+        { ...cors(request, env), "cache-control": "private, no-store" }
+      );
       return json3(
         { error: "Request could not be completed", requestId },
         500,
@@ -12118,7 +15913,9 @@ var index_default = {
     await env.DB.batch([
       env.DB.prepare("DELETE FROM analytics_events WHERE created_at < datetime('now','-13 months')"),
       env.DB.prepare("DELETE FROM telegram_order_deliveries WHERE updated_at < unixepoch() - 604800"),
-      env.DB.prepare(`DELETE FROM telegram_notification_deliveries AS delivery WHERE ${telegramDeliveryExpiresAt}<unixepoch()`)
+      env.DB.prepare(`DELETE FROM telegram_notification_deliveries AS delivery WHERE ${telegramDeliveryExpiresAt}<unixepoch()`),
+      env.DB.prepare("DELETE FROM pos_sessions WHERE expires_at<=unixepoch()"),
+      env.DB.prepare("DELETE FROM pos_login_limits WHERE window_start<unixepoch()-1200")
     ]);
   }
 };

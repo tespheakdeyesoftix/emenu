@@ -225,6 +225,10 @@ before(async () => {
       ).run();
     }
     if (name.startsWith("0066_")) await account("cashier", "cafe", "editor");
+    if (name === "0073_pos_defaults_off.sql") {
+      await prepare("UPDATE businesses SET disabled_control_pages_json=? WHERE id='cafe'",
+        JSON.stringify(["catalog", "posProfiles"])).run();
+    }
     const statements = splitSql(
       await readFile(resolve(migrations, name), "utf8"),
     );
@@ -235,6 +239,10 @@ before(async () => {
   ).first("id");
   assert.ok(main, "an existing branch survives the additive POS migration");
   assert.ok(legacyToken, "the device migration fixture has a pre-existing session");
+  const migrated = await prepare("SELECT disabled_control_pages_json FROM businesses WHERE id='cafe'").first("disabled_control_pages_json");
+  assert.deepEqual(JSON.parse(migrated), ["catalog", "posProfiles", "sellingOverview", "posPaymentTypes"]);
+  // These fixtures explicitly enable the sidebar pages for the POS API tests.
+  await prepare("UPDATE businesses SET disabled_control_pages_json='[]' WHERE id IN ('cafe','other')").run();
   assert.deepEqual((await read(legacyToken, "/profiles")).profiles, []);
   await account("username-manager", "cafe", "manager");
   await account("stranger", "other", "owner");
@@ -310,7 +318,7 @@ test("POS subscription limits apply across branches and use the paid sale date",
   const standard = await prepare(
     "SELECT pos_enabled,max_pos_profiles,max_daily_pos_sales FROM subscription_plans WHERE id='plan_standard'",
   ).first();
-  assert.deepEqual(standard, { pos_enabled: 1, max_pos_profiles: null, max_daily_pos_sales: null });
+  assert.deepEqual(standard, { pos_enabled: 0, max_pos_profiles: null, max_daily_pos_sales: null });
   await db.batch([
     prepare(`INSERT INTO subscription_plans(id,code,name,pos_enabled,max_pos_profiles,max_daily_pos_sales)
       VALUES ('pos-test','pos-test','POS test',1,1,1)`),
