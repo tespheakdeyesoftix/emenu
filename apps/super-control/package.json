@@ -1,0 +1,32 @@
+{
+  "name": "@menuflow/super-control",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5176",
+    "dev:worker": "wrangler dev --ip 127.0.0.1 --port 8788",
+    "build": "vite build && wrangler deploy --dry-run --outdir dist-worker",
+    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^5.2.4",
+    "jose": "^6.1.0",
+    "jszip": "^3.10.2",
+    "lucide-vue-next": "^0.468.0",
+    "pinia": "^3.0.3",
+    "vite": "^6.1.0",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "latest",
+    "autoprefixer": "latest",
+    "postcss": "latest",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.3",
+    "vue-tsc": "^2.2.12",
+    "wrangler": "^4.0.0"
+  }
+}

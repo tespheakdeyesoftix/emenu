@@ -1,0 +1,38 @@
+name = "angkor-emenu-api"
+main = "worker/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["global_fetch_strictly_public"]
+
+[observability]
+enabled = true
+
+[triggers]
+crons = ["17 0 * * *", "* * * * *"]
+
+[vars]
+ALLOWED_ORIGINS = "https://angkor-emenu-admin.pages.dev,https://angkor-emenu-menu.pages.dev,https://angkor-emenu.pages.dev,https://emenu.aagj7.com"
+PUBLIC_ASSET_BASE = "https://angkor-emenu-api.pheakdey-micronet.workers.dev/media"
+PUBLIC_MEDIA_BASE = "https://emenu-media.aagj7.com"
+ADMIN_APP_URL = "https://angkor-emenu-admin.pages.dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "angkor-emenu"
+database_id = "5f0fc649-1ead-4a85-9488-6f952ac4e963"
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "CATALOG_CACHE"
+id = "36a52e3abba94a4e87a5d35ad505cf10"
+
+[[durable_objects.bindings]]
+name = "ORDER_EVENTS"
+class_name = "OrderEvents"
+
+[[migrations]]
+tag = "order-events-v1"
+new_sqlite_classes = ["OrderEvents"]
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "angkor-emenu-media"

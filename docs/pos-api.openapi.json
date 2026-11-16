@@ -1,0 +1,5053 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "eMenu POS API",
+    "version": "1.0.0",
+    "description": "Profile-bound restaurant POS operations and business staff setup. See pos-api.md for credentials, amounts, operating dates, and retries."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8787",
+      "description": "Local Worker"
+    }
+  ],
+  "tags": [
+    {
+      "name": "POS sign-in"
+    },
+    {
+      "name": "POS context and catalog"
+    },
+    {
+      "name": "Working days and shifts"
+    },
+    {
+      "name": "POS sales"
+    },
+    {
+      "name": "Owner and manager setup"
+    }
+  ],
+  "paths": {
+    "/api/integrations/pos/v1/auth/login": {
+      "post": {
+        "tags": ["POS sign-in"],
+        "summary": "Sign in for profile discovery",
+        "description": "Use the business slug and existing eMenu PBKDF2 password proof. For a staff username, include it together with the resolved email and proof. The discovery token lasts 15 minutes.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverySession"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/auth/resolve-username": {
+      "post": {
+        "tags": ["POS sign-in"],
+        "summary": "Resolve a staff username for password proof derivation",
+        "description": "Requires a profile token for an owner or manager. The staff member needs access to the active profile.",
+        "security": [{ "PosBearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username"],
+                "properties": {
+                  "username": { "$ref": "#/components/schemas/StaffUsername" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Account email for the existing password proof",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["email"],
+                  "properties": {
+                    "email": { "type": "string", "format": "email" }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/staff": {
+      "get": {
+        "tags": ["Owner and manager setup"],
+        "summary": "List staff eligible to sign in to the active profile",
+        "security": [{ "PosBearer": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/PageSize" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Staff and their current POS usernames",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/StaffUsernamePage" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/staff/{user_id}/username": {
+      "put": {
+        "tags": ["Owner and manager setup"],
+        "summary": "Assign or remove a POS username",
+        "description": "Requires a profile token for an owner or manager. The selected staff member needs profile access. Usernames are unique per business.",
+        "security": [{ "PosBearer": [] }],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Id" }
+          },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username"],
+                "properties": {
+                  "username": {
+                    "$ref": "#/components/schemas/NullableStaffUsername"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved username",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffUsernameAssignment"
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/profiles": {
+      "get": {
+        "tags": ["POS sign-in"],
+        "summary": "List profiles available to the operator",
+        "description": "Requires a discovery token.",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilePage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/sessions": {
+      "post": {
+        "tags": ["POS sign-in"],
+        "summary": "Start a profile-bound POS session",
+        "description": "Requires a discovery token. The profile token lasts 12 hours.",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileSelection"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileSession"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/sessions/current": {
+      "delete": {
+        "tags": ["POS sign-in"],
+        "summary": "Revoke the bearer token used for this request",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/devices": {
+      "post": {
+        "tags": ["POS sign-in"],
+        "summary": "Enroll a device signing key",
+        "description": "Use the profile token from a password sign-in. Repeat the same request with the enrolled public key to recover a lost response.",
+        "security": [{ "PosBearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DeviceEnrollment" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Enrolled",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DeviceCredential" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "get": {
+        "tags": ["POS sign-in"],
+        "summary": "List credentials for the selected profile",
+        "description": "Owners and managers see the profile's credentials. Staff see their own credentials.",
+        "security": [{ "PosBearer": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/PageSize" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["devices", "page", "page_size", "has_more"],
+                  "properties": {
+                    "devices": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/DeviceCredential"
+                      }
+                    },
+                    "page": { "type": "integer" },
+                    "page_size": { "type": "integer" },
+                    "has_more": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/devices/{credential_id}": {
+      "delete": {
+        "tags": ["POS sign-in"],
+        "summary": "Revoke a device credential and its bearer tokens",
+        "security": [{ "PosBearer": [] }],
+        "parameters": [
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Revoked",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Ok" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/auth/device-session": {
+      "post": {
+        "tags": ["POS sign-in"],
+        "summary": "Renew a profile-bound POS session with a signed proof",
+        "description": "Sign the credential ID, Unix timestamp, and a fresh nonce with the enrolled Ed25519 private key. The returned bearer lasts 12 hours.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DeviceProof" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/ProfileSession" },
+                    {
+                      "type": "object",
+                      "required": ["user_id"],
+                      "properties": {
+                        "user_id": { "$ref": "#/components/schemas/Id" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/store-authority": {
+      "get": {
+        "tags": ["POS sign-in"],
+        "summary": "Read the branch's offline store assignment",
+        "security": [{ "PosBearer": [] }],
+        "responses": {
+          "200": {
+            "description": "Current assignment or null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["authority"],
+                  "properties": {
+                    "authority": {
+                      "anyOf": [
+                        { "$ref": "#/components/schemas/StoreAssignment" },
+                        { "type": "null" }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["POS sign-in"],
+        "summary": "Assign an idle branch to the owner's enrolled device",
+        "description": "The same device can repeat the claim to recover a lost response. An assigned branch accepts operating writes from its designated device through the store journal.",
+        "security": [{ "PosBearer": [] }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/StoreClaim" },
+          "201": { "$ref": "#/components/responses/StoreClaim" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "tags": ["POS sign-in"],
+        "summary": "Release an idle branch after its journal is acknowledged",
+        "security": [{ "PosBearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["epoch", "last_sequence"],
+                "properties": {
+                  "epoch": { "$ref": "#/components/schemas/Id" },
+                  "last_sequence": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Released",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Ok" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/store-operations": {
+      "post": {
+        "tags": ["Working days and shifts", "POS sales"],
+        "summary": "Import one saved store operation",
+        "description": "Use an operator's bearer on the designated device. The next sequence and the complete operation commit together. Repeat the exact body and idempotency key after an interrupted response. The body limit is 1,000,000 bytes.",
+        "security": [{ "PosBearer": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/StoreOperation" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/StoreOperationResult" },
+          "201": { "$ref": "#/components/responses/StoreOperationResult" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/store-operations/recover": {
+      "post": {
+        "tags": ["Owner and manager setup"],
+        "summary": "Approve a saved store operation after operator access is removed",
+        "description": "Use an enrolled owner session from the designated register. Send the complete original envelope and its original idempotency key. The approving profile must be in the same branch.",
+        "security": [{ "PosBearer": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "profile_id",
+                  "operator_id",
+                  "reason",
+                  "operation"
+                ],
+                "properties": {
+                  "profile_id": { "$ref": "#/components/schemas/Id" },
+                  "operator_id": { "$ref": "#/components/schemas/Id" },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "operation": { "$ref": "#/components/schemas/StoreOperation" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/StoreOperationResult" },
+          "201": { "$ref": "#/components/responses/StoreOperationResult" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/store-operations/recoveries": {
+      "get": {
+        "tags": ["Owner and manager setup"],
+        "summary": "List approvals recorded for the selected branch",
+        "security": [{ "PosBearer": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/PageSize" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of owner approvals",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["recoveries", "page", "page_size", "has_more"],
+                  "properties": {
+                    "recoveries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/StoreRecoveryApproval"
+                      }
+                    },
+                    "page": { "type": "integer", "minimum": 1 },
+                    "page_size": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 100
+                    },
+                    "has_more": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/context": {
+      "get": {
+        "tags": ["POS context and catalog"],
+        "summary": "Read profile settings and current operating state",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Context"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/catalog": {
+      "get": {
+        "tags": ["POS context and catalog"],
+        "summary": "Read priced products and the configured catalog hierarchy",
+        "description": "The page applies to products. The eligible hierarchy is included on each page.",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Catalog"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/tables": {
+      "get": {
+        "tags": ["POS context and catalog"],
+        "summary": "List branch tables and this profile’s open bills",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TablePage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/customers": {
+      "get": {
+        "tags": ["POS context and catalog"],
+        "summary": "List customers in the business directory",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/working-days": {
+      "get": {
+        "tags": ["Working days and shifts"],
+        "summary": "List working days for the profile’s branch",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DayPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": ["Working days and shifts"],
+        "summary": "Open a working day for the branch",
+        "description": "Requires an owner or manager and a profile that uses working days.",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Empty"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkingDay"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/working-days/{id}": {
+      "get": {
+        "tags": ["Working days and shifts"],
+        "summary": "Get a branch working day",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkingDay"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/working-days/{id}/close": {
+      "post": {
+        "tags": ["Working days and shifts"],
+        "summary": "Close the working day",
+        "description": "Requires an owner or manager. Resolve linked shifts and open bills first.",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Empty"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkingDay"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/cashier-shifts": {
+      "get": {
+        "tags": ["Working days and shifts"],
+        "summary": "List cashier shifts for the selected profile",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": ["Working days and shifts"],
+        "summary": "Open a cashier shift for the profile",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShiftOpen"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Shift"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/cashier-shifts/{id}": {
+      "get": {
+        "tags": ["Working days and shifts"],
+        "summary": "Get a cashier shift and its recorded closing counts",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Shift"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/cashier-shifts/{id}/cash-floats": {
+      "get": {
+        "tags": ["Working days and shifts"],
+        "summary": "List opening cash and cash movements",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FloatPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": ["Working days and shifts"],
+        "summary": "Record a cash in or cash out movement",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CashMovementInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashMovement"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/cashier-shifts/{id}/reconciliation": {
+      "get": {
+        "tags": ["Working days and shifts"],
+        "summary": "Preview expected amounts or read final counts",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reconciliation"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/cashier-shifts/{id}/close": {
+      "post": {
+        "tags": ["Working days and shifts"],
+        "summary": "Declare counts and close the shift",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseShift"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Shift"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/sales": {
+      "get": {
+        "tags": ["POS sales"],
+        "summary": "List sales in the profile",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": ["open", "paid", "cancelled"]
+            }
+          },
+          {
+            "name": "business_date",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "table_id",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "shift_id",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "working_day_id",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SalePage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": ["POS sales"],
+        "summary": "Create a priced open bill",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BillCreate"
+              },
+              "example": {
+                "table_id": "table-12",
+                "lines": [
+                  {
+                    "product_id": "prod_coffee",
+                    "quantity": 2
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sale"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/sales/{id}": {
+      "get": {
+        "tags": ["POS sales"],
+        "summary": "Read a sale, line snapshots and payment entries",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sale"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "patch": {
+        "tags": ["POS sales"],
+        "summary": "Edit an open bill at its current revision",
+        "description": "Supplying lines replaces the bill’s lines and refreshes the quote. Omit lines to keep the current quote.",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BillUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sale"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/sales/{id}/checkout": {
+      "post": {
+        "tags": ["POS sales"],
+        "summary": "Complete a bill with all tenders and change",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Checkout"
+              },
+              "example": {
+                "revision": 1,
+                "expected_total_minor": 1000,
+                "payments": [
+                  {
+                    "payment_type_id": "cash",
+                    "currency": "USD",
+                    "amount_minor": 500
+                  },
+                  {
+                    "payment_type_id": "qr",
+                    "currency": "KHR",
+                    "amount_minor": 20000,
+                    "reference": "processor-reference"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sale"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/sales/{id}/cancel": {
+      "post": {
+        "tags": ["POS sales"],
+        "summary": "Cancel an open bill",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Cancel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sale"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/sales/{id}/reverse": {
+      "post": {
+        "tags": ["POS sales"],
+        "summary": "Record a full reversal of a paid sale",
+        "description": "Requires an owner or manager. The API records the reversal after external refunds have been handled.",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Reverse"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sale"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/admin/pos/profiles": {
+      "get": {
+        "tags": ["Owner and manager setup"],
+        "summary": "List profiles and queued settings",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProfilePage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": ["Owner and manager setup"],
+        "summary": "Create a branch POS profile",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProfile"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/admin/pos/profiles/{id}": {
+      "get": {
+        "tags": ["Owner and manager setup"],
+        "summary": "Read a profile and its queued settings",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProfile"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Owner and manager setup"],
+        "summary": "Update a profile or queue new settings",
+        "description": "A supplied config replaces the previous config. Settings are queued while the profile has a shift or open bill.",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProfile"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/admin/pos/profiles/{id}/grants": {
+      "get": {
+        "tags": ["Owner and manager setup"],
+        "summary": "List explicit profile grants",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantList"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "tags": ["Owner and manager setup"],
+        "summary": "Replace the profile’s explicit staff grants",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantList"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantList"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/admin/pos/payment-types": {
+      "get": {
+        "tags": ["Owner and manager setup"],
+        "summary": "List business payment types",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentTypePage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": ["Owner and manager setup"],
+        "summary": "Create a payment type",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentTypeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentType"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/admin/pos/payment-types/{id}": {
+      "get": {
+        "tags": ["Owner and manager setup"],
+        "summary": "Read a payment type",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentType"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Owner and manager setup"],
+        "summary": "Update a payment type",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 120
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentType"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/admin/pos/customers": {
+      "get": {
+        "tags": ["Owner and manager setup"],
+        "summary": "List business customers",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": ["Owner and manager setup"],
+        "summary": "Create a customer",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/admin/pos/customers/{id}": {
+      "get": {
+        "tags": ["Owner and manager setup"],
+        "summary": "Read a customer",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Owner and manager setup"],
+        "summary": "Update a customer",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  "external_reference": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 120
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "PosBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Opaque eMenu POS discovery or profile token as required by each operation."
+      },
+      "AdminBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Existing eMenu Control owner or manager token."
+      }
+    },
+    "parameters": {
+      "Id": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/Id"
+        }
+      },
+      "Page": {
+        "name": "page",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "default": 1
+        }
+      },
+      "PageSize": {
+        "name": "page_size",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 25
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "description": "Stable key for this exact operation. Preserve it across retries and renewed POS sessions.",
+        "schema": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,128}$"
+        }
+      }
+    },
+    "responses": {
+      "StoreClaim": {
+        "description": "The device's branch assignment",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/StoreAssignment" }
+          }
+        }
+      },
+      "StoreOperationResult": {
+        "description": "The committed operation",
+        "content": {
+          "application/json": {
+            "schema": {
+              "anyOf": [
+                { "$ref": "#/components/schemas/WorkingDay" },
+                { "$ref": "#/components/schemas/Shift" },
+                { "$ref": "#/components/schemas/CashMovement" },
+                { "$ref": "#/components/schemas/Sale" }
+              ]
+            }
+          }
+        }
+      },
+      "Error": {
+        "description": "Error response. See the integration guide for status and code handling.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{1,80}$"
+      },
+      "Currency": {
+        "type": "string",
+        "enum": ["USD", "KHR"]
+      },
+      "Amount": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100000000000
+      },
+      "PaymentKind": {
+        "type": "string",
+        "enum": ["cash", "card", "qr", "other"]
+      },
+      "Error": {
+        "type": "object",
+        "required": ["error", "code"],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        }
+      },
+      "Ok": {
+        "type": "object",
+        "required": ["ok"],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        }
+      },
+      "LoginInput": {
+        "type": "object",
+        "required": [
+          "business_slug",
+          "email",
+          "password_proof",
+          "auth_version"
+        ],
+        "properties": {
+          "business_slug": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "username": { "$ref": "#/components/schemas/StaffUsername" },
+          "password_proof": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "auth_version": {
+            "const": "client-pbkdf2-sha256-v1"
+          }
+        }
+      },
+      "StaffUsername": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$",
+        "description": "Case-insensitive username within one business"
+      },
+      "NullableStaffUsername": {
+        "anyOf": [
+          { "$ref": "#/components/schemas/StaffUsername" },
+          { "type": "null" }
+        ]
+      },
+      "StaffUsernameAssignment": {
+        "type": "object",
+        "required": ["user_id", "username"],
+        "properties": {
+          "user_id": { "$ref": "#/components/schemas/Id" },
+          "username": { "$ref": "#/components/schemas/NullableStaffUsername" }
+        }
+      },
+      "StaffUsernamePage": {
+        "type": "object",
+        "required": ["staff", "page", "page_size", "has_more"],
+        "properties": {
+          "staff": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                { "$ref": "#/components/schemas/StaffUsernameAssignment" },
+                {
+                  "required": ["name", "role"],
+                  "properties": {
+                    "name": { "type": "string" },
+                    "role": { "enum": ["manager", "editor"] }
+                  }
+                }
+              ]
+            }
+          },
+          "page": { "type": "integer", "minimum": 1 },
+          "page_size": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "has_more": { "type": "boolean" }
+        }
+      },
+      "DiscoverySession": {
+        "type": "object",
+        "required": ["token", "expires_at", "business_id", "user_id"],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "business_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "user_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      },
+      "ProfileSession": {
+        "type": "object",
+        "required": ["token", "expires_at", "profile_id"],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      },
+      "StoreAssignment": {
+        "type": "object",
+        "required": ["epoch", "last_sequence", "timezone"],
+        "properties": {
+          "epoch": {
+            "type": ["string", "null"],
+            "description": "Visible to the designated device"
+          },
+          "last_sequence": { "type": "integer", "minimum": 0 },
+          "timezone": { "type": "string" },
+          "owned_by_device": { "type": "boolean" }
+        }
+      },
+      "StoreRecoveryApproval": {
+        "type": "object",
+        "required": [
+          "epoch",
+          "sequence",
+          "profile_id",
+          "command_id",
+          "operator_id",
+          "approved_by",
+          "reason",
+          "approved_at"
+        ],
+        "properties": {
+          "epoch": { "$ref": "#/components/schemas/Id" },
+          "sequence": { "type": "integer", "minimum": 1 },
+          "profile_id": { "$ref": "#/components/schemas/Id" },
+          "command_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,128}$"
+          },
+          "operator_id": { "$ref": "#/components/schemas/Id" },
+          "approved_by": { "$ref": "#/components/schemas/Id" },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "approved_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "StoreOperation": {
+        "type": "object",
+        "required": [
+          "epoch",
+          "sequence",
+          "kind",
+          "resource_id",
+          "occurred_at",
+          "settings",
+          "payload"
+        ],
+        "properties": {
+          "epoch": { "$ref": "#/components/schemas/Id" },
+          "sequence": { "type": "integer", "minimum": 1 },
+          "profile_id": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Profile that recorded the operation. When supplied, it must match the bearer session."
+          },
+          "kind": {
+            "enum": [
+              "open_day",
+              "close_day",
+              "open_shift",
+              "close_shift",
+              "cash_movement",
+              "checkout",
+              "reversal"
+            ]
+          },
+          "resource_id": { "$ref": "#/components/schemas/Id" },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Original UTC time ending in Z"
+          },
+          "settings": {
+            "type": "object",
+            "required": ["working_day_enabled", "cashier_shift_enabled"],
+            "properties": {
+              "working_day_enabled": { "type": "boolean" },
+              "cashier_shift_enabled": { "type": "boolean" }
+            }
+          },
+          "payload": { "type": "object" }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "kind": { "const": "open_shift" } } },
+            "then": {
+              "properties": {
+                "payload": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/ShiftOpen" },
+                    {
+                      "required": ["payment_types"],
+                      "properties": {
+                        "payment_types": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/PaymentType"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "cash_movement" } } },
+            "then": {
+              "properties": {
+                "payload": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/CashMovementInput" },
+                    {
+                      "required": ["shift_id"],
+                      "properties": {
+                        "shift_id": { "$ref": "#/components/schemas/Id" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "close_shift" } } },
+            "then": {
+              "properties": {
+                "payload": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/CloseShift" },
+                    {
+                      "properties": {
+                        "counts": {
+                          "items": {
+                            "required": ["expected_minor"],
+                            "properties": {
+                              "expected_minor": { "type": "integer" }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "checkout" } } },
+            "then": {
+              "properties": {
+                "payload": { "$ref": "#/components/schemas/StoreCheckout" }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "reversal" } } },
+            "then": {
+              "properties": {
+                "payload": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Reverse" },
+                    {
+                      "required": [
+                        "original_sale_id",
+                        "expected_context",
+                        "expected_total_minor"
+                      ],
+                      "properties": {
+                        "original_sale_id": {
+                          "$ref": "#/components/schemas/Id"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      "StoreCheckout": {
+        "type": "object",
+        "required": [
+          "expected_context",
+          "currency",
+          "exchange_rate",
+          "tax_mode",
+          "tax_rate_bps",
+          "table_mode",
+          "customer_id",
+          "customer_name",
+          "lines",
+          "total_minor",
+          "payment_types",
+          "payments",
+          "receipt"
+        ],
+        "properties": {
+          "expected_context": {
+            "$ref": "#/components/schemas/ExpectedSaleContext"
+          },
+          "currency": { "$ref": "#/components/schemas/Currency" },
+          "exchange_rate": { "type": "string" },
+          "tax_mode": { "enum": ["disabled", "inclusive", "exclusive"] },
+          "tax_rate_bps": { "type": "integer", "minimum": 0, "maximum": 10000 },
+          "table_mode": { "enum": ["disabled", "optional", "required"] },
+          "table_id": { "type": ["string", "null"] },
+          "table_code": { "type": ["string", "null"] },
+          "table_label": { "type": ["string", "null"] },
+          "customer_id": { "$ref": "#/components/schemas/Id" },
+          "customer_name": { "type": "string" },
+          "lines": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 60,
+            "items": {
+              "type": "object",
+              "required": [
+                "product_id",
+                "product_name",
+                "price_list_id",
+                "quantity",
+                "unit_price_minor",
+                "subtotal_minor",
+                "tax_minor",
+                "total_minor"
+              ],
+              "properties": {
+                "product_id": { "$ref": "#/components/schemas/Id" },
+                "product_name": { "type": "string" },
+                "product_code": { "type": ["string", "null"] },
+                "portion_id": { "type": ["string", "null"] },
+                "portion_name": { "type": ["string", "null"] },
+                "price_list_id": {
+                  "type": "string",
+                  "description": "Empty for the base product price"
+                },
+                "quantity": { "type": "integer", "minimum": 1, "maximum": 999 },
+                "unit_price_minor": { "$ref": "#/components/schemas/Amount" },
+                "subtotal_minor": { "$ref": "#/components/schemas/Amount" },
+                "tax_minor": { "$ref": "#/components/schemas/Amount" },
+                "total_minor": { "$ref": "#/components/schemas/Amount" },
+                "modifiers": {
+                  "type": "array",
+                  "maxItems": 120,
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "group_id", "price_minor"],
+                    "properties": {
+                      "id": { "$ref": "#/components/schemas/Id" },
+                      "group_id": { "$ref": "#/components/schemas/Id" },
+                      "price_minor": { "type": "integer" },
+                      "label_km": { "type": "string" },
+                      "label_en": { "type": "string" },
+                      "label_zh": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "total_minor": { "$ref": "#/components/schemas/Amount" },
+          "payment_types": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/PaymentType" }
+          },
+          "payments": {
+            "type": "array",
+            "maxItems": 60,
+            "items": { "$ref": "#/components/schemas/PaymentInput" }
+          },
+          "receipt": {
+            "type": "object",
+            "required": ["business_name", "template", "copies"],
+            "properties": {
+              "business_name": { "type": "string" },
+              "profile_name": { "type": ["string", "null"] },
+              "branch_name": { "type": ["string", "null"] },
+              "template": { "$ref": "#/components/schemas/ReceiptTemplate" },
+              "copies": { "type": "integer", "minimum": 1, "maximum": 10 }
+            }
+          }
+        }
+      },
+      "DeviceEnrollment": {
+        "type": "object",
+        "required": ["device_id", "device_name", "public_key"],
+        "properties": {
+          "device_id": { "$ref": "#/components/schemas/Id" },
+          "device_name": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "public_key": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        }
+      },
+      "DeviceCredential": {
+        "type": "object",
+        "required": [
+          "id",
+          "device_id",
+          "device_name",
+          "user_id",
+          "created_at",
+          "last_used_at",
+          "revoked_at"
+        ],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "device_id": { "$ref": "#/components/schemas/Id" },
+          "device_name": { "type": "string" },
+          "user_id": { "$ref": "#/components/schemas/Id" },
+          "created_at": { "type": "integer", "description": "Unix seconds" },
+          "last_used_at": { "type": "integer", "description": "Unix seconds" },
+          "revoked_at": {
+            "type": ["integer", "null"],
+            "description": "Unix seconds when revoked"
+          }
+        }
+      },
+      "DeviceProof": {
+        "type": "object",
+        "required": ["credential_id", "issued_at", "nonce", "signature"],
+        "properties": {
+          "credential_id": { "$ref": "#/components/schemas/Id" },
+          "issued_at": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Unix seconds within 120 seconds of Worker time"
+          },
+          "nonce": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "signature": { "type": "string", "pattern": "^[a-f0-9]{128}$" }
+        }
+      },
+      "ProfileSelection": {
+        "type": "object",
+        "required": ["profile_id"],
+        "properties": {
+          "profile_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      },
+      "ReceiptTemplate": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "footer": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "show_tax": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TenderConfig": {
+        "type": "object",
+        "required": ["id", "currencies"],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "allow_cash_float": {
+            "type": "boolean",
+            "description": "Allows opening balances and cash movements for this payment type. Omitted values default to true for cash methods in a shift."
+          },
+          "currencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Currency"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        }
+      },
+      "PaymentTypeInput": {
+        "type": "object",
+        "required": ["name", "kind"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PaymentKind"
+          },
+          "currency": {
+            "description": "Fixed payment currency. Older clients can omit this to use the POS profile's currencies.",
+            "$ref": "#/components/schemas/Currency"
+          }
+        }
+      },
+      "PaymentType": {
+        "type": "object",
+        "required": ["id", "name", "kind"],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PaymentKind"
+          },
+          "currency": {
+            "anyOf": [
+              { "$ref": "#/components/schemas/Currency" },
+              { "type": "null" }
+            ]
+          }
+        }
+      },
+      "AcceptedPaymentType": {
+        "type": "object",
+        "required": ["id", "name", "kind", "currencies"],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PaymentKind"
+          },
+          "allow_cash_float": {
+            "type": "boolean",
+            "description": "Whether this payment type accepts opening balances and cash movements in a shift."
+          },
+          "currencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Currency"
+            }
+          }
+        }
+      },
+      "Customer": {
+        "type": "object",
+        "required": ["id", "name", "external_reference", "is_walk_in"],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "external_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_walk_in": {
+            "type": "integer",
+            "enum": [0, 1]
+          }
+        }
+      },
+      "CustomerInput": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "external_reference": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "GrantList": {
+        "type": "object",
+        "required": ["user_ids"],
+        "properties": {
+          "user_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "maxItems": 100,
+            "uniqueItems": true
+          }
+        }
+      },
+      "ProfileTableGroupIds": {
+        "description": "Active groups from the profile branch in display order. Null uses all active groups in branch order.",
+        "anyOf": [
+          {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Id" },
+            "minItems": 1,
+            "maxItems": 500,
+            "uniqueItems": true
+          },
+          { "type": "null" }
+        ]
+      },
+      "ProfileConfigInput": {
+        "type": "object",
+        "required": ["payment_types", "default_payment_type_id"],
+        "properties": {
+          "working_day_enabled": {
+            "type": "boolean"
+          },
+          "cashier_shift_enabled": {
+            "type": "boolean"
+          },
+          "table_mode": {
+            "type": "string",
+            "enum": ["disabled", "optional", "required"]
+          },
+          "table_group_ids": { "$ref": "#/components/schemas/ProfileTableGroupIds" },
+          "catalog_mode": {
+            "type": "string",
+            "enum": ["menu", "category"]
+          },
+          "selected_ids": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payment_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TenderConfig"
+            },
+            "maxItems": 20,
+            "minItems": 1
+          },
+          "default_payment_type_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "default_customer_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "receipt_template": {
+            "$ref": "#/components/schemas/ReceiptTemplate"
+          },
+          "print_copies": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "tax_mode": {
+            "type": "string",
+            "enum": ["disabled", "inclusive", "exclusive"]
+          },
+          "tax_rate_bps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          }
+        }
+      },
+      "ProfileConfig": {
+        "type": "object",
+        "required": [
+          "working_day_enabled",
+          "cashier_shift_enabled",
+          "table_mode",
+          "catalog_mode",
+          "selected_ids",
+          "payment_types",
+          "default_payment_type_id",
+          "default_customer_id",
+          "receipt_template",
+          "print_copies",
+          "tax_mode",
+          "tax_rate_bps"
+        ],
+        "properties": {
+          "working_day_enabled": {
+            "type": "boolean"
+          },
+          "cashier_shift_enabled": {
+            "type": "boolean"
+          },
+          "table_mode": {
+            "type": "string",
+            "enum": ["disabled", "optional", "required"]
+          },
+          "table_group_ids": { "$ref": "#/components/schemas/ProfileTableGroupIds" },
+          "catalog_mode": {
+            "type": "string",
+            "enum": ["menu", "category"]
+          },
+          "selected_ids": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payment_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TenderConfig"
+            },
+            "maxItems": 20,
+            "minItems": 1
+          },
+          "default_payment_type_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "default_customer_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "receipt_template": {
+            "type": "object",
+            "required": ["title", "footer", "show_tax"],
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "footer": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "show_tax": {
+                "type": "boolean"
+              }
+            }
+          },
+          "print_copies": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "tax_mode": {
+            "type": "string",
+            "enum": ["disabled", "inclusive", "exclusive"]
+          },
+          "tax_rate_bps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          }
+        }
+      },
+      "Profile": {
+        "type": "object",
+        "required": [
+          "id",
+          "branch_id",
+          "branch_name",
+          "name",
+          "is_active",
+          "version",
+          "config"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "branch_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "branch_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "config": {
+            "$ref": "#/components/schemas/ProfileConfig"
+          }
+        }
+      },
+      "AdminProfile": {
+        "type": "object",
+        "required": [
+          "id",
+          "branch_id",
+          "branch_name",
+          "name",
+          "is_active",
+          "version",
+          "config",
+          "pending_config"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "branch_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "branch_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "config": {
+            "$ref": "#/components/schemas/ProfileConfig"
+          },
+          "pending_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ProfileCreate": {
+        "type": "object",
+        "required": ["name", "branch_id", "config"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "branch_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "config": {
+            "$ref": "#/components/schemas/ProfileConfigInput"
+          }
+        }
+      },
+      "ProfileUpdate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "config": {
+            "$ref": "#/components/schemas/ProfileConfigInput"
+          }
+        }
+      },
+      "WorkingDay": {
+        "type": "object",
+        "required": [
+          "id",
+          "branch_id",
+          "business_date",
+          "timezone",
+          "opened_at",
+          "opened_by",
+          "closed_at",
+          "closed_by"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "branch_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "business_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "opened_by": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closed_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ShiftSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "branch_id",
+          "profile_id",
+          "working_day_id",
+          "opened_at",
+          "opened_by",
+          "closed_at",
+          "closed_by",
+          "activity_revision"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "branch_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "working_day_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "opened_by": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closed_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "activity_revision": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "Shift": {
+        "type": "object",
+        "required": [
+          "id",
+          "branch_id",
+          "profile_id",
+          "working_day_id",
+          "opened_at",
+          "opened_by",
+          "closed_at",
+          "closed_by",
+          "activity_revision",
+          "closing_counts"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "branch_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "working_day_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "opened_by": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closed_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "activity_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "closing_counts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClosedCount"
+            }
+          }
+        }
+      },
+      "OpeningCash": {
+        "type": "object",
+        "required": ["payment_type_id", "currency", "amount_minor"],
+        "properties": {
+          "payment_type_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "amount_minor": {
+            "$ref": "#/components/schemas/Amount"
+          }
+        }
+      },
+      "ShiftOpen": {
+        "type": "object",
+        "properties": {
+          "opening_cash": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpeningCash"
+            },
+            "maxItems": 40
+          }
+        }
+      },
+      "CashMovementInput": {
+        "type": "object",
+        "required": [
+          "payment_type_id",
+          "currency",
+          "amount_minor",
+          "kind",
+          "reason"
+        ],
+        "properties": {
+          "payment_type_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000000000
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["cash_in", "cash_out"]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "CashMovement": {
+        "type": "object",
+        "required": [
+          "id",
+          "shift_id",
+          "payment_type_id",
+          "currency",
+          "amount_minor",
+          "kind",
+          "reason",
+          "created_at",
+          "created_by"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "shift_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "payment_type_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "amount_minor": {
+            "$ref": "#/components/schemas/Amount"
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["opening", "cash_in", "cash_out"]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      },
+      "CountPreview": {
+        "type": "object",
+        "required": [
+          "payment_type_id",
+          "currency",
+          "payment_type_name",
+          "expected_minor",
+          "payment_kind"
+        ],
+        "properties": {
+          "payment_type_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "payment_type_name": {
+            "type": "string"
+          },
+          "expected_minor": {
+            "type": "integer"
+          },
+          "payment_kind": {
+            "$ref": "#/components/schemas/PaymentKind"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClosedCount": {
+        "type": "object",
+        "required": [
+          "payment_type_id",
+          "currency",
+          "payment_type_name",
+          "expected_minor",
+          "declared_minor",
+          "variance_minor"
+        ],
+        "properties": {
+          "payment_type_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "payment_type_name": {
+            "type": "string"
+          },
+          "expected_minor": {
+            "type": "integer"
+          },
+          "declared_minor": {
+            "type": "integer"
+          },
+          "variance_minor": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Reconciliation": {
+        "type": "object",
+        "required": ["shift_id", "activity_revision", "counts"],
+        "properties": {
+          "shift_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "activity_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "counts": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/CountPreview"
+                },
+                {
+                  "$ref": "#/components/schemas/ClosedCount"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "CloseShift": {
+        "type": "object",
+        "required": ["activity_revision", "counts"],
+        "properties": {
+          "activity_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "counts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["payment_type_id", "currency", "declared_minor"],
+              "properties": {
+                "payment_type_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "currency": {
+                  "$ref": "#/components/schemas/Currency"
+                },
+                "declared_minor": {
+                  "type": "integer",
+                  "minimum": -100000000000,
+                  "maximum": 100000000000
+                }
+              }
+            },
+            "maxItems": 1000
+          }
+        }
+      },
+      "Context": {
+        "type": "object",
+        "required": [
+          "profile",
+          "operator",
+          "business",
+          "payment_types",
+          "local_date",
+          "read_only",
+          "capabilities",
+          "working_day",
+          "cashier_shift"
+        ],
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/Profile"
+          },
+          "operator": {
+            "type": "object",
+            "required": ["id", "name", "role"],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              }
+            }
+          },
+          "business": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "timezone",
+              "currency",
+              "secondary_currency",
+              "secondary_exchange_rate"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "name": {
+                "type": "string"
+              },
+              "timezone": {
+                "type": "string"
+              },
+              "currency": {
+                "$ref": "#/components/schemas/Currency"
+              },
+              "secondary_currency": {
+                "$ref": "#/components/schemas/Currency"
+              },
+              "secondary_exchange_rate": {
+                "type": "string"
+              }
+            }
+          },
+          "payment_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AcceptedPaymentType"
+            }
+          },
+          "local_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "read_only": {
+            "type": "boolean"
+          },
+          "store_authority_required": {
+            "type": "boolean",
+            "description": "The branch has a designated device for operating writes"
+          },
+          "capabilities": {
+            "type": "object",
+            "required": ["sale_context_guard"],
+            "properties": {
+              "sale_context_guard": {
+                "type": "boolean"
+              },
+              "device_sessions": {
+                "type": "boolean"
+              },
+              "store_operations": {
+                "type": "boolean"
+              },
+              "store_recovery": {
+                "type": "boolean"
+              },
+              "reversal_context_guard": {
+                "type": "boolean"
+              },
+              "staff_usernames": {
+                "type": "boolean"
+              }
+            }
+          },
+          "working_day": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkingDay"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cashier_shift": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShiftSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Table": {
+        "type": "object",
+        "required": [
+          "id",
+          "code",
+          "label",
+          "group_id",
+          "group_name",
+          "open_sale_id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "code": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "group_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "group_name": {
+            "type": "string"
+          },
+          "open_sale_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["available", "occupied"]
+          }
+        }
+      },
+      "Node": {
+        "type": "object",
+        "required": [
+          "id",
+          "parent_id",
+          "name",
+          "name_km",
+          "name_en",
+          "name_zh",
+          "sort_order"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name_km": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name_zh": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sort_order": {
+            "type": "integer"
+          }
+        }
+      },
+      "Modifier": {
+        "type": "object",
+        "required": [
+          "id",
+          "label_km",
+          "label_en",
+          "label_zh",
+          "prefix",
+          "price_minor"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "label_km": {
+            "type": "string"
+          },
+          "label_en": {
+            "type": "string"
+          },
+          "label_zh": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "price_minor": {
+            "type": "integer"
+          }
+        }
+      },
+      "SelectedModifier": {
+        "type": "object",
+        "required": [
+          "id",
+          "label_km",
+          "label_en",
+          "label_zh",
+          "prefix",
+          "price_minor",
+          "group_id"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "label_km": {
+            "type": "string"
+          },
+          "label_en": {
+            "type": "string"
+          },
+          "label_zh": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "price_minor": {
+            "type": "integer"
+          },
+          "group_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      },
+      "ModifierGroup": {
+        "type": "object",
+        "required": ["id", "required", "multiple", "options"],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "multiple": {
+            "type": "boolean"
+          },
+          "label_km": {
+            "type": "string"
+          },
+          "label_en": {
+            "type": "string"
+          },
+          "label_zh": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Modifier"
+            }
+          }
+        }
+      },
+      "Portion": {
+        "type": "object",
+        "required": ["id", "price_minor"],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "price_list_id": {
+            "type": "string",
+            "description": "The source price list, or an empty string for the base price"
+          },
+          "label": {
+            "type": "string"
+          },
+          "label_km": {
+            "type": "string"
+          },
+          "label_en": {
+            "type": "string"
+          },
+          "label_zh": {
+            "type": "string"
+          },
+          "price_minor": {
+            "$ref": "#/components/schemas/Amount"
+          }
+        }
+      },
+      "Product": {
+        "type": "object",
+        "required": [
+          "id",
+          "code",
+          "name",
+          "name_km",
+          "name_en",
+          "name_zh",
+          "description",
+          "unit",
+          "image_url",
+          "category_id",
+          "menu_ids",
+          "price_minor",
+          "portions",
+          "modifier_groups"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "name_km": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name_zh": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "category_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "menu_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          "price_minor": {
+            "$ref": "#/components/schemas/Amount"
+          },
+          "portions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Portion"
+            }
+          },
+          "price_list_id": {
+            "type": "string",
+            "description": "The source price list, or an empty string for the base price"
+          },
+          "modifier_groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModifierGroup"
+            }
+          }
+        }
+      },
+      "Catalog": {
+        "type": "object",
+        "required": [
+          "catalog_version",
+          "currency",
+          "price_list_id",
+          "mode",
+          "nodes",
+          "products",
+          "page",
+          "page_size",
+          "has_more"
+        ],
+        "properties": {
+          "catalog_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "price_list_id": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["category", "menu"]
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Node"
+            }
+          },
+          "products": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Product"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BillLineInput": {
+        "type": "object",
+        "required": ["product_id", "quantity"],
+        "properties": {
+          "product_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 999
+          },
+          "portion_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "modifier_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "maxItems": 120
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ExpectedSaleContext": {
+        "type": "object",
+        "required": ["business_date", "working_day_id", "shift_id"],
+        "properties": {
+          "business_date": { "type": "string", "format": "date" },
+          "working_day_id": {
+            "anyOf": [{ "$ref": "#/components/schemas/Id" }, { "type": "null" }]
+          },
+          "shift_id": {
+            "anyOf": [{ "$ref": "#/components/schemas/Id" }, { "type": "null" }]
+          }
+        }
+      },
+      "BillCreate": {
+        "type": "object",
+        "required": ["lines"],
+        "properties": {
+          "expected_context": {
+            "$ref": "#/components/schemas/ExpectedSaleContext"
+          },
+          "table_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "customer_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BillLineInput"
+            },
+            "maxItems": 60,
+            "minItems": 1
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "BillUpdate": {
+        "type": "object",
+        "required": ["revision"],
+        "properties": {
+          "expected_context": {
+            "$ref": "#/components/schemas/ExpectedSaleContext"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "table_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "customer_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BillLineInput"
+            },
+            "maxItems": 60,
+            "minItems": 1
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "PaymentInput": {
+        "type": "object",
+        "required": ["payment_type_id", "currency", "amount_minor"],
+        "properties": {
+          "payment_type_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "entry_type": {
+            "type": "string",
+            "enum": ["tender", "change"]
+          },
+          "amount_minor": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000000000
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Checkout": {
+        "type": "object",
+        "required": ["revision", "expected_total_minor", "payments"],
+        "properties": {
+          "expected_context": {
+            "$ref": "#/components/schemas/ExpectedSaleContext"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "expected_total_minor": {
+            "$ref": "#/components/schemas/Amount"
+          },
+          "payments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentInput"
+            },
+            "maxItems": 60
+          }
+        }
+      },
+      "Cancel": {
+        "type": "object",
+        "required": ["revision", "reason"],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "Reverse": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": {
+          "expected_context": {
+            "$ref": "#/components/schemas/ExpectedSaleContext"
+          },
+          "expected_total_minor": {
+            "$ref": "#/components/schemas/Amount"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "BillLine": {
+        "type": "object",
+        "required": [
+          "id",
+          "line_number",
+          "product_id",
+          "product_code",
+          "product_name",
+          "portion_id",
+          "portion_name",
+          "price_list_id",
+          "quantity",
+          "unit_price_minor",
+          "subtotal_minor",
+          "tax_minor",
+          "total_minor",
+          "note",
+          "modifiers"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "line_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "product_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "product_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "product_name": {
+            "type": "string"
+          },
+          "portion_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "portion_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "price_list_id": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "integer"
+          },
+          "unit_price_minor": {
+            "$ref": "#/components/schemas/Amount"
+          },
+          "subtotal_minor": {
+            "type": "integer"
+          },
+          "tax_minor": {
+            "type": "integer"
+          },
+          "total_minor": {
+            "type": "integer"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "modifiers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SelectedModifier"
+            }
+          }
+        }
+      },
+      "SalePayment": {
+        "type": "object",
+        "required": [
+          "id",
+          "line_number",
+          "payment_type_id",
+          "currency",
+          "payment_type_name",
+          "payment_kind",
+          "entry_type",
+          "amount_minor",
+          "reference",
+          "reverses_payment_id"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "line_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "payment_type_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "payment_type_name": {
+            "type": "string"
+          },
+          "payment_kind": {
+            "$ref": "#/components/schemas/PaymentKind"
+          },
+          "entry_type": {
+            "type": "string",
+            "enum": ["tender", "change", "reversal"]
+          },
+          "amount_minor": {
+            "type": "integer"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reverses_payment_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SaleSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "branch_id",
+          "profile_id",
+          "working_day_id",
+          "shift_id",
+          "reverses_sale_id",
+          "reversed_by_sale_id",
+          "status",
+          "revision",
+          "business_date",
+          "currency",
+          "secondary_exchange_rate",
+          "tax_mode",
+          "tax_rate_bps",
+          "subtotal_minor",
+          "tax_minor",
+          "total_minor",
+          "table_id",
+          "table_code",
+          "table_label",
+          "customer_id",
+          "customer_name",
+          "note",
+          "reason",
+          "created_at",
+          "created_by",
+          "updated_at",
+          "updated_by",
+          "settled_at",
+          "settled_by"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "branch_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "working_day_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "shift_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reverses_sale_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reversed_by_sale_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["open", "paid", "cancelled"]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "business_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "secondary_exchange_rate": {
+            "type": "string"
+          },
+          "tax_mode": {
+            "type": "string",
+            "enum": ["disabled", "inclusive", "exclusive"]
+          },
+          "tax_rate_bps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "subtotal_minor": {
+            "type": "integer"
+          },
+          "tax_minor": {
+            "type": "integer"
+          },
+          "total_minor": {
+            "type": "integer"
+          },
+          "table_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "table_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "table_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "customer_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_by": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "settled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "settled_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Sale": {
+        "type": "object",
+        "required": [
+          "id",
+          "branch_id",
+          "profile_id",
+          "working_day_id",
+          "shift_id",
+          "reverses_sale_id",
+          "reversed_by_sale_id",
+          "status",
+          "revision",
+          "business_date",
+          "currency",
+          "secondary_exchange_rate",
+          "tax_mode",
+          "tax_rate_bps",
+          "subtotal_minor",
+          "tax_minor",
+          "total_minor",
+          "table_id",
+          "table_code",
+          "table_label",
+          "customer_id",
+          "customer_name",
+          "note",
+          "reason",
+          "created_at",
+          "created_by",
+          "updated_at",
+          "updated_by",
+          "settled_at",
+          "settled_by",
+          "receipt",
+          "lines",
+          "payments"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "branch_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "working_day_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "shift_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reverses_sale_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reversed_by_sale_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["open", "paid", "cancelled"]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "business_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "secondary_exchange_rate": {
+            "type": "string"
+          },
+          "tax_mode": {
+            "type": "string",
+            "enum": ["disabled", "inclusive", "exclusive"]
+          },
+          "tax_rate_bps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "subtotal_minor": {
+            "type": "integer"
+          },
+          "tax_minor": {
+            "type": "integer"
+          },
+          "total_minor": {
+            "type": "integer"
+          },
+          "table_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "table_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "table_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "customer_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_by": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "settled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "settled_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "receipt": {
+            "type": "object",
+            "required": [
+              "business_name",
+              "profile_name",
+              "branch_name",
+              "template",
+              "copies"
+            ],
+            "properties": {
+              "business_name": {
+                "type": "string"
+              },
+              "profile_name": {
+                "type": "string"
+              },
+              "branch_name": {
+                "type": "string"
+              },
+              "template": {
+                "$ref": "#/components/schemas/ReceiptTemplate"
+              },
+              "copies": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10
+              }
+            }
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BillLine"
+            }
+          },
+          "payments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SalePayment"
+            }
+          }
+        }
+      },
+      "Empty": {
+        "type": "object",
+        "properties": {}
+      },
+      "ProfilePage": {
+        "type": "object",
+        "required": ["profiles", "page", "page_size", "has_more"],
+        "properties": {
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Profile"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AdminProfilePage": {
+        "type": "object",
+        "required": ["profiles", "page", "page_size", "has_more"],
+        "properties": {
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminProfile"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CustomerPage": {
+        "type": "object",
+        "required": ["customers", "page", "page_size", "has_more"],
+        "properties": {
+          "customers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PaymentTypePage": {
+        "type": "object",
+        "required": ["payment_types", "page", "page_size", "has_more"],
+        "properties": {
+          "payment_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentType"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TablePage": {
+        "type": "object",
+        "required": ["tables", "page", "page_size", "has_more"],
+        "properties": {
+          "tables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Table"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DayPage": {
+        "type": "object",
+        "required": ["working_days", "page", "page_size", "has_more"],
+        "properties": {
+          "working_days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkingDay"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ShiftPage": {
+        "type": "object",
+        "required": ["cashier_shifts", "page", "page_size", "has_more"],
+        "properties": {
+          "cashier_shifts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShiftSummary"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "FloatPage": {
+        "type": "object",
+        "required": ["cash_floats", "page", "page_size", "has_more"],
+        "properties": {
+          "cash_floats": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CashMovement"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SalePage": {
+        "type": "object",
+        "required": ["sales", "page", "page_size", "has_more"],
+        "properties": {
+          "sales": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SaleSummary"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

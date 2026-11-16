@@ -1,0 +1,2 @@
+ALTER TABLE menus ADD COLUMN was_qr_root INTEGER NOT NULL DEFAULT 0
+CHECK (was_qr_root IN (0, 1));

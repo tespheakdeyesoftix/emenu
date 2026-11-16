@@ -1,0 +1,109 @@
+{
+  "categories": [
+    {
+      "id": "3a1e3be5-6e40-4bb1-a775-07d6811d5143",
+      "parent_id": null,
+      "name": "Drinks",
+      "name_km": "ភេសជ្ជៈ",
+      "name_en": "Drinks",
+      "name_zh": "饮料",
+      "slug": "",
+      "image_url": "https://pos.example.com/images/drinks.webp",
+      "image_media_id": null,
+      "sort_order": 0,
+      "is_active": true
+    }
+  ],
+  "products": [
+    {
+      "id": "a743e3c2-2838-4476-b4a4-5d920e4177ba",
+      "category_id": "3a1e3be5-6e40-4bb1-a775-07d6811d5143",
+      "code": "COFFEE-001",
+      "name": "Iced coffee",
+      "name_km": "កាហ្វេទឹកកក",
+      "name_en": "Iced coffee",
+      "name_zh": "冰咖啡",
+      "slug": "",
+      "description": "Freshly brewed coffee served over ice.",
+      "price": 2.5,
+      "max_price": 3.5,
+      "unit": "cup",
+      "portions": [
+        {
+          "label_km": "តូច",
+          "label_en": "Small",
+          "label_zh": "小",
+          "price": 2.5,
+          "price_rule": "fixed",
+          "unit": "cup"
+        },
+        {
+          "label_km": "ធំ",
+          "label_en": "Large",
+          "label_zh": "大",
+          "price": 3.5,
+          "price_rule": "fixed",
+          "unit": "cup"
+        }
+      ],
+      "modifier_groups": [
+        {
+          "label_km": "ទឹកដោះគោ",
+          "label_en": "Milk",
+          "label_zh": "奶类",
+          "required": true,
+          "multiple": false,
+          "options": [
+            {
+              "label_km": "ធម្មតា",
+              "label_en": "Regular milk",
+              "label_zh": "普通牛奶",
+              "price": 0,
+              "prefix": "+"
+            },
+            {
+              "label_km": "ទឹកដោះគោអូត",
+              "label_en": "Oat milk",
+              "label_zh": "燕麦奶",
+              "price": 0.5,
+              "prefix": "+"
+            }
+          ]
+        },
+        {
+          "label_km": "បន្ថែម",
+          "label_en": "Extras",
+          "label_zh": "加料",
+          "required": false,
+          "multiple": true,
+          "options": [
+            {
+              "label_km": "បន្ថែមកាហ្វេ",
+              "label_en": "Extra espresso shot",
+              "label_zh": "额外浓缩咖啡",
+              "price": 0.75,
+              "prefix": "+"
+            },
+            {
+              "label_km": "វ៉ានីឡា",
+              "label_en": "Vanilla syrup",
+              "label_zh": "香草糖浆",
+              "price": 0.25,
+              "prefix": "+"
+            }
+          ]
+        }
+      ],
+      "image_url": "https://pos.example.com/images/iced-coffee.webp",
+      "primary_media_id": null,
+      "media_ids": [],
+      "calories": 120,
+      "prep_minutes": 5,
+      "rating": 4.7,
+      "is_featured": true,
+      "is_available": true,
+      "sort_order": 0,
+      "price_entries": []
+    }
+  ]
+}

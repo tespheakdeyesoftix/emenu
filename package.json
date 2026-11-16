@@ -1,50 +1,36 @@
 {
-  "name": "e-menu",
+  "name": "menuflow-saas",
   "private": true,
-  "version": "0.0.1",
-  "type": "module",
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "vue-tsc && vite build",
-    "preview": "vite preview",
-    "test:e2e": "cypress run",
-    "test:unit": "vitest",
-    "lint": "eslint ."
+    "dev:control": "npm run dev -w @menuflow/control",
+    "dev:super": "npm run dev -w @menuflow/super-control",
+    "dev:super-worker": "npm run dev:worker -w @menuflow/super-control",
+    "dev:api": "npm run dev:api -w @menuflow/control",
+    "dev:api:lan": "npm run dev:api:lan -w @menuflow/control",
+    "db:migrate:local": "npm run db:migrate:local -w @menuflow/control",
+    "dev:menu": "npm run dev -w @menuflow/menu",
+    "dev:menu:lan": "npm run dev:lan -w @menuflow/menu",
+    "dev:site": "npm run dev -w @menuflow/site",
+    "build": "npm run build -w @menuflow/control && npm run build -w @menuflow/menu && npm run build -w @menuflow/site && npm run build -w @menuflow/super-control",
+    "typecheck": "npm run typecheck -ws --if-present",
+    "test:pos-sync": "node --test --test-concurrency=1 tests/pos-sync.test.mjs",
+    "test:pos-api": "node --test --test-concurrency=1 tests/pos-api.test.mjs",
+    "auth:setup": "node scripts/setup-auth-secret.mjs",
+    "auth:reset-password": "node scripts/reset-password.mjs",
+    "deploy:control": "node scripts/deploy-control.mjs",
+    "deploy:menu": "node scripts/deploy-menu.mjs",
+    "deploy:site": "node scripts/deploy-site.mjs",
+    "deploy:all": "node scripts/deploy-all.mjs"
   },
-  "dependencies": {
-    "@capacitor/app": "7.0.1",
-    "@capacitor/core": "7.2.0",
-    "@capacitor/haptics": "7.0.1",
-    "@capacitor/keyboard": "7.0.1",
-    "@capacitor/status-bar": "7.0.1",
-    "@ionic/vue": "^8.0.0",
-    "@ionic/vue-router": "^8.0.0",
-    "@supabase/supabase-js": "^2.48.1",
-    "dayjs": "^1.11.13",
-        "socket.io": "^4.6.1",
-    "socket.io-client": "^4.6.1",
-    "frappe-js-sdk": "^1.9.0",
-    "ionicons": "^7.0.0",
-    "swiper": "^11.2.8",
-    "vue": "^3.3.0",
-    "vue-i18n": "^10.0.5",
-    "vue-router": "^4.2.0"
+  "engines": {
+    "node": ">=20"
   },
   "devDependencies": {
-    "@capacitor/cli": "7.2.0",
-    "@vitejs/plugin-legacy": "^5.0.0",
-    "@vitejs/plugin-vue": "^4.0.0",
-    "@vue/eslint-config-typescript": "^12.0.0",
-    "@vue/test-utils": "^2.3.0",
-    "cypress": "^13.5.0",
-    "eslint": "^8.35.0",
-    "eslint-plugin-vue": "^9.9.0",
-    "jsdom": "^22.1.0",
-    "terser": "^5.4.0",
-    "typescript": "~5.6.2",
-    "vite": "5.2.14",
-    "vitest": "^0.34.6",
-    "vue-tsc": "^2.1.10"
-  },
-  "description": "An Ionic project"
+    "prettier": "^3.6.2",
+    "typescript": "5.9.3"
+  }
 }

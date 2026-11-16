@@ -1,0 +1,40 @@
+{
+  "categories": [
+    {
+      "id": "3a1e3be5-6e40-4bb1-a775-07d6811d5143",
+      "parent_id": null,
+      "name": "Drinks",
+      "name_km": "ភេសជ្ជៈ",
+      "name_en": "Drinks",
+      "name_zh": "饮料",
+      "slug": "",
+      "image_url": "https://pos.example.com/images/drinks.webp",
+      "sort_order": 0,
+      "is_active": true
+    }
+  ],
+  "products": [
+    {
+      "id": "a743e3c2-2838-4476-b4a4-5d920e4177ba",
+      "category_id": "3a1e3be5-6e40-4bb1-a775-07d6811d5143",
+      "code": "COFFEE-001",
+      "name": "Iced coffee",
+      "name_km": "កាហ្វេទឹកកក",
+      "name_en": "Iced coffee",
+      "name_zh": "冰咖啡",
+      "slug": "",
+      "description": "Freshly brewed coffee served over ice.",
+      "price": 2.5,
+      "unit": "cup",
+      "portions": [],
+      "modifier_groups": [],
+      "image_url": "https://pos.example.com/images/iced-coffee.webp",
+      "calories": 120,
+      "prep_minutes": 5,
+      "rating": null,
+      "is_featured": false,
+      "is_available": true,
+      "sort_order": 0
+    }
+  ]
+}

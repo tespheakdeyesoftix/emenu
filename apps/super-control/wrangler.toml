@@ -1,0 +1,28 @@
+name = "angkor-emenu-super-control"
+main = "worker/index.ts"
+compatibility_date = "2026-09-01"
+
+[observability]
+enabled = true
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[vars]
+SUPER_ADMIN_EMAIL = "pheakdey.micronet@gmail.com"
+ACCESS_TEAM_DOMAIN = "estcbad.cloudflareaccess.com"
+ACCESS_AUD = "a3922773387a89dedc7277392d31f0c557786f1a0d5e078a64157e3a4cbbef06"
+
+[[services]]
+binding = "CONTROL_ADMIN"
+service = "angkor-emenu-api"
+entrypoint = "SuperAdminService"
+
+[access.dev]
+aud = "local-super-control"
+
+[access.dev.identity]
+email = "pheakdey.micronet@gmail.com"

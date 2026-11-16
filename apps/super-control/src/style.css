@@ -1,0 +1,60 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #14231f;
+  background: #f3f4ee;
+  font-family: "DM Sans", sans-serif;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+@layer components {
+  .display {
+    font-family: "Manrope", sans-serif;
+  }
+  .panel {
+    @apply rounded-[1.75rem] border border-black/[.06] bg-white shadow-soft;
+  }
+  .label {
+    @apply mb-2 block text-xs font-bold uppercase tracking-[.12em] text-black/45;
+  }
+  .input {
+    @apply w-full rounded-2xl border border-black/10 bg-white px-4 py-3.5 text-sm outline-none transition placeholder:text-black/25 focus:border-moss focus:ring-4 focus:ring-moss/10;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-ink px-5 py-3 text-sm font-bold text-white transition hover:bg-moss disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-soft {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-black/[.08] bg-white px-4 py-2.5 text-sm font-bold transition hover:bg-cream disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-red-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-red-700 disabled:opacity-50;
+  }
+  .status-active {
+    @apply bg-emerald-100 text-emerald-800;
+  }
+  .status-disabled {
+    @apply bg-red-100 text-red-700;
+  }
+}
