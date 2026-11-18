@@ -1,5 +1,7 @@
+import type { PosTaxRule } from "../../../shared/posProfile";
 import type { Env } from "./index";
-import { saleLines, saleLineTotals, secondaryToPrimary } from "./posApiCatalog";
+import { saleLineEdits, saleLines, saleLineTotals, secondaryToPrimary } from "./posApiCatalog";
+import { readTaxRules } from "./posApiTaxRules";
 import {
   boolean,
   choice,
@@ -16,6 +18,7 @@ import {
   optionalText,
   pageOf,
   paymentTypes,
+  profileView,
   promoteProfile,
   recordId,
   requireManager,
@@ -30,24 +33,37 @@ import {
   type PosDependencies,
 } from "./posApiCore";
 import {
+  currentOperations,
   openGuard,
   operatingContext,
   updateShiftActivity,
 } from "./posApiShifts";
 
+const amountColumns = [
+  "subtotal_minor", "discount_minor", "tax_1_amount", "tax_2_amount",
+  "tax_3_amount", "tax_minor", "total_minor",
+] as const;
+const amountFields = amountColumns.join(" ");
+const amountInserts = amountColumns.map(() => "?").join(",");
+const amountReversal = amountColumns.map((column) => "-" + column).join(",");
+const calculatedAmounts = "total_tax_amount total_amount";
 const salesColumns = `id branch_id profile_id working_day_id shift_id reverses_sale_id status revision business_date
-  currency secondary_exchange_rate tax_mode tax_rate_bps subtotal_minor tax_minor total_minor table_id table_code
-  table_label customer_id customer_name note reason created_at created_by updated_at updated_by settled_at settled_by`;
+  currency secondary_exchange_rate tax_mode tax_rate_bps ${amountFields} ${calculatedAmounts} table_id table_code
+  table_label guest_cover customer_id customer_name note reason created_at created_by updated_at updated_by settled_at settled_by`;
 const lineColumns = `id line_number product_id product_code product_name portion_id portion_name
-  price_list_id quantity unit_price_minor subtotal_minor tax_minor total_minor note`;
+  price_list_id quantity unit_price_minor ${amountFields} note`;
+const savedLineColumns = `${lineColumns} base_price_override_minor is_free`;
 const paymentColumns = `id line_number payment_type_id payment_type_name payment_kind currency
   entry_type amount_minor reference reverses_payment_id`;
 const reversalId = "(SELECT r.id FROM sales r WHERE r.reverses_sale_id=s.id)";
-const lineJson = jsonRow("l", lineColumns, {
+const lineJson = jsonRow("l", `${lineColumns} ${calculatedAmounts}`, {
   modifiers: "json(l.modifiers_json)",
+  base_price_override_minor: "l.base_price_override_minor",
+  is_free: "json(CASE WHEN l.is_free=1 THEN 'true' ELSE 'false' END)",
 });
 const paymentJson = jsonRow("p", paymentColumns);
 const saleJson = jsonRow("s", salesColumns, {
+  tax_rule: "json(s.tax_rule_json)",
   reversed_by_sale_id: reversalId,
   receipt: "json(s.receipt_json)",
   lines: `json((SELECT json_group_array(${lineJson} ORDER BY l.line_number) FROM sale_products l WHERE l.sale_id=s.id))`,
@@ -68,14 +84,24 @@ type Sale = {
   secondary_exchange_rate: string;
   tax_mode: string;
   tax_rate_bps: number;
+  tax_rule_json: string | null;
   total_minor: number;
   table_id: string | null;
   table_code: string | null;
   table_label: string | null;
+  guest_cover: number | null;
   customer_id: string;
   customer_name: string;
   note: string | null;
+  business_date: string;
+  receipt_json: string;
 };
+
+function sumAmounts(lines: ReturnType<typeof saleLineTotals>[]) {
+  return Object.fromEntries(
+    amountColumns.map((column) => [column, lines.reduce((sum, line) => sum + line[column], 0)]),
+  ) as ReturnType<typeof saleLineTotals>;
+}
 
 function findSale(context: PosContext, id: string) {
   return sql(
@@ -97,6 +123,16 @@ function validateBusinessDate(value: string) {
     invalid("Invalid business_date");
 }
 
+function billPostingDate(context: PosContext, input: unknown, operatingDate: string) {
+  if (input == null) return operatingDate;
+  const value = string(input, "posting_date", 10);
+  validateBusinessDate(value);
+  if (value.startsWith("0000-")) invalid("Invalid posting_date");
+  if (context.config.cashier_shift_enabled && value !== operatingDate)
+    conflict("Posting date follows the required cashier shift", "POSTING_DATE_LOCKED");
+  return value;
+}
+
 export async function readBusinessSales(db: D1Database, url: URL, businessId: string) {
   const filters = ["s.business_id=?"];
   const values = [businessId];
@@ -114,7 +150,7 @@ export async function readBusinessSales(db: D1Database, url: URL, businessId: st
   }
   return respond(await pageOf(db, url, "sales", `
     SELECT s.id,s.business_date,s.created_at,s.customer_name,s.table_label,s.status,
-      s.currency,s.total_minor,s.reverses_sale_id,${reversalId} AS reversed_by_sale_id,
+      s.currency,s.total_minor,s.total_amount,s.total_tax_amount,s.reverses_sale_id,${reversalId} AS reversed_by_sale_id,
       b.name AS branch_name,p.name AS profile_name
     FROM sales s
     JOIN pos_profiles p ON p.id=s.profile_id AND p.business_id=s.business_id
@@ -150,6 +186,14 @@ export async function readSales(context: PosContext, url: URL, id?: string) {
     if (!row) missing("Sale");
     return respond(JSON.parse(row));
   }
+  if (url.searchParams.has("history")) {
+    if (url.searchParams.get("history") !== "active" ||
+        ["status", "business_date", "table_id", "shift_id", "working_day_id"]
+          .some((field) => url.searchParams.has(field))) {
+      invalid("Use history=active without other sales filters");
+    }
+    return readActiveSales(context, url);
+  }
   const filters = ["s.business_id=?", "s.profile_id=?"];
   const values: unknown[] = [identity.business_id, profile.id];
   for (const field of [
@@ -182,6 +226,36 @@ export async function readSales(context: PosContext, url: URL, id?: string) {
       values,
     ),
   );
+}
+
+async function readActiveSales(context: PosContext, url: URL) {
+  const { db, profile, identity, config } = context;
+  const { working_day: day, cashier_shift: shift } = await currentOperations(context);
+  const kind = config.cashier_shift_enabled ? "shift"
+    : config.working_day_enabled ? "working_day" : "business_date";
+  const period = kind === "shift" ? shift
+    : kind === "working_day" ? day : null;
+  const scopeId = kind === "business_date" ? context.localDate : period?.id;
+  const start = kind === "business_date" ? context.localDateStart : period?.opened_at;
+  const scope = typeof scopeId === "string" && typeof start === "string" &&
+    (kind !== "shift" || (shift?.working_day_id ?? null) === (day?.id ?? null)) &&
+    (!config.working_day_enabled || day)
+    ? { profile_id: profile.id, kind, id: scopeId, opened_at: start }
+    : null;
+  const paidScope = kind === "shift" ? "s.shift_id"
+    : kind === "working_day" ? "s.working_day_id" : "s.business_date";
+  const columns = salesColumns.split(/\s+/).map((column) => "s." + column).join(",");
+  const page = await pageOf(db, url, "sales", `
+    SELECT ${columns},${reversalId} AS reversed_by_sale_id,
+      (SELECT COALESCE(SUM(l.quantity),0) FROM sale_products l WHERE l.sale_id=s.id) AS item_quantity
+    FROM sales s WHERE s.business_id=? AND s.profile_id=? AND ? IS NOT NULL
+      AND (s.status='open' OR (s.status='paid' AND ${paidScope}=?)
+        OR (s.status='cancelled' AND julianday(s.updated_at)>=julianday(?)
+            AND julianday(s.updated_at)<=julianday(?)))
+    ORDER BY CASE s.status WHEN 'paid' THEN COALESCE(s.settled_at,s.created_at)
+      ELSE s.updated_at END DESC,s.id DESC
+  `, [identity.business_id, profile.id, scope?.id ?? null, scope?.id ?? null, scope?.opened_at ?? null, context.now]);
+  return respond({ ...page, history_scope: scope });
 }
 
 async function chooseTable(
@@ -304,10 +378,18 @@ export async function saveSale(
   const operating = await operatingContext(context);
   assertExpectedContext(body, operating);
   const { day, shift, businessDate } = operating;
+  const receiptData = existing ? object(JSON.parse(existing.receipt_json)) : {};
+  const requestedPostingDate = body.posting_date === undefined
+    ? (config.cashier_shift_enabled ? null : receiptData.posting_date)
+    : body.posting_date;
+  const postingDate = billPostingDate(context, requestedPostingDate, businessDate);
   if (existing && (day?.id ?? null) !== existing.working_day_id)
     conflict("The bill belongs to a different working day");
   const currency = existing?.currency ?? identity.currency;
-  const taxMode = existing?.tax_mode ?? config.tax_mode;
+  const taxRule: PosTaxRule | null = existing
+    ? JSON.parse(existing.tax_rule_json ?? "null")
+    : profileView(profile).config.default_tax_rule;
+  const taxMode = existing?.tax_mode ?? taxRule?.tax_mode ?? config.tax_mode;
   const taxRate = existing?.tax_rate_bps ?? config.tax_rate_bps;
   const note =
     body.note === undefined
@@ -323,27 +405,29 @@ export async function saveSale(
     chooseTable(context, body.table_id, existing),
     chooseCustomer(context, body.customer_id, existing),
     !existing || body.lines !== undefined
-      ? saleLines(env, deps, context, body.lines, currency, taxMode, taxRate)
+      ? saleLines(env, deps, context, body.lines, currency, taxMode, taxRate, taxRule)
       : null,
   ]);
-  const amounts = lines?.reduce(
-    (sum, line) => ({
-      subtotal: sum.subtotal + line.subtotal_minor,
-      tax: sum.tax + line.tax_minor,
-      total: sum.total + line.total_minor,
-    }),
-    { subtotal: 0, tax: 0, total: 0 },
-  );
-  if (amounts && amounts.total > MAX_AMOUNT)
+  const cover = table.id == null
+    ? inputGuestCover(body.guest_cover === undefined && existing?.table_id == null
+        ? existing?.guest_cover : body.guest_cover, null, config.prompt_guest_cover === true)
+    : body.guest_cover === undefined
+      ? (existing?.table_id === table.id ? existing.guest_cover : null)
+      : inputGuestCover(body.guest_cover, table.id);
+  const amounts = lines ? sumAmounts(lines) : null;
+  if (amounts && amounts.total_minor > MAX_AMOUNT)
     conflict("The bill exceeds the POS amount limit", "AMOUNT_LIMIT");
   const sale = id ?? newId("possale");
   const guard = existing
     ? openSaleGuard(openGuard(day, shift), existing, revision)
     : openGuard(day, shift);
   if (lines) {
-    guard.query +=
-      " AND EXISTS (SELECT 1 FROM businesses WHERE id=? AND menu_cache_version=?)";
+    guard.query += " AND EXISTS (SELECT 1 FROM businesses WHERE id=? AND menu_cache_version=?)";
     guard.params.push(identity.business_id, identity.catalog_version);
+    if (config.catalog_mode === "menu") {
+      guard.query += " AND EXISTS (SELECT 1 FROM pos_profiles WHERE id=? AND pending_config_json IS ?)";
+      guard.params.push(profile.id, profile.pending_config_json);
+    }
   }
   if (table.check) {
     guard.query += ` AND EXISTS (SELECT 1 FROM restaurant_tables t JOIN table_groups g
@@ -364,18 +448,19 @@ export async function saveSale(
     writes.push(
       sql(
         db,
-        `UPDATE sales SET table_id=?,table_code=?,table_label=?,customer_id=?,customer_name=?,note=?,
-      subtotal_minor=COALESCE(?,subtotal_minor),tax_minor=COALESCE(?,tax_minor),total_minor=COALESCE(?,total_minor),
+        `UPDATE sales SET table_id=?,table_code=?,table_label=?,guest_cover=?,customer_id=?,customer_name=?,note=?,business_date=?,receipt_json=?,
+      ${amountColumns.map((column) => `${column}=COALESCE(?,${column})`).join(",")},
       revision=revision+1,updated_at=?,updated_by=? WHERE id=?`,
         table.id,
         table.code,
         table.label,
+        cover,
         customer.id,
         customer.name,
         note,
-        amounts?.subtotal ?? null,
-        amounts?.tax ?? null,
-        amounts?.total ?? null,
+        requestedPostingDate == null && body.posting_date === undefined ? existing.business_date : postingDate,
+        JSON.stringify({ ...receiptData, posting_date: requestedPostingDate == null ? null : postingDate }),
+        ...amountColumns.map((column) => amounts?.[column] ?? null),
         now,
         actor,
         sale,
@@ -383,6 +468,7 @@ export async function saveSale(
     );
   } else {
     const receipt = JSON.stringify({
+      ...(requestedPostingDate == null ? {} : { posting_date: postingDate }),
       business_name: identity.business_name,
       profile_name: profile.name,
       branch_name: profile.branch_name,
@@ -393,25 +479,25 @@ export async function saveSale(
       sql(
         db,
         `INSERT INTO sales (id,business_id,branch_id,profile_id,working_day_id,status,business_date,
-      currency,secondary_exchange_rate,tax_mode,tax_rate_bps,subtotal_minor,tax_minor,total_minor,table_id,table_code,
-      table_label,customer_id,customer_name,receipt_json,note,created_at,created_by,updated_at,updated_by)
-      VALUES (?,?,?,?,?,'open',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      currency,secondary_exchange_rate,tax_mode,tax_rate_bps,tax_rule_json,${amountColumns.join(",")},table_id,table_code,
+      table_label,guest_cover,customer_id,customer_name,receipt_json,note,created_at,created_by,updated_at,updated_by)
+      VALUES (?,?,?,?,?,'open',?,?,?,?,?,?,${amountInserts},?,?,?,?,?,?,?,?,?,?,?,?)`,
         sale,
         identity.business_id,
         profile.branch_id,
         profile.id,
         day?.id ?? null,
-        businessDate,
+        postingDate,
         currency,
         String(identity.secondary_exchange_rate),
         taxMode,
         taxRate,
-        amounts!.subtotal,
-        amounts!.tax,
-        amounts!.total,
+        taxRule ? JSON.stringify(taxRule) : null,
+        ...amountColumns.map((column) => amounts![column]),
         table.id,
         table.code,
         table.label,
+        cover,
         customer.id,
         customer.name,
         receipt,
@@ -432,8 +518,8 @@ export async function saveSale(
     writes.push(
       sql(
         db,
-        `INSERT INTO sale_products (sale_id,${lineColumns.replaceAll(/\s+/g, ",")},modifiers_json)
-      SELECT ?,${lineColumns
+        `INSERT INTO sale_products (sale_id,${savedLineColumns.replaceAll(/\s+/g, ",")},modifiers_json)
+      SELECT ?,${savedLineColumns
         .split(/\s+/)
         .map((column) => `json_extract(value,'$.${column}')`)
         .join(",")},
@@ -456,7 +542,7 @@ function salePayments(
     const id = recordId(entry.payment_type_id, "payment_type_id");
     const currency = currencyOf(entry.currency);
     const type = types.find(
-      (type) => type.id === id && type.currencies.includes(currency),
+      (type) => type.id === id && type.currency === currency,
     );
     if (!type)
       invalid("Use a payment type and currency accepted by this profile");
@@ -540,6 +626,10 @@ async function checkout(
   const operating = await operatingContext(context);
   assertExpectedContext(command.body, operating);
   const { day, shift, businessDate } = operating;
+  const savedPostingDate = object(JSON.parse(sale.receipt_json)).posting_date;
+  const postingDate = billPostingDate(context, command.body.posting_date === undefined
+    ? (context.config.cashier_shift_enabled ? null : savedPostingDate)
+    : command.body.posting_date, businessDate);
   if ((day?.id ?? null) !== sale.working_day_id)
     conflict("The bill belongs to a different working day");
   const entries = salePayments(
@@ -557,7 +647,7 @@ async function checkout(
         `UPDATE sales SET status='paid',revision=revision+1,shift_id=?,business_date=?,
       updated_at=?,updated_by=?,settled_at=?,settled_by=? WHERE id=?`,
         shift?.id ?? null,
-        businessDate,
+        postingDate,
         now,
         identity.user_id,
         now,
@@ -588,21 +678,31 @@ export async function importStoreSale(
     "exclusive",
   ] as const);
   const taxRate = integer(body.tax_rate_bps, "tax_rate_bps", 0, 10_000);
+  const taxRule = body.tax_rule == null ? null : readTaxRules([body.tax_rule])[0];
+  if (taxRule && taxMode !== taxRule.tax_mode)
+    invalid("The saved tax rule must match tax_mode");
   const operating = await operatingContext(context);
   if (body.expected_context === undefined)
     invalid("The saved sale needs its operating context");
   assertExpectedContext(body, operating);
   const { day, shift, businessDate } = operating;
+  const postingDate = billPostingDate(context, body.posting_date, businessDate);
   const lines = list(body.lines, "lines", 60).map((raw, index) => {
     const line = object(raw);
     const quantity = integer(line.quantity, "quantity", 1, 999);
     const unit = integer(line.unit_price_minor, "unit_price_minor", 0);
     if (unit * quantity > MAX_AMOUNT) invalid("The line exceeds the POS limit");
-    const amounts = saleLineTotals(unit * quantity, taxMode, taxRate);
+    const edits = saleLineEdits(line);
+    const amounts = saleLineTotals(unit * quantity, taxMode, taxRate, taxRule, edits.discount_minor);
     if (
       amounts.subtotal_minor !== line.subtotal_minor ||
       amounts.tax_minor !== line.tax_minor ||
-      amounts.total_minor !== line.total_minor
+      amounts.total_minor !== line.total_minor ||
+      (["tax_1_amount", "tax_2_amount", "tax_3_amount"] as const).some(
+        (column) => line[column] !== undefined && amounts[column] !== line[column],
+      ) ||
+      (line.total_tax_amount !== undefined && amounts.tax_minor !== line.total_tax_amount) ||
+      (line.total_amount !== undefined && amounts.total_minor !== line.total_amount)
     ) {
       invalid("The saved line amounts do not match the saved price and tax");
     }
@@ -632,6 +732,12 @@ export async function importStoreSale(
     ) {
       invalid("Use distinct modifiers for each line");
     }
+    const editedUnit = edits.is_free
+      ? 0
+      : edits.base_price_override_minor == null
+        ? unit
+        : edits.base_price_override_minor + modifiers.reduce((sum, option) => sum + option.price_minor, 0);
+    if (editedUnit !== unit) invalid("The saved unit price does not match the line edits");
     return {
       id: newId("posl"),
       line_number: index + 1,
@@ -649,27 +755,20 @@ export async function importStoreSale(
           : recordId(line.price_list_id, "price_list_id"),
       quantity,
       unit_price_minor: unit,
+      ...edits,
       ...amounts,
       modifiers,
-      note: optionalText(line.note, "line note"),
     };
   });
   if (!lines.length) invalid("A bill needs at least one line");
-  const amounts = lines.reduce(
-    (sum, line) => ({
-      subtotal: sum.subtotal + line.subtotal_minor,
-      tax: sum.tax + line.tax_minor,
-      total: sum.total + line.total_minor,
-    }),
-    { subtotal: 0, tax: 0, total: 0 },
-  );
-  if (amounts.total > MAX_AMOUNT || amounts.total !== body.total_minor) {
+  const amounts = sumAmounts(lines);
+  if (amounts.total_minor > MAX_AMOUNT || amounts.total_minor !== body.total_minor) {
     invalid("The saved total must match the lines");
   }
   const entries = salePayments(body.payments, types, {
     currency,
     secondary_exchange_rate: rate,
-    total_minor: amounts.total,
+    total_minor: amounts.total_minor,
   });
   const tableMode = choice(body.table_mode, "table_mode", [
     "disabled",
@@ -684,6 +783,7 @@ export async function importStoreSale(
   ) {
     invalid("The table does not match the saved profile mode");
   }
+  const cover = inputGuestCover(body.guest_cover, table, context.config.prompt_guest_cover === true);
   const customer = recordId(body.customer_id, "customer_id");
   const receipt = object(body.receipt);
   const template = object(receipt.template);
@@ -725,27 +825,27 @@ export async function importStoreSale(
       sql(
         db,
         `INSERT INTO sales (id,business_id,branch_id,profile_id,working_day_id,shift_id,status,business_date,
-        currency,secondary_exchange_rate,tax_mode,tax_rate_bps,subtotal_minor,tax_minor,total_minor,
-        table_id,table_code,table_label,customer_id,customer_name,receipt_json,
+        currency,secondary_exchange_rate,tax_mode,tax_rate_bps,tax_rule_json,${amountColumns.join(",")},
+        table_id,table_code,table_label,guest_cover,customer_id,customer_name,receipt_json,
         created_at,created_by,updated_at,updated_by,settled_at,settled_by)
-        VALUES (?,?,?,?,?,?,'paid',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        VALUES (?,?,?,?,?,?,'paid',?,?,?,?,?,?,${amountInserts},?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         id,
         identity.business_id,
         profile.branch_id,
         profile.id,
         day?.id ?? null,
         shift?.id ?? null,
-        businessDate,
+        postingDate,
         currency,
         rate,
         taxMode,
         taxRate,
-        amounts.subtotal,
-        amounts.tax,
-        amounts.total,
+        taxRule ? JSON.stringify(taxRule) : null,
+        ...amountColumns.map((column) => amounts[column]),
         table,
         optionalText(body.table_code, "table code", 250),
         optionalText(body.table_label, "table label", 250),
+        cover,
         customer,
         string(body.customer_name, "customer name", 250),
         JSON.stringify(savedReceipt),
@@ -758,8 +858,8 @@ export async function importStoreSale(
       ),
       sql(
         db,
-        `INSERT INTO sale_products (sale_id,${lineColumns.replaceAll(/\s+/g, ",")},modifiers_json)
-      SELECT ?,${lineColumns
+        `INSERT INTO sale_products (sale_id,${savedLineColumns.replaceAll(/\s+/g, ",")},modifiers_json)
+      SELECT ?,${savedLineColumns
         .split(/\s+/)
         .map((column) => `json_extract(value,'$.${column}')`)
         .join(",")},
@@ -772,6 +872,12 @@ export async function importStoreSale(
     ],
     resultOf(id),
   );
+}
+
+function inputGuestCover(value: unknown, tableId: string | null, acceptsCounter = false) {
+  if (value == null) return null;
+  if (tableId == null && !acceptsCounter) invalid("A guest count requires a table or guest-cover profile");
+  return integer(value, "guest_cover", 1, 1000);
 }
 
 async function reverse(context: PosContext, command: Command, original: Sale) {
@@ -819,11 +925,11 @@ async function reverse(context: PosContext, command: Command, original: Sale) {
       sql(
         db,
         `INSERT INTO sales(id,business_id,branch_id,profile_id,working_day_id,shift_id,reverses_sale_id,status,
-      business_date,currency,secondary_exchange_rate,tax_mode,tax_rate_bps,subtotal_minor,tax_minor,total_minor,
-      table_id,table_code,table_label,customer_id,customer_name,receipt_json,note,reason,created_at,created_by,
+      business_date,currency,secondary_exchange_rate,tax_mode,tax_rate_bps,tax_rule_json,${amountColumns.join(",")},
+      table_id,table_code,table_label,guest_cover,customer_id,customer_name,receipt_json,note,reason,created_at,created_by,
       updated_at,updated_by,settled_at,settled_by)
       SELECT ?,business_id,branch_id,profile_id,?,?,id,'paid',?,currency,secondary_exchange_rate,tax_mode,tax_rate_bps,
-        -subtotal_minor,-tax_minor,-total_minor,table_id,table_code,table_label,customer_id,customer_name,receipt_json,
+        tax_rule_json,${amountReversal},table_id,table_code,table_label,guest_cover,customer_id,customer_name,receipt_json,
         note,?,?,?,?,?,?,? FROM sales WHERE id=?`,
         sale,
         day?.id ?? null,
@@ -841,9 +947,9 @@ async function reverse(context: PosContext, command: Command, original: Sale) {
       sql(
         db,
         `INSERT INTO sale_products(id,sale_id,line_number,product_id,product_code,product_name,portion_id,portion_name,
-      price_list_id,modifiers_json,quantity,unit_price_minor,subtotal_minor,tax_minor,total_minor,note)
+      price_list_id,modifiers_json,quantity,unit_price_minor,${amountColumns.join(",")},note,base_price_override_minor,is_free)
       SELECT 'posl_'||lower(hex(randomblob(16))),?,line_number,product_id,product_code,product_name,portion_id,portion_name,
-        price_list_id,modifiers_json,-quantity,unit_price_minor,-subtotal_minor,-tax_minor,-total_minor,note
+        price_list_id,modifiers_json,-quantity,unit_price_minor,${amountReversal},note,base_price_override_minor,is_free
       FROM sale_products WHERE sale_id=?`,
         sale,
         original.id,

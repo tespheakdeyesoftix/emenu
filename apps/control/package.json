@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@vitejs/plugin-vue": "^5.2.4",
+    "frappe-ui": "^1.2.0",
     "jspdf": "^4.2.1",
     "jszip": "^3.10.2",
     "lucide-vue-next": "^0.468.0",

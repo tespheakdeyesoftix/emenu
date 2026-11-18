@@ -41,19 +41,17 @@
         </p>
         <label
           ><span class="label">{{ t("auth.email") }}</span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model="email"
-            class="input mb-4"
+            class="mb-4"
             type="email"
             required
             autocomplete="email"
             placeholder="you@restaurant.com" /></label
         ><label
           ><span class="label">{{ t("auth.password") }}</span
-          ><input
+          ><Password size="lg" variant="outline"
             v-model="password"
-            class="input"
-            type="password"
             required
             autocomplete="current-password"
             minlength="8"
@@ -61,30 +59,23 @@
         /></label>
         <div class="my-5 flex items-center justify-between text-sm">
           <label class="flex items-center gap-2"
-            ><input type="checkbox" class="accent-black" />{{
+            ><Checkbox type="checkbox" class="accent-black" />{{
               t("auth.remember")
             }}</label
-          ><a
-            href="#"
-            class="font-semibold text-ink underline decoration-black/20 underline-offset-4 hover:decoration-black/60"
-            >{{ t("auth.forgot") }}</a
           >
+          <Button href="#" target="_self" variant="ghost" :label="t('auth.forgot')" />
         </div>
-        <button class="btn-primary w-full" :disabled="loading">
+        <Button variant="solid" size="lg" type="submit" class="w-full" :disabled="loading">
           {{ loading ? t("auth.signingIn") : t("auth.signIn")
           }}<ArrowRight :size="17" />
-        </button>
-        <p
-          v-if="error"
-          class="mt-4 rounded-xl bg-red-50 p-3 text-center text-xs font-bold text-red-700"
-        >
-          {{ error }}
-        </p>
+        </Button>
+        <Alert v-if="error" theme="red" :title="error" class="mt-4" />
       </form>
     </section>
   </main>
 </template>
 <script setup lang="ts">
+import { Password, Alert, Button, Checkbox, TextInput } from "frappe-ui";
 import { ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";

@@ -1,9 +1,5 @@
 <template>
-  <PageHeader
-    eyebrow="Tenant directory"
-    title="Registered businesses"
-    description="Find businesses, inspect account ownership, and control availability."
-  >
+  <PageHeader title="Registered businesses">
     <RouterLink to="/businesses/new" class="btn-primary"
       ><Plus :size="17" />Register business</RouterLink
     >

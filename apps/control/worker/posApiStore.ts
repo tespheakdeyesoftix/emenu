@@ -251,14 +251,21 @@ async function savedTenderTypes(
   context: PosContext,
   value: unknown,
 ): Promise<PaymentType[]> {
-  const types = list(value, "payment_types", 20).map((raw) => {
+  const ids = new Set<string>();
+  const types = list(value, "payment_types", 20).flatMap((raw) => {
     const row = object(raw);
-    const currencies = list(row.currencies, "currencies", 2).map(currencyOf);
+    const id = recordId(row.id, "payment type ID");
+    if (ids.has(id)) invalid("Use distinct payment types");
+    ids.add(id);
+    // Legacy offline operations may still have several currencies in their snapshot.
+    const currencies = row.currency === undefined
+      ? list(row.currencies, "currencies", 2).map(currencyOf)
+      : [currencyOf(row.currency)];
     if (!currencies.length || new Set(currencies).size !== currencies.length) {
       invalid("Use distinct currencies for a payment type");
     }
-    return {
-      id: recordId(row.id, "payment type ID"),
+    const type = {
+      id,
       name: string(row.name, "payment type name", 120),
       kind: choice(row.kind, "payment kind", [
         "cash",
@@ -266,18 +273,19 @@ async function savedTenderTypes(
         "qr",
         "other",
       ] as const),
-      currencies,
+
       ...(row.allow_cash_float === undefined
         ? {}
         : { allow_cash_float: boolean(row.allow_cash_float, "allow_cash_float") }),
     };
+    return currencies.map((currency) => ({ ...type, currency }));
   });
   const drawerCurrencies = types
     .filter((row) => row.kind === "cash")
-    .flatMap((row) => row.currencies);
+    .map((row) => row.currency);
   if (
     !types.length ||
-    new Set(types.map((row) => row.id)).size !== types.length ||
+
     new Set(drawerCurrencies).size !== drawerCurrencies.length
   ) {
     invalid("Use distinct payment types and one cash drawer per currency");
@@ -286,9 +294,7 @@ async function savedTenderTypes(
     context.db,
     `SELECT t.business_id,t.currency
     FROM pos_payment_types t JOIN json_each(?) saved ON t.id=json_extract(saved.value,'$.id')
-    WHERE t.business_id<>? OR (t.currency IS NOT NULL AND EXISTS (
-      SELECT 1 FROM json_each(saved.value,'$.currencies') accepted WHERE accepted.value<>t.currency
-    ))`,
+    WHERE t.business_id<>? OR (t.currency IS NOT NULL AND json_extract(saved.value,'$.currency')<>t.currency)`,
     JSON.stringify(types),
     context.identity.business_id,
   ).first<{ business_id: string; currency: PosCurrency | null }>();
@@ -337,6 +343,7 @@ async function importOperation(
     "close_day",
     "open_shift",
     "close_shift",
+    "reopen_shift",
     "cash_movement",
     "checkout",
     "reversal",
@@ -355,6 +362,9 @@ async function importOperation(
   }
   const body = object(raw.payload);
   const settings = object(raw.settings);
+  const exchangeRate = body.exchange_rate == null ? undefined : string(body.exchange_rate, "exchange_rate", 80);
+  if (exchangeRate != null && (!Number.isFinite(Number(exchangeRate)) || Number(exchangeRate) <= 0))
+    invalid("The stored exchange rate must be positive");
   const authority = await storeAuthority(context);
   if (
     !authority ||
@@ -382,7 +392,11 @@ async function importOperation(
     },
     now: occurredAt.toISOString(),
     localDate: deps.localDate(occurredAt, authority.timezone),
-    storeImport: { epoch, sequence, resourceId, recovery },
+    storeImport: {
+      epoch, sequence, resourceId, recovery,
+      baseCurrency: body.base_currency == null ? undefined : currencyOf(body.base_currency),
+      exchangeRate,
+    },
   };
   const command = await Command.read(request, imported, {
     envelope: raw,
@@ -441,6 +455,8 @@ async function importOperation(
         return await writeShift(imported, command);
       case "close_shift":
         return await writeShift(imported, command, resourceId, "close");
+      case "reopen_shift":
+        return await writeShift(imported, command, resourceId, "reopen");
       case "cash_movement":
         return await writeShift(
           imported,

@@ -13,70 +13,65 @@
       <div class="flex items-end gap-2">
         <label>
           <span class="label">{{ t("telegram.history.status") }}</span>
-          <select
+          <Select
+            size="lg"
+            variant="outline"
             v-model="status"
-            class="input"
             :disabled="busy"
-            @change="load(0)"
-          >
-            <option value="">{{ t("telegram.history.allStatuses") }}</option>
-            <option v-for="value in statuses" :key="value" :value="value">
-              {{ t(`telegram.history.${value}`) }}
-            </option>
-          </select>
+            @update:model-value="load(0)"
+            :options="[
+              { label: t('telegram.history.allStatuses'), value: '' },
+              ...statuses.map(value => ({ label: t(`telegram.history.${value}`), value: value })),
+            ]"
+          />
         </label>
-        <button
+        <Button variant="subtle" size="lg"
           type="button"
-          class="btn-soft"
           :disabled="busy"
           @click="load(offset)"
         >
-          <RefreshCw :size="15" aria-hidden="true" />{{
+          <template #prefix><RefreshCw :size="15" aria-hidden="true" /></template>{{
             t("telegram.history.refresh")
           }}
-        </button>
+        </Button>
       </div>
     </div>
-    <p v-if="error" class="text-sm text-red-700" role="alert">{{ error }}</p>
-    <p v-if="loading" class="text-sm text-black/60" role="status">
-      {{ t("common.loading") }}
-    </p>
+    <Alert v-if="error" theme="red" :title="error" />
+    <LoadingText v-if="loading" :text="t('common.loading')" role="status" />
     <p v-else-if="!deliveries.length && !error" class="text-sm text-black/60">
       {{ t("telegram.history.empty") }}
     </p>
     <div v-if="deliveries.length" class="overflow-x-auto" :aria-busy="busy">
-      <table class="w-full min-w-[42rem] border-collapse text-start text-sm">
-        <thead class="bg-cream text-black/65">
-          <tr>
-            <th scope="col" class="p-3 text-start">
+      <List class="w-full min-w-[650px]" :columns="['minmax(120px,1fr)', '115px', 'minmax(145px,1.3fr)', '135px', '100px']">
+        <ListHeader class="!h-10 bg-surface-gray-1 text-ink-gray-7">
+            <ListHeaderCell >
               {{ t("telegram.history.alert") }}
-            </th>
-            <th scope="col" class="p-3 text-start">{{ t("telegram.chat") }}</th>
-            <th scope="col" class="p-3 text-start">
+            </ListHeaderCell>
+            <ListHeaderCell >{{ t("telegram.chat") }}</ListHeaderCell>
+            <ListHeaderCell >
               {{ t("telegram.history.status") }}
-            </th>
-            <th scope="col" class="p-3 text-start">
+            </ListHeaderCell>
+            <ListHeaderCell >
               {{ t("telegram.history.updated") }}
-            </th>
-            <th scope="col" class="p-3 text-start">
+            </ListHeaderCell>
+            <ListHeaderCell >
               {{ t("telegram.history.action") }}
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
+            </ListHeaderCell>
+
+        </ListHeader>
+          <ListRow
             v-for="delivery in deliveries"
             :key="deliveryKey(delivery)"
             class="border-b border-black/10 align-top"
           >
-            <td class="p-3">
+            <ListCell class="!block py-2.5">
               <span class="block text-xs text-black/60">{{
                 t(`telegram.sources.${delivery.source}`)
               }}</span>
               <strong class="block break-all">{{ delivery.reference }}</strong>
-            </td>
-            <td class="break-all p-3">{{ delivery.chatId }}</td>
-            <td class="p-3">
+            </ListCell>
+            <ListCell class="break-all !block py-2.5">{{ delivery.chatId }}</ListCell>
+            <ListCell class="!block py-2.5">
               <strong
                 :class="{
                   'text-green-800': delivery.status === 'sent',
@@ -88,21 +83,15 @@
               <span class="ms-2 text-xs text-black/60">{{
                 t("telegram.history.attempts", { count: delivery.attempts })
               }}</span>
-              <p
-                v-if="delivery.error"
-                class="mb-0 mt-1 break-words text-xs text-red-700"
-              >
-                {{ delivery.error }}
-              </p>
-            </td>
-            <td class="p-3 text-xs text-black/65">
+              <Alert v-if="delivery.error" theme="red" :title="delivery.error" class="mb-0 mt-1" />
+            </ListCell>
+            <ListCell class="text-xs text-black/65 !block py-2.5">
               {{ timestamp(delivery.updatedAt) }}
-            </td>
-            <td class="p-3">
-              <button
+            </ListCell>
+            <ListCell class="!block py-2.5">
+              <Button variant="subtle" size="lg"
                 v-if="delivery.canRetry"
                 type="button"
-                class="btn-soft"
                 :disabled="busy"
                 :aria-label="
                   t('telegram.history.retryChat', { chat: delivery.chatId })
@@ -116,51 +105,50 @@
                       : "telegram.history.retry",
                   )
                 }}
-              </button>
+              </Button>
               <span
                 v-else-if="delivery.status === 'failed'"
                 class="text-xs text-black/60"
                 >{{ t("telegram.history.retryUnavailable") }}</span
               >
-            </td>
-          </tr>
-        </tbody>
-      </table>
+            </ListCell>
+          </ListRow>
+      </List>
     </div>
     <template #footer>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div v-if="offset || hasMore" class="flex items-center gap-2">
-          <button
+          <Button variant="subtle" size="lg"
             type="button"
-            class="btn-soft"
             :disabled="busy || offset === 0"
             @click="load(Math.max(0, offset - pageSize))"
           >
             {{ t("telegram.history.previous") }}
-          </button>
-          <button
+          </Button>
+          <Button variant="subtle" size="lg"
             type="button"
-            class="btn-soft"
             :disabled="busy || !hasMore"
             @click="load(offset + pageSize)"
           >
             {{ t("telegram.history.next") }}
-          </button>
+          </Button>
         </div>
-        <button
+        <Button variant="subtle" size="lg"
           type="button"
-          class="btn-soft ms-auto"
+          class="ms-auto"
           :disabled="!!retrying"
           @click="close"
         >
           {{ t("common.close") }}
-        </button>
+        </Button>
       </div>
     </template>
   </ModalPanel>
 </template>
 
 <script setup lang="ts">
+import { List, ListCell, ListHeader, ListHeaderCell, ListRow } from "frappe-ui/list";
+import { Alert, LoadingText, Button, Select } from "frappe-ui";
 import { RefreshCw } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";

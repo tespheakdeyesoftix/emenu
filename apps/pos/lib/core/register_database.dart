@@ -2,11 +2,25 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/drift.dart';
+import 'package:drift/extensions/json1.dart';
 import 'package:drift/native.dart';
 
 import 'pos_api.dart';
+import 'register_history_scope.dart';
 
 part 'register_database.g.dart';
+
+class RegisterUiPreferences extends Table {
+  IntColumn get id => integer().withDefault(const Constant(1))();
+  TextColumn get sellScreenLayout =>
+      text().withDefault(const Constant('menu_top'))();
+  IntColumn get orderProductListWidth =>
+      integer().withDefault(const Constant(350))();
+  IntColumn get catalogWidth => integer().withDefault(const Constant(200))();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
 
 class RegisterInstallations extends Table {
   IntColumn get id => integer().withDefault(const Constant(1))();
@@ -82,6 +96,21 @@ class HeldBills extends Table {
   ];
 }
 
+class DiscardedBills extends Table {
+  TextColumn get id => text()();
+  TextColumn get profileId => text()();
+  TextColumn get billId => text()();
+  TextColumn get shiftId => text().nullable()();
+  TextColumn get workingDayId => text().nullable()();
+  TextColumn get businessDate => text()();
+  TextColumn get operatorName => text()();
+  TextColumn get payload => text()();
+  DateTimeColumn get discardedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 class RegisterCartDrafts extends Table {
   TextColumn get operatorId => text().references(RegisterOperators, #id)();
   TextColumn get profileId => text()();
@@ -90,6 +119,16 @@ class RegisterCartDrafts extends Table {
 
   @override
   Set<Column> get primaryKey => {operatorId, profileId};
+}
+
+class ParkedTableDrafts extends Table {
+  TextColumn get operatorId => text().references(RegisterOperators, #id)();
+  TextColumn get profileId => text()();
+  TextColumn get tableId => text()();
+  TextColumn get payload => text()();
+
+  @override
+  Set<Column> get primaryKey => {operatorId, profileId, tableId};
 }
 
 @TableIndex(name: 'sale_outbox_pending', columns: {#status, #retryAt})
@@ -202,13 +241,16 @@ class StoreOperatingEvents extends Table {
 
 @DriftDatabase(
   tables: [
+    RegisterUiPreferences,
     RegisterInstallations,
     RegisterOperators,
     ProfileSnapshots,
     LocalSales,
     SaleOutbox,
     HeldBills,
+    DiscardedBills,
     RegisterCartDrafts,
+    ParkedTableDrafts,
     RegisterCommands,
     StoreNetworkSettings,
     StoreDevices,
@@ -226,11 +268,19 @@ class RegisterDatabase extends _$RegisterDatabase {
       RegisterDatabase(NativeDatabase.createInBackground(file));
 
   @override
-  int get schemaVersion => 11;
+  int get schemaVersion => 15;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onUpgrade: (migrator, from, to) async {
+      if (from < 13) await migrator.createTable(registerUiPreferences);
+      if (from < 14) await migrator.createTable(discardedBills);
+      if (from >= 13 && from < 15) {
+        await migrator.addColumn(
+          registerUiPreferences,
+          registerUiPreferences.catalogWidth,
+        );
+      }
       if (from < 2) await migrator.createTable(heldBills);
       if (from < 3) await migrator.createTable(registerCommands);
       if (from < 4) {
@@ -257,6 +307,7 @@ class RegisterDatabase extends _$RegisterDatabase {
         );
       }
       if (from < 9) await migrator.createTable(registerCartDrafts);
+      if (from < 12) await migrator.createTable(parkedTableDrafts);
       if (from >= 3 && from < 10) {
         await migrator.addColumn(registerCommands, registerCommands.profileId);
       }
@@ -290,6 +341,32 @@ class RegisterDatabase extends _$RegisterDatabase {
       await customStatement('PRAGMA synchronous = FULL');
       await customStatement('PRAGMA busy_timeout = 5000');
     },
+  );
+
+  Future<Json?> readUiPreferences() async {
+    final row = await (select(
+      registerUiPreferences,
+    )..where((row) => row.id.equals(1))).getSingleOrNull();
+    return row == null
+        ? null
+        : {
+            'sell_screen_layout': row.sellScreenLayout,
+            'order_product_list_width': row.orderProductListWidth,
+            'catalog_width': row.catalogWidth,
+          };
+  }
+
+  Future<void> saveUiPreferences(
+    String layout,
+    int width, {
+    int catalogWidth = 200,
+  }) => into(registerUiPreferences).insertOnConflictUpdate(
+    RegisterUiPreferencesCompanion.insert(
+      id: const Value(1),
+      sellScreenLayout: Value(layout),
+      orderProductListWidth: Value(width),
+      catalogWidth: Value(catalogWidth),
+    ),
   );
 
   Future<RegisterInstallation?> installation() => (select(
@@ -332,6 +409,30 @@ class RegisterDatabase extends _$RegisterDatabase {
         : _withStoreActivity(profileId, snapshot, store);
   }
 
+  /// Keep the checkout directory current across this store's cached profiles.
+  Future<void> cacheCustomerChange(String businessId, String id, Json? row) =>
+      transaction(() async {
+        for (final cached in await select(profileSnapshots).get()) {
+          final snapshot = jsonObjectFromString(cached.payload);
+          final context = jsonObject(snapshot['context']);
+          if ((context['business'] as Map?)?['id'] != businessId) continue;
+          final rows = jsonRows(snapshot['customers']).toList();
+          final index = rows.indexWhere((item) => item['id'] == id);
+          if (index == -1 && row == null) continue;
+          if (row == null) {
+            rows.removeAt(index);
+          } else if (index == -1) {
+            rows.add(row);
+          } else {
+            rows[index] = row;
+          }
+          final payload = jsonEncode({...snapshot, 'customers': rows});
+          await (update(profileSnapshots)
+                ..where((item) => item.profileId.equals(cached.profileId)))
+              .write(ProfileSnapshotsCompanion(payload: Value(payload)));
+        }
+      });
+
   Future<Json> _withStoreActivity(
     String profileId,
     Json snapshot,
@@ -358,6 +459,7 @@ class RegisterDatabase extends _$RegisterDatabase {
       operating['profile'] ?? heldQuote?['profile'] ?? context['profile'],
     );
     final config = jsonObject(profile['config']);
+    final latestConfig = jsonObject(jsonObject(context['profile'])['config']);
     final day = config['working_day_enabled'] == true
         ? activity['working_day']
         : null;
@@ -382,6 +484,14 @@ class RegisterDatabase extends _$RegisterDatabase {
           ...profile,
           'config': {
             ...config,
+            // Browsing follows the latest profile while an open shift keeps
+            // its original checkout, tax, and payment settings.
+            for (final key in [
+              'catalog_mode',
+              'selected_ids',
+              'default_menu_id',
+            ])
+              if (latestConfig.containsKey(key)) key: latestConfig[key],
             if (shift != null) 'cashier_shift_enabled': true,
           },
         },
@@ -425,6 +535,33 @@ class RegisterDatabase extends _$RegisterDatabase {
   Future<StoreOperatingState?> storeOperatingState() => (select(
     storeOperatingStates,
   )..where((row) => row.id.equals(1))).getSingleOrNull();
+
+  Future<StoreOperatingEvent?> latestStoreShift(
+    String epoch,
+    String profileId,
+  ) =>
+      (select(storeOperatingEvents)
+            ..where(
+              (row) =>
+                  row.epoch.equals(epoch) &
+                  row.profileId.equals(profileId) &
+                  row.kind.isIn(['open_shift', 'close_shift', 'reopen_shift']),
+            )
+            ..orderBy([(row) => OrderingTerm.desc(row.sequence)])
+            ..limit(1))
+          .getSingleOrNull();
+
+  Future<StoreOperatingEvent?> storeShiftOpening(
+    String epoch,
+    String shiftId,
+  ) =>
+      (select(storeOperatingEvents)..where(
+            (row) =>
+                row.epoch.equals(epoch) &
+                row.resourceId.equals(shiftId) &
+                row.kind.equals('open_shift'),
+          ))
+          .getSingleOrNull();
 
   Future<StoreOperatingEvent?> nextStoreEvent() =>
       (select(storeOperatingEvents)
@@ -817,6 +954,78 @@ class RegisterDatabase extends _$RegisterDatabase {
           }))
           .go();
 
+  Future<List<String>> parkedTableIds(
+    String operatorId,
+    String profileId,
+  ) async {
+    final rows =
+        await (select(parkedTableDrafts)..where(
+              (row) =>
+                  row.operatorId.equals(operatorId) &
+                  row.profileId.equals(profileId),
+            ))
+            .get();
+    return [for (final row in rows) row.tableId];
+  }
+
+  Future<void> parkTableDraft(
+    String operatorId,
+    String profileId,
+    String tableId,
+  ) => transaction(() async {
+    final draft = await cartDraft(operatorId, profileId);
+    if (draft == null ||
+        draft.billId != null ||
+        jsonObject(jsonDecode(draft.payload))['table_id'] != tableId) {
+      throw const FormatException('CART_SAVE_FAILED');
+    }
+    await into(parkedTableDrafts).insert(
+      ParkedTableDraftsCompanion.insert(
+        operatorId: operatorId,
+        profileId: profileId,
+        tableId: tableId,
+        payload: draft.payload,
+      ),
+    );
+    await removeCartDraft(operatorId, profileId);
+  });
+
+  Future<void> restoreTableDraft(
+    String operatorId,
+    String profileId,
+    String tableId,
+  ) => transaction(() async {
+    final current = await cartDraft(operatorId, profileId);
+    if (current != null &&
+        (current.billId != null ||
+            jsonRows(jsonObject(jsonDecode(current.payload))['lines'])
+                .isNotEmpty)) {
+      throw const FormatException('CART_SAVE_FAILED');
+    }
+    final query = select(parkedTableDrafts)
+      ..where(
+        (row) =>
+            row.operatorId.equals(operatorId) &
+            row.profileId.equals(profileId) &
+            row.tableId.equals(tableId),
+      );
+    final draft = await query.getSingleOrNull();
+    if (draft == null) throw const FormatException('CART_SAVE_FAILED');
+    await saveCartDraft(
+      operatorId: operatorId,
+      profileId: profileId,
+      billId: null,
+      payload: draft.payload,
+    );
+    await (delete(parkedTableDrafts)..where(
+          (row) =>
+              row.operatorId.equals(operatorId) &
+              row.profileId.equals(profileId) &
+              row.tableId.equals(tableId),
+        ))
+        .go();
+  });
+
   Future<RegisterCommand?> savedCommand(String id) => (select(
     registerCommands,
   )..where((row) => row.id.equals(id))).getSingleOrNull();
@@ -828,6 +1037,13 @@ class RegisterDatabase extends _$RegisterDatabase {
   Future<TillCommand?> tillCommand(String operatorId) => (select(
     tillCommands,
   )..where((row) => row.operatorId.equals(operatorId))).getSingleOrNull();
+
+  Future<bool> hasPendingCloudShift() async =>
+      await (select(tillCommands)
+            ..where((row) => row.action.equals('cloud_shift'))
+            ..limit(1))
+          .getSingleOrNull() !=
+      null;
 
   Future<void> removeTillCommand(String commandId) => (delete(
     tillCommands,
@@ -957,6 +1173,29 @@ class RegisterDatabase extends _$RegisterDatabase {
   Future<void> discardHeldBill(String id, String profileId, int revision) =>
       _removeHeldBill(id, profileId, revision);
 
+  Future<void> recordDiscardedBill({
+    required String commandId,
+    required HeldBill bill,
+    required String operatorName,
+    required DateTime time,
+    required Json operating,
+  }) => transaction(() async {
+    await _removeHeldBill(bill.id, bill.profileId, bill.revision);
+    await into(discardedBills).insert(
+      DiscardedBillsCompanion.insert(
+        id: commandId,
+        billId: bill.id,
+        profileId: bill.profileId,
+        shiftId: Value(operating['shift_id'] as String?),
+        workingDayId: Value(operating['working_day_id'] as String?),
+        businessDate: operating['business_date'] as String,
+        operatorName: operatorName,
+        payload: bill.payload,
+        discardedAt: time.toUtc(),
+      ),
+    );
+  });
+
   Future<void> _removeHeldBill(
     String id,
     String profileId,
@@ -1044,6 +1283,91 @@ class RegisterDatabase extends _$RegisterDatabase {
           .toList(),
     );
   }
+
+  Stream<RegisterHistory> watchSalesHistory(RegisterHistoryScope scope) =>
+      customSelect(
+        'SELECT 1',
+        readsFrom: {localSales, saleOutbox, heldBills, discardedBills},
+      ).watch().asyncMap((_) => salesHistory(scope));
+
+  Future<RegisterHistory> salesHistory(
+    RegisterHistoryScope scope,
+  ) => transaction(() async {
+    final inProfile = localSales.profileId.equals(scope.profileId);
+    final field = scope.period.operatingField;
+    final quotedPeriod = localSales.request.jsonExtract<String>(
+      '\$.draft.expected_context.$field',
+    );
+    final inPeriod =
+        quotedPeriod.equals(scope.id) |
+        (quotedPeriod.isNull() &
+            localSales.settlement
+                .jsonExtract<String>('\$.$field')
+                .equals(scope.id));
+    final current = select(localSales).join([
+      innerJoin(saleOutbox, saleOutbox.saleId.equalsExp(localSales.id)),
+    ])..where(inProfile & inPeriod);
+    final rows = await current.get();
+    final originals = selectOnly(localSales)
+      ..addColumns([localSales.id])
+      ..where(inProfile & inPeriod);
+    final reversals =
+        selectOnly(localSales).join([
+            innerJoin(
+              saleOutbox,
+              saleOutbox.saleId.equalsExp(localSales.id),
+              useColumns: false,
+            ),
+          ])
+          ..addColumns([localSales.reversesSaleId, saleOutbox.status])
+          ..where(inProfile & localSales.reversesSaleId.isInQuery(originals));
+    final links = await reversals.get();
+    // An unfinished server draft is part of a local checkout, even if the
+    // checkout belongs to a previous period. It isn't a submitted order.
+    final draftId = saleOutbox.serverDraft.jsonExtract<String>(r'$.id');
+    final drafts =
+        selectOnly(saleOutbox).join([
+            innerJoin(
+              localSales,
+              localSales.id.equalsExp(saleOutbox.saleId),
+              useColumns: false,
+            ),
+          ])
+          ..addColumns([draftId])
+          ..where(
+            inProfile &
+                saleOutbox.status.equals('synced').not() &
+                draftId.isNotNull(),
+          );
+    final draftRows = await drafts.get();
+    final held = await (select(
+      heldBills,
+    )..where((row) => row.profileId.equals(scope.profileId))).get();
+    final discarded =
+        await (select(discardedBills)..where((row) {
+              final field = switch (scope.period) {
+                RegisterHistoryPeriod.shift => row.shiftId,
+                RegisterHistoryPeriod.workingDay => row.workingDayId,
+                RegisterHistoryPeriod.businessDate => row.businessDate,
+              };
+              return row.profileId.equals(scope.profileId) &
+                  field.equals(scope.id);
+            }))
+            .get();
+    return RegisterHistory(
+      sales: [
+        for (final row in rows)
+          (row.readTable(localSales), row.readTable(saleOutbox)),
+      ],
+      held: held,
+      discarded: discarded,
+      reversalStatuses: {
+        for (final row in links)
+          row.read(localSales.reversesSaleId)!: row.read(saleOutbox.status)!,
+      },
+      knownServerDraftIds: {for (final row in draftRows) row.read(draftId)!},
+    );
+  });
 
   Future<void> saveServerDraft(String saleId, Json draft) =>
       (update(saleOutbox)..where((row) => row.saleId.equals(saleId))).write(
@@ -1133,6 +1457,50 @@ class RegisterDatabase extends _$RegisterDatabase {
           ),
         );
   });
+}
+
+class RegisterHistory {
+  const RegisterHistory({
+    this.sales = const [],
+    this.held = const [],
+    this.discarded = const [],
+    this.reversalStatuses = const {},
+    this.knownServerDraftIds = const {},
+  });
+
+  final List<(LocalSale, SaleOutboxData)> sales;
+  final List<HeldBill> held;
+  final List<DiscardedBill> discarded;
+  final Map<String, String> reversalStatuses;
+  final Set<String> knownServerDraftIds;
+
+  factory RegisterHistory.fromJson(Json data) => RegisterHistory(
+    sales: jsonRows(data['sales'])
+        .map(
+          (row) => (
+            LocalSale.fromJson(jsonObject(row['sale'])),
+            SaleOutboxData.fromJson(jsonObject(row['sync'])),
+          ),
+        )
+        .toList(),
+    held: jsonRows(data['held']).map(HeldBill.fromJson).toList(),
+    discarded: jsonRows(data['discarded']).map(DiscardedBill.fromJson).toList(),
+    reversalStatuses: Map<String, String>.from(
+      data['reversal_statuses'] as Map,
+    ),
+    knownServerDraftIds: Set<String>.from(data['server_draft_ids'] as List),
+  );
+
+  Json toJson() => {
+    'sales': [
+      for (final (sale, job) in sales)
+        {'sale': sale.toJson(), 'sync': job.toJson()},
+    ],
+    'held': held.map((row) => row.toJson()).toList(),
+    'discarded': discarded.map((row) => row.toJson()).toList(),
+    'reversal_statuses': reversalStatuses,
+    'server_draft_ids': knownServerDraftIds.toList(),
+  };
 }
 
 extension StoreEventStatus on StoreOperatingEvent {

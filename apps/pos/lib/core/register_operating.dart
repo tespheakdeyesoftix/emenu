@@ -13,6 +13,7 @@ enum RegisterAction {
   closeDay,
   openShift,
   closeShift,
+  reopenShift,
   cashMovement;
 
   bool get consumesCart => this == hold || this == checkout || this == discard;
@@ -95,7 +96,9 @@ class RegisterOperating {
         }
         kind = 'open_day';
         resource = commandId;
-        payload = {};
+        payload = {
+          'base_currency': jsonObject(context['business'])['currency'],
+        };
         result = {
           'id': resource,
           'business_date': registerLocalDate(context, time),
@@ -103,6 +106,8 @@ class RegisterOperating {
           'timezone': store.timezone,
           'opened_at': _timestamp,
           'opened_by': actor.id,
+          'opened_by_name': actor.displayName,
+          'base_currency': payload['base_currency'],
         };
         activity['working_day'] = result;
       case RegisterAction.closeDay:
@@ -124,7 +129,12 @@ class RegisterOperating {
         }
         kind = 'close_day';
         payload = {};
-        result = {...day, 'closed_at': _timestamp, 'closed_by': actor.id};
+        result = {
+          ...day,
+          'closed_at': _timestamp,
+          'closed_by': actor.id,
+          'closed_by_name': actor.displayName,
+        };
         activity.remove('working_day');
       case RegisterAction.openShift:
         if (_config['cashier_shift_enabled'] != true) throw _disabled;
@@ -148,8 +158,8 @@ class RegisterOperating {
         final types = jsonRows(context['payment_types']);
         final counts = [
           for (final type in types)
-            for (final currency in (type['currencies'] as List))
-              _count(type, currency as String),
+            for (final currency in paymentCurrencies(type))
+              _count(type, currency),
         ];
         final opening = jsonRows(input['opening_cash']);
         if (opening.length > 40 ||
@@ -160,7 +170,13 @@ class RegisterOperating {
           final count = _floatCount(types, counts, row);
           count['expected_minor'] = _amount(row['amount_minor'], 0);
         }
-        payload = {'opening_cash': opening, 'payment_types': types};
+        final business = jsonObject(context['business']);
+        payload = {
+          'opening_cash': opening,
+          'payment_types': types,
+          'base_currency': business['currency'],
+          'exchange_rate': business['secondary_exchange_rate']?.toString(),
+        };
         result = {
           'id': resource,
           'profile_id': _profileId,
@@ -168,12 +184,77 @@ class RegisterOperating {
           'working_day_id': _day?['id'],
           'opened_at': _timestamp,
           'opened_by': actor.id,
+          'opened_by_name': actor.displayName,
+          'profile_name': _profile['name'],
+          'business_date':
+              _day?['business_date'] ?? registerLocalDate(context, time),
+          'base_currency': payload['base_currency'],
+          'exchange_rate': payload['exchange_rate'],
           'activity_revision': 1,
           'counts': counts,
         };
         _drawer['cashier_shift'] = result;
         _drawer['profile'] = _profile;
         _drawer['payment_types'] = types;
+      case RegisterAction.reopenShift:
+        requireRegisterManager(actor);
+        if ((context['capabilities'] as Map?)?['shift_management'] != true) {
+          throw const PosApiError(
+            409,
+            'SERVER_UPGRADE_REQUIRED',
+            'Refresh after the server is upgraded.',
+          );
+        }
+        final reason = (input['reason'] as String?)?.trim();
+        if (reason == null || reason.isEmpty || reason.length > 500) {
+          throw const FormatException('SHIFT_REOPEN_REASON');
+        }
+        final id = input['shift_id'];
+        final latest = await database.latestStoreShift(store.epoch, _profileId);
+        final closed = latest?.kind == 'close_shift'
+            ? await database.savedCommand(latest!.commandId)
+            : null;
+        final previous = closed == null
+            ? null
+            : jsonObjectFromString(closed.result);
+        if (_shift != null ||
+            _config['cashier_shift_enabled'] != true ||
+            latest?.resourceId != id ||
+            previous == null ||
+            previous['working_day_id'] != _day?['id'] ||
+            (_config['working_day_enabled'] == true && _day == null)) {
+          throw const PosApiError(
+            409,
+            'SHIFT_REOPEN_UNAVAILABLE',
+            'Only the latest eligible shift can be reopened.',
+          );
+        }
+        final opened = await database.storeShiftOpening(
+          store.epoch,
+          id as String,
+        );
+        if (opened == null) throw _changed;
+        final openedPayload = jsonObject(
+          jsonObjectFromString(opened.envelope)['payload'],
+        );
+        kind = 'reopen_shift';
+        resource = id;
+        payload = {'reason': reason};
+        result =
+            {
+              ...previous,
+              'activity_revision': (previous['activity_revision'] as int) + 1,
+            }..removeWhere(
+              (key, _) => const [
+                'closed_at',
+                'closed_by',
+                'closed_by_name',
+                'closing_counts',
+              ].contains(key),
+            );
+        _drawer['cashier_shift'] = result;
+        _drawer['profile'] = _profile;
+        _drawer['payment_types'] = openedPayload['payment_types'];
       case RegisterAction.cashMovement:
         final shift = _currentShift(input['shift_id']);
         final counts = jsonRows(shift['counts']);
@@ -184,10 +265,19 @@ class RegisterOperating {
         final amount = _amount(input['amount_minor'], 1);
         final movement = input['kind'];
         final reason = (input['reason'] as String?)?.trim();
+        final reasonCode = input['reason_code'];
         if ((movement != 'cash_in' && movement != 'cash_out') ||
             reason == null ||
             reason.isEmpty ||
-            reason.length > 500) {
+            reason.length > 500 ||
+            (reasonCode != null &&
+                !const {
+                  'add_change',
+                  'safe_drop',
+                  'petty_cash',
+                  'correction',
+                  'other',
+                }.contains(reasonCode))) {
           throw const FormatException('CASH_MOVEMENT_REASON');
         }
         count['expected_minor'] =
@@ -203,6 +293,7 @@ class RegisterOperating {
           'amount_minor': amount,
           'kind': movement,
           'reason': reason,
+          'reason_code': ?reasonCode,
         };
         result = {
           'id': resource,
@@ -246,6 +337,7 @@ class RegisterOperating {
           ...shift,
           'closed_at': _timestamp,
           'closed_by': actor.id,
+          'closed_by_name': actor.displayName,
           'closing_counts': closing
               .map(
                 (row) => {

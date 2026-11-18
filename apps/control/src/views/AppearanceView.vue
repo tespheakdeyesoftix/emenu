@@ -1,728 +1,606 @@
 <template>
   <div>
-    <PageHeader
-      :eyebrow="$t('pages.appearance.eyebrow')"
-      :title="$t('pages.appearance.title')"
-      :description="$t('pages.appearance.description')"
-    >
+    <PageHeader :title="$t('pages.appearance.title')">
       <div class="flex gap-2">
-        <button type="button" class="btn-soft" @click="resetDraft">
-          <RotateCcw :size="16" /> Reset
-        </button>
-        <button
+        <Button variant="subtle" size="lg" type="button" @click="resetDraft">
+          <template #prefix><RotateCcw :size="16" /></template> Reset
+        </Button>
+        <Button
+          variant="solid"
+          size="lg"
           type="button"
-          class="btn-primary"
           :disabled="saving || store.isReadOnly || !isValid"
           @click="publish"
         >
-          <LoaderCircle v-if="saving" :size="16" class="animate-spin" />
-          <Save v-else :size="16" />
+          <template #prefix
+            ><Spinner v-if="saving" />
+            <Save v-else :size="16"
+          /></template>
           {{ saving ? "Publishing…" : "Publish theme" }}
-        </button>
+        </Button>
       </div>
     </PageHeader>
 
-    <SettingsTabs
-      v-model="appearanceTab"
-      :tabs="appearanceTabs"
-      :label="$t('pages.appearance.tabs.label')"
-      id-prefix="appearance-settings"
-    />
-
-    <div class="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-      <div class="space-y-6">
-        <section
-          v-show="appearanceTab === 'style'"
-          id="appearance-settings-panel-style"
-          role="tabpanel"
-          aria-labelledby="appearance-settings-tab-style"
-          class="card p-5 sm:p-6"
+    <div class="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+      <div class="min-w-0 space-y-6">
+        <SettingsTabs
+          v-model="appearanceTab"
+          :tabs="appearanceTabs"
+          :label="$t('pages.appearance.tabs.label')"
         >
-          <div class="mb-5 flex items-start justify-between gap-4">
-            <div>
-              <h2 class="display m-0 text-xl font-extrabold">
-                Start with a style
-              </h2>
-              <p class="mb-0 mt-1 text-sm text-black/45">
-                Presets are fully editable after selection.
-              </p>
-            </div>
-            <span
-              class="rounded-full bg-cream px-3 py-1.5 text-xs font-bold capitalize"
-              >{{ draft.mode }}</span
-            >
-          </div>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <button
-              v-for="preset in menuThemePresets"
-              :key="preset.id"
-              type="button"
-              class="rounded-2xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md"
-              :class="
-                draft.preset === preset.id
-                  ? 'border-ink ring-2 ring-ink/10'
-                  : 'border-black/[.08]'
-              "
-              @click="selectPreset(preset.theme)"
-            >
-              <span
-                class="mb-3 flex h-14 overflow-hidden rounded-xl border border-black/[.06]"
-              >
-                <span
-                  class="w-1/3"
-                  :style="{ background: preset.theme.primaryColor }"
-                ></span>
-                <span
-                  class="w-1/3"
-                  :style="{ background: preset.theme.backgroundColor }"
-                ></span>
-                <span
-                  class="w-1/3"
-                  :style="{ background: preset.theme.surfaceColor }"
-                ></span>
-              </span>
-              <strong class="block text-sm">{{ preset.name }}</strong>
-              <span class="mt-1 block text-xs leading-5 text-black/45">{{
-                preset.description
-              }}</span>
-            </button>
-          </div>
-        </section>
-
-        <section
-          v-show="appearanceTab === 'typography'"
-          id="appearance-settings-panel-typography"
-          role="tabpanel"
-          aria-labelledby="appearance-settings-tab-typography"
-          class="card p-5 sm:p-6"
-        >
-          <h2 class="display m-0 text-xl font-extrabold">Menu typography</h2>
-          <p class="mb-5 mt-1 text-sm text-black/45">
-            Set the color and phone-base size for the menu's main text roles.
-            Larger screens scale automatically.
-          </p>
-          <div class="grid gap-4 sm:grid-cols-2">
-            <div
-              v-for="field in typographyFields"
-              :key="field.colorKey"
-              class="rounded-2xl border border-black/[.07] p-4"
-            >
-              <h3 class="m-0 text-sm font-extrabold">{{ field.label }}</h3>
-              <label class="mt-4 block">
-                <span class="label">Font color</span>
-                <div class="flex gap-2">
-                  <input
-                    v-model="draft[field.colorKey]"
-                    type="color"
-                    class="h-12 w-14 shrink-0 rounded-xl border border-black/10 bg-white p-1"
-                  />
-                  <input
-                    v-model="draft[field.colorKey]"
-                    class="input uppercase"
-                    maxlength="7"
-                  />
-                </div>
-              </label>
-              <label class="mt-4 block">
-                <span class="label"
-                  >Font size Â· {{ draft[field.sizeKey] }}px</span
-                >
-                <input
-                  v-model.number="draft[field.sizeKey]"
-                  type="range"
-                  :min="field.min"
-                  :max="field.max"
-                  step="1"
-                  class="w-full accent-black"
-                />
-              </label>
-              <p
-                v-if="hasLowTypographyContrast(field)"
-                class="mb-0 mt-3 text-xs font-bold leading-5 text-amber-700"
-              >
-                Low contrast on its usual background. Consider a lighter or
-                darker color.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section
-          v-show="appearanceTab === 'typography'"
-          class="card p-5 sm:p-6"
-        >
-          <h2 class="display m-0 text-xl font-extrabold">Menu prices</h2>
-          <p class="mb-5 mt-1 text-sm text-black/45">
-            Style the primary and converted prices independently.
-          </p>
-          <div class="grid gap-4 sm:grid-cols-2">
-            <div class="rounded-2xl border border-black/[.07] p-4">
-              <h3 class="m-0 text-sm font-extrabold">Primary currency</h3>
-              <label class="mt-4 block">
-                <span class="label">Price color</span>
-                <div class="flex gap-2">
-                  <input
-                    v-model="draft.primaryPriceColor"
-                    type="color"
-                    class="h-12 w-14 shrink-0 rounded-xl border border-black/10 bg-white p-1"
-                  />
-                  <input
-                    v-model="draft.primaryPriceColor"
-                    class="input uppercase"
-                    maxlength="7"
-                  />
-                </div>
-              </label>
-              <label class="mt-4 block">
-                <span class="label"
-                  >Font size · {{ draft.primaryPriceFontSize }}px</span
-                >
-                <input
-                  v-model.number="draft.primaryPriceFontSize"
-                  type="range"
-                  min="10"
-                  max="32"
-                  step="1"
-                  class="w-full accent-black"
-                />
-              </label>
-            </div>
-
-            <div class="rounded-2xl border border-black/[.07] p-4">
-              <h3 class="m-0 text-sm font-extrabold">Secondary currency</h3>
-              <label class="mt-4 block">
-                <span class="label">Price color</span>
-                <div class="flex gap-2">
-                  <input
-                    v-model="draft.secondaryPriceColor"
-                    type="color"
-                    class="h-12 w-14 shrink-0 rounded-xl border border-black/10 bg-white p-1"
-                  />
-                  <input
-                    v-model="draft.secondaryPriceColor"
-                    class="input uppercase"
-                    maxlength="7"
-                  />
-                </div>
-              </label>
-              <label class="mt-4 block">
-                <span class="label"
-                  >Font size · {{ draft.secondaryPriceFontSize }}px</span
-                >
-                <input
-                  v-model.number="draft.secondaryPriceFontSize"
-                  type="range"
-                  min="8"
-                  max="24"
-                  step="1"
-                  class="w-full accent-black"
-                />
-              </label>
-            </div>
-          </div>
-        </section>
-
-        <section v-show="appearanceTab === 'style'" class="card p-5 sm:p-6">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 class="display m-0 text-xl font-extrabold">
-                Page background
-              </h2>
-              <p class="mb-0 mt-1 text-sm text-black/45">
-                Applied behind every page of your QR menu.
-              </p>
-            </div>
-            <button
-              type="button"
-              class="btn-soft !px-3 !py-2 text-xs"
-              @click="restoreBackground"
-            >
-              Restore default
-            </button>
-          </div>
-
-          <div class="mt-5 grid grid-cols-3 rounded-2xl bg-cream p-1">
-            <button
-              v-for="option in backgroundTypeOptions"
-              :key="option.value"
-              type="button"
-              class="rounded-xl px-3 py-2.5 text-sm font-bold transition"
-              :class="
-                draft.backgroundType === option.value
-                  ? 'bg-white text-ink shadow-sm'
-                  : 'text-black/45'
-              "
-              :aria-pressed="draft.backgroundType === option.value"
-              @click="setBackgroundType(option.value)"
-            >
-              {{ option.label }}
-            </button>
-          </div>
-
-          <div v-if="draft.backgroundType === 'color'" class="mt-5">
-            <p
-              class="m-0 rounded-2xl bg-cream p-4 text-sm leading-6 text-black/55"
-            >
-              The Page background color from your brand palette will fill the
-              menu.
-            </p>
-          </div>
-
-          <div v-else-if="draft.backgroundType === 'pattern'" class="mt-5">
-            <div
-              v-for="group in patternGroups"
-              :key="group.id"
-              class="mt-5 first:mt-0"
-            >
-              <h3 class="mb-3 mt-0 text-sm font-extrabold">
-                {{ group.label }}
-              </h3>
-              <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <button
-                  v-for="pattern in group.patterns"
-                  :key="pattern.id"
-                  type="button"
-                  class="overflow-hidden rounded-2xl border p-2 text-left transition"
-                  :class="
-                    draft.backgroundPattern === pattern.id
-                      ? 'border-ink ring-2 ring-ink/10'
-                      : 'border-black/[.08]'
-                  "
-                  :aria-pressed="draft.backgroundPattern === pattern.id"
-                  @click="draft.backgroundPattern = pattern.id"
-                >
-                  <span
-                    class="pattern-swatch relative block h-20 overflow-hidden rounded-xl border border-black/[.06]"
-                    :data-renderer="pattern.assetUrl ? 'cultural' : 'css'"
-                    :style="patternPreviewStyle(pattern)"
-                  ></span>
-                  <span class="mt-2 block px-1 text-xs font-bold">
-                    {{ pattern.name }}
-                  </span>
-                  <span
-                    v-if="pattern.nameKm"
-                    class="mt-0.5 block truncate px-1 text-[11px] text-black/45"
-                  >
-                    {{ pattern.nameKm }}
-                  </span>
-                </button>
-              </div>
-            </div>
-            <div class="mt-5 grid gap-5 sm:grid-cols-2">
-              <label>
-                <span class="label">Pattern color</span>
-                <div class="flex gap-2">
-                  <input
-                    v-model="draft.backgroundPatternColor"
-                    type="color"
-                    class="h-12 w-14 shrink-0 rounded-xl border border-black/10 bg-white p-1"
-                  />
-                  <input
-                    v-model="draft.backgroundPatternColor"
-                    class="input uppercase"
-                    maxlength="7"
-                  />
-                </div>
-              </label>
-              <label>
-                <span class="label"
-                  >Pattern intensity ·
-                  {{ draft.backgroundPatternOpacity }}%</span
-                >
-                <input
-                  v-model.number="draft.backgroundPatternOpacity"
-                  type="range"
-                  min="0"
-                  max="40"
-                  class="mt-2 w-full accent-black"
-                />
-              </label>
-            </div>
-          </div>
-
-          <div v-else class="mt-5 space-y-5">
-            <ImageUploader
-              v-model="backgroundImages"
-              label="Custom menu background"
-              profile="background"
-              preview="wide"
-              :max="1"
-            />
-            <p
-              v-if="!draft.backgroundImageMediaId"
-              class="m-0 rounded-2xl bg-amber-50 p-4 text-sm font-bold text-amber-900"
-            >
-              Upload an image before publishing this background.
-            </p>
-            <div class="grid gap-5 sm:grid-cols-2">
-              <ChoiceField
-                v-model="draft.backgroundImageFit"
-                label="Image layout"
-                :options="backgroundFitOptions"
-              />
-              <label>
-                <span class="label"
-                  >Overlay strength ·
-                  {{ draft.backgroundOverlayOpacity }}%</span
-                >
-                <input
-                  v-model.number="draft.backgroundOverlayOpacity"
-                  type="range"
-                  min="0"
-                  max="90"
-                  class="mt-2 w-full accent-black"
-                />
-              </label>
-              <label>
-                <span class="label">Overlay color</span>
-                <div class="flex gap-2">
-                  <input
-                    v-model="draft.backgroundOverlayColor"
-                    type="color"
-                    class="h-12 w-14 shrink-0 rounded-xl border border-black/10 bg-white p-1"
-                  />
-                  <input
-                    v-model="draft.backgroundOverlayColor"
-                    class="input uppercase"
-                    maxlength="7"
-                  />
-                </div>
-              </label>
-              <div
-                v-if="draft.backgroundImageFit === 'cover'"
-                class="space-y-4"
-              >
-                <label class="block">
-                  <span class="label"
-                    >Horizontal focus ·
-                    {{ draft.backgroundImagePositionX }}%</span
-                  >
-                  <input
-                    v-model.number="draft.backgroundImagePositionX"
-                    type="range"
-                    min="0"
-                    max="100"
-                    class="w-full accent-black"
-                  />
-                </label>
-                <label class="block">
-                  <span class="label"
-                    >Vertical focus ·
-                    {{ draft.backgroundImagePositionY }}%</span
-                  >
-                  <input
-                    v-model.number="draft.backgroundImagePositionY"
-                    type="range"
-                    min="0"
-                    max="100"
-                    class="w-full accent-black"
-                  />
-                </label>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section v-show="appearanceTab === 'style'" class="card p-5 sm:p-6">
-          <h2 class="display m-0 text-xl font-extrabold">
-            {{ t("pages.appearance.productPlaceholder.title") }}
-          </h2>
-          <p class="mb-5 mt-1 text-sm text-black/45">
-            {{ t("pages.appearance.productPlaceholder.help") }}
-          </p>
-          <ImageUploader
-            v-model="productPlaceholderImages"
-            :label="t('pages.appearance.productPlaceholder.upload')"
-            :max="1"
-          />
-        </section>
-
-        <section v-show="appearanceTab === 'style'" class="card p-5 sm:p-6">
-          <h2 class="display m-0 text-xl font-extrabold">Brand palette</h2>
-          <p class="mb-5 mt-1 text-sm text-black/45">
-            Use solid colors so text stays readable on every device.
-          </p>
-          <div class="grid gap-4 sm:grid-cols-2">
-            <label v-for="field in colorFields" :key="field.key">
-              <span class="label">{{ field.label }}</span>
-              <div class="flex gap-2">
-                <input
-                  v-model="draft[field.key]"
-                  type="color"
-                  class="h-12 w-14 shrink-0 rounded-xl border border-black/10 bg-white p-1"
-                />
-                <input
-                  v-model="draft[field.key]"
-                  class="input uppercase"
-                  maxlength="7"
-                />
-              </div>
-            </label>
-          </div>
-          <div
-            class="mt-5 flex items-center gap-3 rounded-2xl p-4"
-            :class="
-              contrastOk
-                ? 'bg-emerald-50 text-emerald-900'
-                : 'bg-amber-50 text-amber-900'
-            "
+          <TabPanel
+            :force-mount="true"
+            value="style"
+            class="space-y-6 data-[state=inactive]:hidden"
           >
-            <component
-              :is="contrastOk ? CircleCheck : TriangleAlert"
-              :size="19"
-            />
-            <p class="m-0 text-sm font-bold">
-              Primary button contrast: {{ contrastRatio.toFixed(1) }}:1 ·
-              {{
-                contrastOk
-                  ? "Accessible"
-                  : "Choose a darker or lighter primary color"
-              }}
-            </p>
-          </div>
-        </section>
-
-        <section
-          v-show="appearanceTab === 'layout'"
-          id="appearance-settings-panel-layout"
-          role="tabpanel"
-          aria-labelledby="appearance-settings-tab-layout"
-          class="card p-5 sm:p-6"
-        >
-          <h2 class="display m-0 text-xl font-extrabold">
-            Typography and layout
-          </h2>
-          <div class="mt-5 grid gap-5 sm:grid-cols-2">
-            <label
-              ><span class="label">Heading font</span
-              ><select v-model="draft.headingFont" class="input">
-                <option v-for="font in fonts" :key="font">{{ font }}</option>
-              </select></label
-            >
-            <label
-              ><span class="label">Body font</span
-              ><select v-model="draft.bodyFont" class="input">
-                <option v-for="font in fonts" :key="font">{{ font }}</option>
-              </select></label
-            >
-            <label class="block">
-              <span class="label">Khmer font</span>
-              <select v-model="draft.khmerFont" class="input">
-                <option v-for="font in menuKhmerFonts" :key="font">{{ font }}</option>
-              </select>
-            </label>
-            <ChoiceField
-              v-model="draft.cardStyle"
-              label="Cards"
-              :options="cardOptions"
-            />
-            <ChoiceField
-              v-model="draft.cornerStyle"
-              label="Corners"
-              :options="cornerOptions"
-            />
-            <ChoiceField
-              v-model="draft.imageRatio"
-              label="Product images"
-              :options="imageOptions"
-            />
-            <ChoiceField
-              v-model="draft.defaultProductView"
-              label="Default view"
-              :options="viewOptions"
-            />
-            <ChoiceField
-              v-model="draft.headerStyle"
-              label="Header"
-              :options="headerOptions"
-            />
-            <ChoiceField
-              v-model="draft.categoryStyle"
-              label="Categories"
-              :options="categoryOptions"
-            />
-            <div
-              class="rounded-2xl border border-black/[.07] p-4 sm:col-span-2"
-            >
-              <div class="flex items-start justify-between gap-4">
+            <section class="card p-5 sm:p-6">
+              <div class="mb-5 flex items-start justify-between gap-4">
                 <div>
-                  <p class="label !mb-1">
-                    {{ $t("pages.appearance.cards.itemCode") }}
-                  </p>
-                  <p class="m-0 text-xs leading-5 text-black/45">
-                    {{ $t("pages.appearance.cards.itemCodeHelp") }}
+                  <h2 class="display m-0 text-xl font-extrabold">
+                    Start with a style
+                  </h2>
+                  <p class="mb-0 mt-1 text-sm text-black/45">
+                    Presets are fully editable after selection.
                   </p>
                 </div>
-                <label class="inline-flex cursor-pointer items-center gap-2">
-                  <input
-                    v-model="draft.showItemCode"
-                    type="checkbox"
-                    class="size-4 accent-black"
-                  />
-                  <span class="text-sm font-semibold">{{
-                    $t("pages.appearance.cards.show")
-                  }}</span>
-                </label>
+                <Badge class="capitalize">{{ draft.mode }}</Badge>
               </div>
-              <div
-                class="mt-4 grid gap-4 border-t border-black/[.06] pt-4 sm:grid-cols-2"
-                :class="!draft.showItemCode ? 'opacity-45' : ''"
-              >
-                <label>
-                  <span class="label">{{
-                    $t("pages.appearance.cards.itemCodeColor")
-                  }}</span>
-                  <div class="flex gap-2">
-                    <input
-                      v-model="draft.itemCodeColor"
-                      type="color"
-                      class="h-12 w-14 shrink-0 rounded-xl border border-black/10 bg-white p-1 disabled:cursor-not-allowed"
-                      :disabled="!draft.showItemCode"
-                    />
-                    <input
-                      v-model="draft.itemCodeColor"
-                      class="input uppercase disabled:cursor-not-allowed"
-                      maxlength="7"
-                      :disabled="!draft.showItemCode"
-                    />
-                  </div>
-                </label>
-                <label>
-                  <span class="label">
-                    {{ $t("pages.appearance.cards.itemCodeSize") }} ·
-                    {{ draft.itemCodeFontSize }}px
-                  </span>
-                  <input
-                    v-model.number="draft.itemCodeFontSize"
-                    type="range"
-                    min="8"
-                    max="18"
-                    step="1"
-                    class="w-full accent-black disabled:cursor-not-allowed"
-                    :disabled="!draft.showItemCode"
-                  />
-                </label>
-                <p
-                  v-if="
-                    draft.showItemCode &&
-                    hasLowTypographyContrast(itemCodeTypographyField)
-                  "
-                  class="mb-0 text-xs font-bold leading-5 text-amber-700 sm:col-span-2"
+              <div class="grid gap-3 sm:grid-cols-2">
+                <Button
+                  v-for="preset in menuThemePresets"
+                  :key="preset.id"
+                  type="button"
+                  class="admin-action-card"
+                  size="lg"
+                  :variant="draft.preset === preset.id ? 'subtle' : 'outline'"
+                  :class="{
+                    '!border-outline-gray-4': draft.preset === preset.id,
+                  }"
+                  :aria-pressed="draft.preset === preset.id"
+                  @click="selectPreset(preset.theme)"
                 >
-                  {{ $t("pages.appearance.cards.itemCodeContrast") }}
+                  <span
+                    class="mb-3 flex h-14 overflow-hidden rounded-xl border border-black/[.06]"
+                  >
+                    <span
+                      class="w-1/3"
+                      :style="{ background: preset.theme.primaryColor }"
+                    ></span>
+                    <span
+                      class="w-1/3"
+                      :style="{ background: preset.theme.backgroundColor }"
+                    ></span>
+                    <span
+                      class="w-1/3"
+                      :style="{ background: preset.theme.surfaceColor }"
+                    ></span>
+                  </span>
+                  <strong class="block text-sm">{{ preset.name }}</strong>
+                  <span class="mt-1 block text-xs leading-5 text-black/45">{{
+                    preset.description
+                  }}</span>
+                </Button>
+              </div>
+            </section>
+
+            <section class="card p-5 sm:p-6">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 class="display m-0 text-xl font-extrabold">
+                    Page background
+                  </h2>
+                  <p class="mb-0 mt-1 text-sm text-black/45">
+                    Applied behind every page of your QR menu.
+                  </p>
+                </div>
+                <Button
+                  variant="subtle"
+                  size="lg"
+                  type="button"
+                  class="!px-3 !py-2 text-xs"
+                  @click="restoreBackground"
+                >
+                  Restore default
+                </Button>
+              </div>
+
+              <TabButtons
+                class="mt-5"
+                :model-value="draft.backgroundType"
+                :options="backgroundTypeOptions"
+                aria-label="Background type"
+                variant="subtle"
+                fluid
+                @update:model-value="selectBackgroundType"
+              />
+
+              <div v-if="draft.backgroundType === 'color'" class="mt-5">
+                <p
+                  class="m-0 rounded-2xl bg-cream p-4 text-sm leading-6 text-black/55"
+                >
+                  The Page background color from your brand palette will fill
+                  the menu.
                 </p>
               </div>
-            </div>
-            <div
-              class="rounded-2xl border border-black/[.07] p-4 sm:col-span-2"
-            >
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <p class="label !mb-1">
-                    {{ $t("pages.appearance.bottomNav.title") }}
-                  </p>
-                  <p class="m-0 text-xs leading-5 text-black/45">
-                    {{ $t("pages.appearance.bottomNav.help") }}
-                  </p>
-                </div>
-                <label class="inline-flex cursor-pointer items-center gap-2">
-                  <input
-                    v-model="draft.showBottomNav"
-                    type="checkbox"
-                    class="size-4 accent-black"
-                  />
-                  <span class="text-sm font-semibold">{{
-                    $t("pages.appearance.cards.show")
-                  }}</span>
-                </label>
-              </div>
-              <label
-                class="mt-4 flex items-start justify-between gap-4 rounded-xl bg-cream p-3"
-                :class="
-                  !draft.showBottomNav ? 'cursor-not-allowed opacity-50' : ''
-                "
-              >
-                <span>
-                  <strong class="block text-sm">{{
-                    $t("pages.appearance.bottomNav.showSearch")
-                  }}</strong>
-                  <span class="mt-1 block text-xs leading-5 text-black/45">{{
-                    $t("pages.appearance.bottomNav.showSearchHelp")
-                  }}</span>
-                </span>
-                <input
-                  v-model="draft.showSearchNav"
-                  type="checkbox"
-                  class="mt-0.5 size-4 shrink-0 accent-black"
-                  :disabled="!draft.showBottomNav"
-                />
-              </label>
-              <div class="mt-4 grid gap-2 sm:grid-cols-2">
-                <button
-                  v-for="option in bottomNavOptions"
-                  :key="option.value"
-                  type="button"
-                  class="rounded-xl border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-40"
-                  :class="
-                    draft.bottomNavStyle === option.value
-                      ? 'border-ink bg-cream ring-2 ring-ink/10'
-                      : 'border-black/[.08] hover:bg-cream'
-                  "
-                  :disabled="!draft.showBottomNav"
-                  @click="draft.bottomNavStyle = option.value"
+
+              <div v-else-if="draft.backgroundType === 'pattern'" class="mt-5">
+                <div
+                  v-for="group in patternGroups"
+                  :key="group.id"
+                  class="mt-5 first:mt-0"
                 >
-                  <strong class="block text-sm">{{ option.label }}</strong>
-                  <span class="mt-1 block text-xs leading-5 text-black/45">{{
-                    option.description
-                  }}</span>
-                </button>
+                  <h3 class="mb-3 mt-0 text-sm font-extrabold">
+                    {{ group.label }}
+                  </h3>
+                  <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <Button
+                      v-for="pattern in group.patterns"
+                      :key="pattern.id"
+                      type="button"
+                      class="admin-action-card"
+                      size="lg"
+                      :variant="
+                        draft.backgroundPattern === pattern.id
+                          ? 'subtle'
+                          : 'outline'
+                      "
+                      :class="{
+                        '!border-outline-gray-4':
+                          draft.backgroundPattern === pattern.id,
+                      }"
+                      :aria-pressed="draft.backgroundPattern === pattern.id"
+                      @click="draft.backgroundPattern = pattern.id"
+                    >
+                      <span
+                        class="pattern-swatch relative block h-20 overflow-hidden rounded-xl border border-black/[.06]"
+                        :data-renderer="pattern.assetUrl ? 'cultural' : 'css'"
+                        :style="patternPreviewStyle(pattern)"
+                      ></span>
+                      <span class="mt-2 block px-1 text-xs font-bold">
+                        {{ pattern.name }}
+                      </span>
+                      <span
+                        v-if="pattern.nameKm"
+                        class="mt-0.5 block truncate px-1 text-[11px] text-black/45"
+                      >
+                        {{ pattern.nameKm }}
+                      </span>
+                    </Button>
+                  </div>
+                </div>
+                <div class="mt-5 grid gap-5 sm:grid-cols-2">
+                  <ColorField
+                    label="Pattern color"
+                    v-model="draft.backgroundPatternColor"
+                  />
+                  <RangeField
+                    label="Pattern intensity"
+                    v-model="draft.backgroundPatternOpacity"
+                    :min="0"
+                    :max="40"
+                    suffix="%"
+                  />
+                </div>
               </div>
-              <div class="mt-4 grid gap-4 sm:grid-cols-3">
-                <label v-for="field in bottomNavColorFields" :key="field.key">
-                  <span class="label">{{ field.label }}</span>
-                  <div class="flex gap-2">
-                    <input
-                      v-model="draft[field.key]"
-                      type="color"
-                      class="h-12 w-12 shrink-0 rounded-xl border border-black/10 bg-white p-1 disabled:cursor-not-allowed disabled:opacity-40"
-                      :disabled="!draft.showBottomNav"
+
+              <div v-else class="mt-5 space-y-5">
+                <ImageUploader
+                  v-model="backgroundImages"
+                  label="Custom menu background"
+                  profile="background"
+                  preview="wide"
+                  :max="1"
+                />
+                <p
+                  v-if="!draft.backgroundImageMediaId"
+                  class="m-0 rounded-2xl bg-amber-50 p-4 text-sm font-bold text-amber-900"
+                >
+                  Upload an image before publishing this background.
+                </p>
+                <div class="grid gap-5 sm:grid-cols-2">
+                  <ChoiceField
+                    v-model="draft.backgroundImageFit"
+                    label="Image layout"
+                    :options="backgroundFitOptions"
+                  />
+                  <RangeField
+                    label="Overlay strength"
+                    v-model="draft.backgroundOverlayOpacity"
+                    :min="0"
+                    :max="90"
+                    suffix="%"
+                  />
+                  <ColorField
+                    label="Overlay color"
+                    v-model="draft.backgroundOverlayColor"
+                  />
+                  <div
+                    v-if="draft.backgroundImageFit === 'cover'"
+                    class="space-y-4"
+                  >
+                    <RangeField
+                      label="Horizontal focus"
+                      v-model="draft.backgroundImagePositionX"
+                      :min="0"
+                      :max="100"
+                      class="block"
+                      suffix="%"
                     />
-                    <input
-                      v-model="draft[field.key]"
-                      class="input uppercase disabled:cursor-not-allowed disabled:opacity-40"
-                      maxlength="7"
-                      :disabled="!draft.showBottomNav"
+                    <RangeField
+                      label="Vertical focus"
+                      v-model="draft.backgroundImagePositionY"
+                      :min="0"
+                      :max="100"
+                      class="block"
+                      suffix="%"
                     />
                   </div>
-                </label>
-                <label class="sm:col-span-3">
-                  <span class="label"
-                    >Label font size · {{ draft.bottomNavFontSize }}px</span
+                </div>
+              </div>
+            </section>
+
+            <section class="card p-5 sm:p-6">
+              <h2 class="display m-0 text-xl font-extrabold">
+                {{ t("pages.appearance.productPlaceholder.title") }}
+              </h2>
+              <p class="mb-5 mt-1 text-sm text-black/45">
+                {{ t("pages.appearance.productPlaceholder.help") }}
+              </p>
+              <ImageUploader
+                v-model="productPlaceholderImages"
+                :label="t('pages.appearance.productPlaceholder.upload')"
+                :max="1"
+              />
+            </section>
+
+            <section class="card p-5 sm:p-6">
+              <h2 class="display m-0 text-xl font-extrabold">Brand palette</h2>
+              <p class="mb-5 mt-1 text-sm text-black/45">
+                Use solid colors so text stays readable on every device.
+              </p>
+              <div class="grid gap-4 sm:grid-cols-2">
+                <ColorField
+                  v-for="field in colorFields"
+                  :key="field.key"
+                  :label="field.label"
+                  v-model="draft[field.key]"
+                />
+              </div>
+              <div
+                class="mt-5 flex items-center gap-3 rounded-2xl p-4"
+                :class="
+                  contrastOk
+                    ? 'bg-emerald-50 text-emerald-900'
+                    : 'bg-amber-50 text-amber-900'
+                "
+              >
+                <component
+                  :is="contrastOk ? CircleCheck : TriangleAlert"
+                  :size="19"
+                />
+                <p class="m-0 text-sm font-bold">
+                  Primary button contrast: {{ contrastRatio.toFixed(1) }}:1 ·
+                  {{
+                    contrastOk
+                      ? "Accessible"
+                      : "Choose a darker or lighter primary color"
+                  }}
+                </p>
+              </div>
+            </section>
+          </TabPanel>
+
+          <TabPanel
+            :force-mount="true"
+            value="typography"
+            class="space-y-6 data-[state=inactive]:hidden"
+          >
+            <section class="card p-5 sm:p-6">
+              <h2 class="display m-0 text-xl font-extrabold">
+                Menu typography
+              </h2>
+              <p class="mb-5 mt-1 text-sm text-black/45">
+                Set the color and phone-base size for the menu's main text
+                roles. Larger screens scale automatically.
+              </p>
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div
+                  v-for="field in typographyFields"
+                  :key="field.colorKey"
+                  class="rounded-2xl border border-black/[.07] p-4"
+                >
+                  <h3 class="m-0 text-sm font-extrabold">{{ field.label }}</h3>
+                  <ColorField
+                    class="mt-4 block"
+                    label="Font color"
+                    v-model="draft[field.colorKey]"
+                  />
+                  <RangeField
+                    label="Font size"
+                    v-model="draft[field.sizeKey]"
+                    :min="field.min"
+                    :max="field.max"
+                    :step="1"
+                    class="mt-4 block"
+                    suffix="px"
+                  />
+                  <p
+                    v-if="hasLowTypographyContrast(field)"
+                    class="mb-0 mt-3 text-xs font-bold leading-5 text-amber-700"
                   >
-                  <input
-                    v-model.number="draft.bottomNavFontSize"
-                    type="range"
-                    min="10"
-                    max="18"
-                    step="1"
-                    class="w-full accent-black disabled:cursor-not-allowed disabled:opacity-40"
+                    Low contrast on its usual background. Consider a lighter or
+                    darker color.
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <section class="card p-5 sm:p-6">
+              <h2 class="display m-0 text-xl font-extrabold">Menu prices</h2>
+              <p class="mb-5 mt-1 text-sm text-black/45">
+                Style the primary and converted prices independently.
+              </p>
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div class="rounded-2xl border border-black/[.07] p-4">
+                  <h3 class="m-0 text-sm font-extrabold">Primary currency</h3>
+                  <ColorField
+                    class="mt-4 block"
+                    label="Price color"
+                    v-model="draft.primaryPriceColor"
+                  />
+                  <RangeField
+                    label="Font size"
+                    v-model="draft.primaryPriceFontSize"
+                    :min="10"
+                    :max="32"
+                    :step="1"
+                    class="mt-4 block"
+                    suffix="px"
+                  />
+                </div>
+
+                <div class="rounded-2xl border border-black/[.07] p-4">
+                  <h3 class="m-0 text-sm font-extrabold">Secondary currency</h3>
+                  <ColorField
+                    class="mt-4 block"
+                    label="Price color"
+                    v-model="draft.secondaryPriceColor"
+                  />
+                  <RangeField
+                    label="Font size"
+                    v-model="draft.secondaryPriceFontSize"
+                    :min="8"
+                    :max="24"
+                    :step="1"
+                    class="mt-4 block"
+                    suffix="px"
+                  />
+                </div>
+              </div>
+            </section>
+          </TabPanel>
+
+          <TabPanel
+            as="section"
+            :force-mount="true"
+            value="layout"
+            class="data-[state=inactive]:hidden card p-5 sm:p-6"
+          >
+            <h2 class="display m-0 text-xl font-extrabold">
+              Typography and layout
+            </h2>
+            <div class="mt-5 grid gap-5 sm:grid-cols-2">
+              <label
+                ><span class="label">Heading font</span
+                ><Select
+                  size="lg"
+                  variant="outline"
+                  v-model="draft.headingFont"
+                  :options="[...fonts]"
+              /></label>
+              <label
+                ><span class="label">Body font</span
+                ><Select
+                  size="lg"
+                  variant="outline"
+                  v-model="draft.bodyFont"
+                  :options="[...fonts]"
+              /></label>
+              <label class="block"
+                ><span class="label">Khmer font</span>
+                <Select
+                  size="lg"
+                  variant="outline"
+                  v-model="draft.khmerFont"
+                  :options="[...menuKhmerFonts]"
+                />
+              </label>
+              <ChoiceField
+                v-model="draft.cardStyle"
+                label="Cards"
+                :options="cardOptions"
+              />
+              <ChoiceField
+                v-model="draft.cornerStyle"
+                label="Corners"
+                :options="cornerOptions"
+              />
+              <ChoiceField
+                v-model="draft.imageRatio"
+                label="Product images"
+                :options="imageOptions"
+              />
+              <ChoiceField
+                v-model="draft.defaultProductView"
+                label="Default view"
+                :options="viewOptions"
+              />
+              <ChoiceField
+                v-model="draft.headerStyle"
+                label="Header"
+                :options="headerOptions"
+              />
+              <ChoiceField
+                v-model="draft.categoryStyle"
+                label="Categories"
+                :options="categoryOptions"
+              />
+              <div
+                class="rounded-2xl border border-black/[.07] p-4 sm:col-span-2"
+              >
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <p class="label !mb-1">
+                      {{ $t("pages.appearance.cards.itemCode") }}
+                    </p>
+                    <p class="m-0 text-xs leading-5 text-black/45">
+                      {{ $t("pages.appearance.cards.itemCodeHelp") }}
+                    </p>
+                  </div>
+                  <label class="inline-flex cursor-pointer items-center gap-2">
+                    <Checkbox
+                      v-model="draft.showItemCode"
+                      type="checkbox"
+                      class="size-4 accent-black"
+                    />
+                    <span class="text-sm font-semibold">{{
+                      $t("pages.appearance.cards.show")
+                    }}</span>
+                  </label>
+                </div>
+                <div
+                  class="mt-4 grid gap-4 border-t border-black/[.06] pt-4 sm:grid-cols-2"
+                  :class="!draft.showItemCode ? 'opacity-45' : ''"
+                >
+                  <ColorField
+                    :label="$t('pages.appearance.cards.itemCodeColor')"
+                    v-model="draft.itemCodeColor"
+                    :disabled="!draft.showItemCode"
+                  />
+                  <RangeField
+                    :label="$t('pages.appearance.cards.itemCodeSize')"
+                    v-model="draft.itemCodeFontSize"
+                    :min="8"
+                    :max="18"
+                    :step="1"
+                    :disabled="!draft.showItemCode"
+                    suffix="px"
+                  />
+                  <p
+                    v-if="
+                      draft.showItemCode &&
+                      hasLowTypographyContrast(itemCodeTypographyField)
+                    "
+                    class="mb-0 text-xs font-bold leading-5 text-amber-700 sm:col-span-2"
+                  >
+                    {{ $t("pages.appearance.cards.itemCodeContrast") }}
+                  </p>
+                </div>
+              </div>
+              <div
+                class="rounded-2xl border border-black/[.07] p-4 sm:col-span-2"
+              >
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <p class="label !mb-1">
+                      {{ $t("pages.appearance.bottomNav.title") }}
+                    </p>
+                    <p class="m-0 text-xs leading-5 text-black/45">
+                      {{ $t("pages.appearance.bottomNav.help") }}
+                    </p>
+                  </div>
+                  <label class="inline-flex cursor-pointer items-center gap-2">
+                    <Checkbox
+                      v-model="draft.showBottomNav"
+                      type="checkbox"
+                      class="size-4 accent-black"
+                    />
+                    <span class="text-sm font-semibold">{{
+                      $t("pages.appearance.cards.show")
+                    }}</span>
+                  </label>
+                </div>
+                <label
+                  class="mt-4 flex items-start justify-between gap-4 rounded-xl bg-cream p-3"
+                  :class="
+                    !draft.showBottomNav ? 'cursor-not-allowed opacity-50' : ''
+                  "
+                >
+                  <span>
+                    <strong class="block text-sm">{{
+                      $t("pages.appearance.bottomNav.showSearch")
+                    }}</strong>
+                    <span class="mt-1 block text-xs leading-5 text-black/45">{{
+                      $t("pages.appearance.bottomNav.showSearchHelp")
+                    }}</span>
+                  </span>
+                  <Checkbox
+                    v-model="draft.showSearchNav"
+                    type="checkbox"
+                    class="mt-0.5 size-4 shrink-0 accent-black"
                     :disabled="!draft.showBottomNav"
                   />
                 </label>
+                <div class="mt-4 grid gap-2 sm:grid-cols-2">
+                  <Button
+                    v-for="option in bottomNavOptions"
+                    :key="option.value"
+                    type="button"
+                    class="admin-action-card"
+                    size="lg"
+                    :variant="
+                      draft.bottomNavStyle === option.value
+                        ? 'subtle'
+                        : 'outline'
+                    "
+                    :class="{
+                      '!border-outline-gray-4':
+                        draft.bottomNavStyle === option.value,
+                    }"
+                    :disabled="!draft.showBottomNav"
+                    :aria-pressed="draft.bottomNavStyle === option.value"
+                    @click="draft.bottomNavStyle = option.value"
+                  >
+                    <strong class="block text-sm">{{ option.label }}</strong>
+                    <span class="mt-1 block text-xs leading-5 text-black/45">{{
+                      option.description
+                    }}</span>
+                  </Button>
+                </div>
+                <div class="mt-4 grid gap-4 sm:grid-cols-3">
+                  <ColorField
+                    v-for="field in bottomNavColorFields"
+                    :key="field.key"
+                    :label="field.label"
+                    v-model="draft[field.key]"
+                    :disabled="!draft.showBottomNav"
+                  />
+                  <RangeField
+                    label="Label font size"
+                    v-model="draft.bottomNavFontSize"
+                    :min="10"
+                    :max="18"
+                    :step="1"
+                    :disabled="!draft.showBottomNav"
+                    class="sm:col-span-3"
+                    suffix="px"
+                  />
+                </div>
               </div>
             </div>
-          </div>
-        </section>
+          </TabPanel>
+        </SettingsTabs>
       </div>
 
-      <aside class="top-24 xl:sticky">
+      <aside class="top-[calc(var(--workspace-header-height,72px)+24px)] xl:sticky">
         <div class="mb-3 flex items-center justify-between">
           <div>
             <p class="label mb-0">Live preview</p>
             <p class="m-0 text-xs text-black/40">Uses your current menu</p>
           </div>
           <div class="flex rounded-full bg-white p-1 shadow-sm">
-            <button
+            <Button
+              variant="ghost"
               type="button"
               class="grid size-8 place-items-center rounded-full"
               :class="
@@ -731,9 +609,10 @@
               aria-label="Phone preview"
               @click="previewSize = 'phone'"
             >
-              <Smartphone :size="15" />
-            </button>
-            <button
+              <template #icon><Smartphone :size="15" /></template>
+            </Button>
+            <Button
+              variant="ghost"
               type="button"
               class="grid size-8 place-items-center rounded-full"
               :class="
@@ -742,8 +621,8 @@
               aria-label="Tablet preview"
               @click="previewSize = 'tablet'"
             >
-              <Tablet :size="15" />
-            </button>
+              <template #icon><Tablet :size="15" /></template>
+            </Button>
           </div>
         </div>
         <div class="overflow-x-auto rounded-[2rem] bg-[#dfe2da] p-3 sm:p-5">
@@ -966,13 +845,20 @@
 </template>
 
 <script setup lang="ts">
+import ColorField from "../components/ColorField.vue";
+import RangeField from "../components/qr/RangeField.vue";
+import { Badge, Button,
+  Checkbox,
+  Select,
+  TabButtons,
+  TabPanel,
+  TextInput, Spinner } from "frappe-ui";
 import { computed, defineComponent, h, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   CircleCheck,
   Heart,
   House,
-  LoaderCircle,
   PackageOpen,
   RotateCcw,
   Save,
@@ -987,7 +873,10 @@ import PageHeader from "../components/PageHeader.vue";
 import BusinessLogo from "../components/BusinessLogo.vue";
 import FallbackImage from "../../../../shared/FallbackImage.vue";
 import { descriptionText } from "../../../../shared/descriptionText";
-import { menuKhmerFontFamily, menuKhmerFonts } from "../../../../shared/menuFonts";
+import {
+  menuKhmerFontFamily,
+  menuKhmerFonts,
+} from "../../../../shared/menuFonts";
 import ImageUploader from "../components/ImageUploader.vue";
 import SettingsTabs from "../components/SettingsTabs.vue";
 import { useAdminStore, type MediaImage } from "../stores/admin";
@@ -1615,6 +1504,13 @@ function selectPreset(theme: MenuTheme) {
     productPlaceholderUrl: draft.productPlaceholderUrl,
   });
 }
+function selectBackgroundType(value: string | number) {
+  const option = backgroundTypeOptions.find(
+    ({ value: type }) => type === value,
+  );
+  if (option) setBackgroundType(option.value);
+}
+
 function setBackgroundType(type: MenuTheme["backgroundType"]) {
   if (type === "image" && !draft.backgroundImageMediaId) {
     draft.backgroundOverlayColor = draft.textColor;

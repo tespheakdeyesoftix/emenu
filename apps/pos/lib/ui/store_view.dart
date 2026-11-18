@@ -4,6 +4,9 @@ import 'package:get/get.dart';
 
 import '../core/register_database.dart';
 import '../features/register/register_controller.dart';
+import '../shared/forms/app_selection_field.dart';
+import '../shared/forms/app_text_field.dart';
+
 import 'shared_widgets.dart';
 
 class StoreView extends StatefulWidget {
@@ -119,7 +122,7 @@ class _StoreViewState extends State<StoreView> {
                 if (register.storeAuthorityPending)
                   RegisterNotice('STORE_AUTHORITY_PENDING'),
                 if (addresses.isNotEmpty)
-                  DropdownButtonFormField<String>(
+                  AppSelectionField<String>(
                     initialValue: address,
                     decoration: InputDecoration(labelText: 'store_address'.tr),
                     items: addresses
@@ -177,13 +180,13 @@ class _StoreViewState extends State<StoreView> {
                   onPressed: busy ? null : _enable,
                 ),
                 const Divider(),
-                TextField(
+                AppTextField(
                   controller: label,
                   decoration: InputDecoration(labelText: 'till_label'.tr),
                   maxLength: 64,
                   enabled: !busy,
                 ),
-                TextField(
+                AppTextField(
                   controller: code,
                   decoration: InputDecoration(labelText: 'pairing_code'.tr),
                   autocorrect: false,

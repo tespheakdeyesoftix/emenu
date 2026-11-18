@@ -3,12 +3,14 @@ import 'dart:io';
 
 import 'package:drift/drift.dart' show Value, driftRuntimeOptions;
 import 'package:drift/native.dart';
+import 'package:emenu_pos/auths/login_service.dart';
 import 'package:emenu_pos/core/pos_api.dart';
 import 'package:emenu_pos/core/register_access.dart';
 import 'package:emenu_pos/core/register_authority.dart';
 import 'package:emenu_pos/core/register_database.dart';
 import 'package:emenu_pos/core/register_network.dart';
-import 'package:emenu_pos/core/sale_sync.dart';
+import 'package:emenu_pos/core/register_shift_reports.dart';
+import 'package:emenu_pos/features/sales/sale/sale_sync.dart';
 import 'package:emenu_pos/core/store_host.dart';
 import 'package:emenu_pos/core/store_transport.dart';
 import 'package:emenu_pos/features/register/register_controller.dart';
@@ -37,7 +39,7 @@ final overnight = DateTime.utc(2026, 11, 11, 18, 30);
 
 Json snapshot(String shift) => {
   'context': {
-    'capabilities': {'reversal_context_guard': true},
+    'capabilities': {'reversal_context_guard': true, 'cart_line_edits': true},
     'business': {
       'id': 'store',
       'name': 'Store',
@@ -310,6 +312,9 @@ void main() {
             'ALTER TABLE store_operating_events DROP COLUMN $column',
           );
         }
+        await old.customStatement('DROP TABLE parked_table_drafts');
+        await old.customStatement('DROP TABLE register_ui_preferences');
+        await old.customStatement('DROP TABLE IF EXISTS discarded_bills');
         await old.customStatement('PRAGMA user_version = 9');
       } finally {
         await old.close();
@@ -480,16 +485,26 @@ void main() {
         );
       }
       final current = await controller(first);
-      await current.unlock('owner', '123456');
+      await LoginService(current).unlock('owner', '123456');
       expect(current.stage.value, RegisterStage.ready);
       current.selectTable('table');
       current.selectCustomer('walk_in');
       current.add(CartLine(product, portion: portion, modifiers: [milk]));
       current.quantity(0, 3);
-      expect(current.cartTotal, 495);
+      final line = current.cart.single;
+      current.replaceCartLine(
+        line,
+        line.withLineEdits({
+          'base_price_override_minor': 175,
+          'discount_minor': 30,
+          'note': 'For the patio',
+        }),
+      );
+      expect(current.cartTotal, 627);
       await current.lock();
-      await current.unlock('cashier', '123456');
+      await LoginService(current).unlock('cashier', '123456');
       expect(current.hasCartDraft, isFalse);
+      current.selectTable('table', cover: 4);
       current.add(CartLine(product, portion: portion));
       await first
           .select(first.registerCartDrafts)
@@ -515,13 +530,15 @@ void main() {
         },
       },
     });
-    await restored.unlock('owner', '123456');
+    await LoginService(restored).unlock('owner', '123456');
     expect(restored.cart.single.quantity, 3);
     expect(restored.cart.single.portion?['id'], 'large');
     expect(restored.cart.single.modifiers.single['id'], 'milk');
     expect(restored.tableId.value, 'table');
     expect(restored.customerId.value, 'walk_in');
-    expect(restored.cartTotal, 495);
+    expect(restored.cart.single.basePriceOverride, 175);
+    expect(restored.cart.single.note, 'For the patio');
+    expect(restored.cartTotal, 627);
     await restored.holdCart();
     expect(restored.message.value, 'PRICE_CHANGED');
     expect(await reopened.cartDraft('owner', profileId), isNotNull);
@@ -540,17 +557,164 @@ void main() {
     restored.resumeBill(held);
     restored.quantity(0, 4);
     await restored.lock();
-    await restored.unlock('owner', '123456');
+    await LoginService(restored).unlock('owner', '123456');
     expect(restored.cart.single.quantity, 4);
     await restored.checkout([
-      {'payment_type_id': 'cash', 'currency': 'USD', 'amount_minor': 660},
+      {'payment_type_id': 'cash', 'currency': 'USD', 'amount_minor': 847},
     ]);
     expect(restored.message.value, 'SAVED');
     expect(await reopened.heldBill(profileId, held.id), isNull);
     expect(await reopened.cartDraft('owner', profileId), isNull);
-    expect((await reopened.watchSales().first).single.$1.total, 660);
+    final (savedSale, _) = (await reopened.watchSales().first).single;
+    expect(savedSale.total, 847);
+    final savedLine = jsonRows(
+      jsonObject(jsonDecode(savedSale.request))['quote'],
+    ).single;
+    expect(savedLine['base_price_override_minor'], 175);
+    expect(savedLine['note'], 'For the patio');
     expect(await reopened.cartDraft('cashier', profileId), isNotNull);
+
+    await restored.lock();
+    await reopened.saveSnapshot(profileId, {
+      ...original,
+      'context': {
+        ...context,
+        'profile': {
+          'id': profileId,
+          'config': {...config, 'table_mode': 'disabled'},
+        },
+      },
+    });
+    await LoginService(restored).unlock('cashier', '123456');
+    expect(restored.tab.value, RegisterController.sellTab);
+    expect(restored.tableId.value, 'table');
+    expect(restored.guestCover.value, 4);
+    expect(restored.cart.single.portion?['id'], 'large');
+    final counterTotal = restored.cartTotal;
+    await restored.checkout([
+      {
+        'payment_type_id': 'cash',
+        'currency': 'USD',
+        'amount_minor': counterTotal,
+      },
+    ]);
+    expect(restored.message.value, 'SAVED');
+    expect(await reopened.cartDraft('cashier', profileId), isNull);
+    final sale = (await reopened.watchSales().first)
+        .singleWhere((entry) => entry.$1.operatorId == 'cashier')
+        .$1;
+    final request = jsonObject(jsonDecode(sale.request));
+    final draft = jsonObject(request['draft']);
+    expect(draft, containsPair('table_id', null));
+    expect(draft['guest_cover'], isNull);
+    expect(jsonObject(request['receipt'])['table_label'], isNull);
+    expect(sale.total, counterTotal);
   });
+
+  test(
+    'switching tables saves the current order and keeps it if saving fails',
+    () async {
+      final database = RegisterDatabase(NativeDatabase.memory());
+      addTearDown(database.close);
+      await prepare(database);
+      final state = snapshot('morning');
+      state['tables'] = [
+        ...jsonRows(state['tables']),
+        {'id': 'second_table', 'label': 'A2', 'status': 'available'},
+      ];
+      await database.saveSnapshot(profileId, state);
+      final controller = RegisterController(database);
+      controller.installation.value = await database.installation();
+      controller.operator.value = await database.operatorById('cashier');
+      controller.applyProfileSnapshot(state);
+      await controller.openTable('table', cover: 2);
+      controller.add(CartLine(coffee));
+      controller.selectTab(RegisterController.tablesTab);
+
+      final withoutShift = {
+        ...state,
+        'context': {...jsonObject(state['context']), 'cashier_shift': null},
+      };
+      await database.saveSnapshot(profileId, withoutShift);
+      controller.applyProfileSnapshot(withoutShift);
+      await controller.openTable('second_table', cover: 3);
+      expect(controller.message.value, 'CASHIER_SHIFT_REQUIRED');
+      expect(controller.tableId.value, 'table');
+      expect(controller.guestCover.value, 2);
+      expect(controller.cart.single.quantity, 1);
+      expect(await database.watchHeldBills().first, isEmpty);
+
+      await database.saveSnapshot(profileId, state);
+      controller.applyProfileSnapshot(state);
+      await controller.openTable('second_table', cover: 3);
+      expect(controller.tableId.value, 'second_table');
+      expect(controller.guestCover.value, 3);
+      expect(controller.cart, isEmpty);
+      expect(controller.tab.value, RegisterController.sellTab);
+      final saved = (await database.watchHeldBills().first).single;
+      expect(saved.tableId, 'table');
+      expect(
+        jsonObject(jsonDecode(saved.payload)),
+        containsPair('table_status', 'occupied'),
+      );
+
+      controller.heldBills.add(saved);
+      controller.selectTab(RegisterController.tablesTab);
+      await controller.openTable('table');
+      expect(controller.tableId.value, 'table');
+      expect(controller.guestCover.value, 2);
+      expect(controller.cart.single.quantity, 1);
+      await controller.lock();
+    },
+  );
+
+  test(
+    'an out-of-catalog table draft can be parked and reopened intact',
+    () async {
+      final database = RegisterDatabase(NativeDatabase.memory());
+      addTearDown(database.close);
+      await prepare(database);
+      final state = snapshot('morning');
+      state['tables'] = [
+        ...jsonRows(state['tables']),
+        {'id': 'second_table', 'label': 'A2', 'status': 'available'},
+      ];
+      await database.saveSnapshot(profileId, state);
+      final controller = RegisterController(database);
+      controller.installation.value = await database.installation();
+      controller.operator.value = await database.operatorById('cashier');
+      controller.applyProfileSnapshot(state);
+      await controller.openTable('table', cover: 2);
+      controller.add(CartLine(coffee, quantity: 2));
+
+      final changed = {
+        ...state,
+        'catalog': {'products': []},
+      };
+      await database.saveSnapshot(profileId, changed);
+      controller.applyProfileSnapshot(changed);
+      await controller.openTable('second_table', cover: 3);
+
+      expect(controller.tableId.value, 'second_table');
+      expect(controller.guestCover.value, 3);
+      expect(controller.message.value, 'TABLE_DRAFT_KEPT');
+      expect(controller.cart, isEmpty);
+      expect(await database.watchHeldBills().first, isEmpty);
+      expect(await database.parkedTableIds('cashier', profileId), ['table']);
+      expect(await database.parkedTableIds('owner', profileId), isEmpty);
+
+      await controller.openTable('table');
+      expect(controller.tableId.value, 'table');
+      expect(controller.guestCover.value, 2);
+      expect(controller.cart.single.quantity, 2);
+      expect(controller.cart.single.product['id'], 'coffee');
+      expect(await database.parkedTableIds('cashier', profileId), isEmpty);
+      await controller.holdCart();
+      expect(controller.message.value, 'SELECTION_CHANGED');
+      expect(controller.cart.single.quantity, 2);
+      await controller.lock();
+    },
+  );
 
   test('live reversal replays its own request and leaves the original receipt intact', () async {
     final database = RegisterDatabase(NativeDatabase.memory());
@@ -656,6 +820,146 @@ void main() {
       jsonDecode((await database.sale('local_paid')).settlement!),
       originalReceipt,
     );
+  });
+
+  test('store reconciliation keeps the drawer blind and reopens the saved shift offline', () async {
+    final database = RegisterDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    await prepare(database);
+    final original = snapshot('morning');
+    final context = jsonObject(original['context']);
+    await database.saveSnapshot(profileId, {
+      ...original,
+      'context': {
+        ...context,
+        'capabilities': {
+          ...jsonObject(context['capabilities']),
+          'shift_management': true,
+        },
+      },
+    });
+    await database.startStoreAuthority('shift_epoch', 'Asia/Phnom_Penh');
+    final authority = RegisterAuthority(database, now: () => overnight);
+    Future<Json> send(
+      String id,
+      RegisterAction action,
+      Json body, [
+      String actor = 'owner',
+    ]) => authority.execute(
+      commandId: id,
+      operatorId: actor,
+      action: action,
+      body: body,
+    );
+    await send('opening_day', RegisterAction.openDay, {});
+    final shift = await send('opening_shift', RegisterAction.openShift, {
+      'day_id': 'opening_day',
+      'opening_cash': [
+        {'payment_type_id': 'cash', 'currency': 'USD', 'amount_minor': 1000},
+      ],
+    }, 'cashier');
+    final reports = RegisterShiftReports(database);
+    final preview = cashierShiftMetadata(shift, false);
+    expect(
+      jsonRows(preview['counts'])
+          .every((row) => !row.containsKey('expected_minor')),
+      isTrue,
+    );
+    final result = await reports.read(profileId, 'staff', {
+      'kind': 'summary',
+      'id': 'opening_shift',
+    });
+    expect(result['drawer_counts'], isEmpty);
+    final count = {
+      'activity_revision': preview['activity_revision'],
+      'counts': [
+        for (final row in jsonRows(preview['counts']))
+          {
+            'payment_type_id': row['payment_type_id'],
+            'currency': row['currency'],
+            'declared_minor': row['currency'] == 'USD' ? 990 : 0,
+          },
+      ],
+    };
+    final review = await reports.read(profileId, 'staff', {
+      'kind': 'review',
+      'id': 'opening_shift',
+      'count': count,
+    });
+    expect(
+      jsonRows(review['counts'])
+          .firstWhere((row) => row['currency'] == 'USD')['variance_minor'],
+      -10,
+    );
+    await send('cash_adjustment', RegisterAction.cashMovement, {
+      'shift_id': 'opening_shift',
+      'payment_type_id': 'cash',
+      'currency': 'USD',
+      'kind': 'cash_in',
+      'amount_minor': 100,
+      'reason': 'add_change',
+      'reason_code': 'add_change',
+    }, 'cashier');
+    await expectLater(
+      reports.read(profileId, 'staff', {
+        'kind': 'review',
+        'id': 'opening_shift',
+        'count': count,
+      }),
+      throwsA(errorCode('RECONCILIATION_CHANGED')),
+    );
+    await send('pay_shift_bill', RegisterAction.checkout, {
+      ...order(),
+      'expected_context': {
+        'business_date': '2026-11-12',
+        'working_day_id': 'opening_day',
+        'shift_id': 'opening_shift',
+      },
+      'payments': [
+        {'payment_type_id': 'cash', 'currency': 'USD', 'amount_minor': 110},
+      ],
+    }, 'cashier');
+    await send('closing_shift', RegisterAction.closeShift, {
+      ...count,
+      'shift_id': 'opening_shift',
+      'activity_revision': 3,
+    }, 'cashier');
+    final closed = await reports.read(profileId, 'staff', {
+      'kind': 'summary',
+      'id': 'opening_shift',
+    });
+    expect(
+      jsonRows(closed['closing_counts'])
+          .firstWhere((row) => row['currency'] == 'USD')['variance_minor'],
+      -220,
+    );
+    expect(jsonRows(closed['sales']).single['amount_minor'], 110);
+    expect(jsonRows(closed['payments']).single['payments_minor'], 110);
+    await expectLater(
+      send('cashier_reopen', RegisterAction.reopenShift, {
+        'shift_id': 'opening_shift',
+        'reason': 'Mistake',
+      }, 'cashier'),
+      throwsA(errorCode('MANAGER_REQUIRED')),
+    );
+    final reopened = await send('manager_reopen', RegisterAction.reopenShift, {
+      'shift_id': 'opening_shift',
+      'reason': 'Mistake',
+    });
+    expect(reopened['id'], 'opening_shift');
+    expect(reopened['activity_revision'], 4);
+    expect(reopened['closing_counts'], isNull);
+    expect(
+      jsonRows(reopened['counts'])
+          .firstWhere((row) => row['currency'] == 'USD')['expected_minor'],
+      1210,
+    );
+    expect(
+      (await database.savedCommand('closing_shift'))?.result,
+      contains('variance_minor'),
+    );
+    final history = await reports.read(profileId, 'staff', {'kind': 'history'});
+    expect(history['cashier_shifts'], isEmpty);
   });
 
   for (final (days, shifts) in [
@@ -932,15 +1236,30 @@ void main() {
       final secondGrant = cashier['staff_credential'] as String;
       wanUp = false;
 
+      const free = CartLine(coffee, isFree: true, note: 'Complimentary');
+      final freeQuote = free.quote(config);
+
       await first.command(
         staffCredential: firstGrant,
         id: 'lan_hold',
         action: RegisterAction.hold,
-        body: order(),
+        body: {
+          ...order(),
+          'cart_line_edits_version': 1,
+          'total_minor': 0,
+          'quote': [freeQuote],
+        },
       );
       final shared = await second.state(secondGrant);
       expect(jsonRows(shared['bills']).single['id'], 'lan_hold');
       final view = jsonObject(jsonObject(shared['snapshot'])['context']);
+      expect(view['store_cart_line_edits'], isTrue);
+      final held = HeldBill.fromJson(jsonRows(shared['bills']).single);
+      final sharedLine = CartLine.fromHeldSnapshot(
+        jsonRows(jsonObject(jsonDecode(held.payload))['lines']).single,
+      );
+      expect(sharedLine.isFree, isTrue);
+      expect(sharedLine.note, 'Complimentary');
       expect(jsonObject(view['operator'])['id'], 'cashier');
       expect(jsonObject(view['cashier_shift'])['id'], 'morning');
       final known = shared['snapshot_version'] as String;
@@ -955,10 +1274,20 @@ void main() {
 
       final body = {
         ...order(billId: 'lan_hold', revision: 1, shift: 'night'),
-        'payments': [
-          {'payment_type_id': 'cash', 'currency': 'KHR', 'amount_minor': 4400},
-        ],
+        'cart_line_edits_version': 1,
+        'total_minor': 0,
+        'quote': [sharedLine.quote(config)],
+        'payments': [],
       };
+      await expectLater(
+        second.command(
+          staffCredential: secondGrant,
+          id: 'lan_old_hold',
+          action: RegisterAction.hold,
+          body: order(billId: 'lan_hold', revision: 1, shift: 'night'),
+        ),
+        throwsA(errorCode('CART_LINE_UPGRADE_REQUIRED')),
+      );
       Future<Json> pay(StoreClient till, String grant, String id) =>
           till.command(
             staffCredential: grant,
@@ -986,6 +1315,7 @@ void main() {
       final paid = await first.state(firstGrant);
       expect(jsonRows(paid['bills']), isEmpty);
       final posted = jsonObject(jsonRows(paid['sales']).single['sale']);
+      expect(posted['total'], 0);
       final cashierWon = posted['operatorId'] == 'cashier';
       expect(
         cashierWon
@@ -994,7 +1324,33 @@ void main() {
         {'bill_id': 'lan_hold'},
       );
       expect((await database.watchSales().first).length, 1);
+      await first.command(
+        staffCredential: firstGrant,
+        id: 'lan_void_bill',
+        action: RegisterAction.hold,
+        body: order(shift: 'night'),
+      );
+      Future<Json> discard() => second.command(
+        staffCredential: secondGrant,
+        id: 'lan_void_command',
+        action: RegisterAction.discard,
+        body: {'bill_id': 'lan_void_bill', 'bill_revision': 1},
+      );
+      expect(await discard(), {'bill_id': 'lan_void_bill'});
+      expect(await discard(), {'bill_id': 'lan_void_bill'});
+      final history = await first.salesHistory(firstGrant);
+      expect(jsonObject(history['history_scope'])['id'], 'night');
+      final records = RegisterHistory.fromJson(history);
+      expect(records.held, isEmpty);
+      expect(records.sales.single.$1.id, 'lan_hold');
+      expect(records.discarded.single.billId, 'lan_void_bill');
+      expect(records.discarded.single.operatorName, 'cashier');
+
       await host.revoke(secondOwner['device_id'] as String);
+      await expectLater(
+        second.salesHistory(secondGrant),
+        throwsA(errorCode('STORE_ACCESS_REQUIRED')),
+      );
       await expectLater(
         second.state(secondGrant),
         throwsA(errorCode('STORE_ACCESS_REQUIRED')),

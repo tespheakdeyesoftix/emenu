@@ -7,6 +7,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:drift/drift.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'api_endpoint.dart';
 import 'pos_api.dart';
 import 'pos_device_key.dart';
 import 'register_database.dart';
@@ -26,19 +27,18 @@ class RegisterAccess {
       'emenu.pos.store.session.$id${otherProfile == null ? '' : '.$otherProfile'}';
 
   Future<Json> prepareProfile(PosApi api, String token, {Json? context}) async {
+    final profileContext =
+        context ?? await api.request(ApiEndpoint.context, token: token);
     final responses = await Future.wait<Object>([
-      context == null
-          ? api.request('/context', token: token)
-          : Future.value(context),
-      api.catalog(token),
-      api.pages('/tables', 'tables', token),
-      api.pages('/customers', 'customers', token),
+      api.catalog(token, menuId: defaultCatalogMenuId(profileContext)),
+      api.pages(ApiEndpoint.tables, 'tables', token),
+      api.pages(ApiEndpoint.customers, 'customers', token),
     ]);
     return {
-      'context': responses[0],
-      'catalog': responses[1],
-      'tables': responses[2],
-      'customers': responses[3],
+      'context': profileContext,
+      'catalog': responses[0],
+      'tables': responses[1],
+      'customers': responses[2],
     };
   }
 
@@ -46,12 +46,12 @@ class RegisterAccess {
     required PosApi api,
     required String slug,
     required String email,
-    required String pin,
+    String? pin,
     required Json session,
     required Json snapshot,
     bool updateSnapshot = true,
   }) async {
-    if (!RegExp(r'^\d{6}$').hasMatch(pin)) {
+    if (pin != null && !RegExp(r'^\d{6}$').hasMatch(pin)) {
       throw const FormatException('Enter a 6-digit PIN.');
     }
     final context = jsonObject(snapshot['context']);
@@ -78,20 +78,23 @@ class RegisterAccess {
       );
     }
 
-    final random = Random.secure();
-    final salt = List<int>.generate(32, (_) => random.nextInt(256));
-    final verifier = await _derivePin(pin, salt);
     final operatorId = operator['id'] as String;
     if (updateSnapshot && _supportsDeviceSessions(context)) {
       await _enrollDevice(api, operatorId, session['token'] as String, session);
     }
     final key = _key(operatorId);
     final previous = await vault.read(key: key);
+    final existing = previous == null ? null : jsonObject(jsonDecode(previous));
+    final pinSecret = pin == null
+        ? {
+            if (existing?['salt'] case final String salt) 'salt': salt,
+            if (existing?['verifier'] case final String hash) 'verifier': hash,
+          }
+        : await _pinSecret(pin);
     await vault.write(
       key: key,
       value: jsonEncode({
-        'salt': base64Encode(salt),
-        'verifier': base64Encode(verifier),
+        ...pinSecret,
         'token': session['token'],
         'expires_at': session['expires_at'],
       }),
@@ -140,6 +143,47 @@ class RegisterAccess {
       }
       rethrow;
     }
+  }
+
+  Future<Json> _pinSecret(String pin) async {
+    final random = Random.secure();
+    final salt = List<int>.generate(32, (_) => random.nextInt(256));
+    return {
+      'salt': base64Encode(salt),
+      'verifier': base64Encode(await _derivePin(pin, salt)),
+    };
+  }
+
+  Future<bool> hasSignedIn(String operatorId) async =>
+      await _secret(operatorId) != null;
+
+  Future<bool> hasPin(String operatorId) async {
+    final secret = await _secret(operatorId);
+    return secret?['salt'] is String && secret?['verifier'] is String;
+  }
+
+  Future<void> configurePin(String operatorId, String pin) async {
+    if (!RegExp(r'^\d{6}$').hasMatch(pin)) {
+      throw const FormatException('PIN_MATCH');
+    }
+    final key = _key(operatorId);
+    final previous = await vault.read(key: key);
+    if (previous == null) throw _signInRequired;
+    await vault.write(
+      key: key,
+      value: jsonEncode({
+        ...jsonObject(jsonDecode(previous)),
+        ...await _pinSecret(pin),
+      }),
+    );
+    await (database.update(
+      database.registerOperators,
+    )..where((row) => row.id.equals(operatorId))).write(
+      const RegisterOperatorsCompanion(
+        failedPins: Value(0),
+        blockedUntil: Value(null),
+      ),
+    );
   }
 
   Future<List<int>> _derivePin(String pin, List<int> salt) async {
@@ -263,7 +307,7 @@ class RegisterAccess {
       final credential = session['credential_id'] as String;
       try {
         final response = await api.request(
-          '/auth/device-session',
+          ApiEndpoint.deviceSession,
           method: 'POST',
           body: await (await _signingKey()).proof(credential),
         );
@@ -349,7 +393,7 @@ class RegisterAccess {
     String? otherProfile,
   }) => _serializeSession(_deviceSessionKey(id, otherProfile), () async {
     final reply = await api.request(
-      '/devices',
+      ApiEndpoint.devices,
       method: 'POST',
       token: token,
       body: await (await _signingKey()).descriptor(
@@ -430,14 +474,14 @@ class RegisterAccess {
       );
     }
     final data = await _secret(operatorId);
-    if (data == null) {
+    if (data?['salt'] is! String || data?['verifier'] is! String) {
       throw const PosApiError(
         401,
         'SIGN_IN_REQUIRED',
         'Sign in with your password again.',
       );
     }
-    final expected = base64Decode(data['verifier'] as String);
+    final expected = base64Decode(data!['verifier'] as String);
     final actual = await _derivePin(pin, base64Decode(data['salt'] as String));
     var difference = expected.length ^ actual.length;
     for (var i = 0; i < expected.length && i < actual.length; i++) {

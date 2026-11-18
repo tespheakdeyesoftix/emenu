@@ -1,9 +1,5 @@
 <template>
-  <PageHeader
-    eyebrow="System overview"
-    title="Your platform at a glance"
-    description="Live registration, account, and business status across Angkor eMenu."
-  />
+  <PageHeader title="Your platform at a glance" />
   <div v-if="loading" class="panel grid min-h-80 place-items-center">
     <LoaderCircle :size="34" class="animate-spin text-black/30" />
   </div>

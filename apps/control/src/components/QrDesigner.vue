@@ -12,19 +12,17 @@
         <section class="rounded-3xl bg-cream p-5">
           <label
             ><span class="label">ឈ្មោះការរចនា</span
-            ><input v-model="draft.name" class="input"
+            ><TextInput size="lg" variant="outline" v-model="draft.name"
           /></label>
           <div class="mt-4 grid grid-cols-2 gap-2">
-            <button
+            <Button
               v-for="preset in qrPresets"
               :key="preset.key"
               type="button"
-              class="rounded-2xl border p-3 text-left transition"
-              :class="
-                draft.presetKey === preset.key
-                  ? 'border-ink bg-ink text-white'
-                  : 'border-black/10 bg-white'
-              "
+              class="admin-action-card min-h-20"
+              size="lg"
+              :variant="draft.presetKey === preset.key ? 'solid' : 'outline'"
+              :aria-pressed="draft.presetKey === preset.key"
               @click="choosePreset(preset.key)"
             >
               <span class="text-xl">{{ preset.icon }}</span>
@@ -34,28 +32,31 @@
               <span class="mt-1 block text-[10px] opacity-55"
                 >{{ preset.widthMm }} × {{ preset.heightMm }} mm</span
               >
-            </button>
+            </Button>
           </div>
         </section>
 
-        <details
-          open
-          class="rounded-3xl border border-black/[.07] bg-white p-5"
+        <DisclosureSection
+          title="ខ្លឹមសារ និងគោលដៅ"
+          initially-open
+          class="rounded-6 border border-outline-gray-1 bg-surface-base px-3"
         >
-          <summary class="cursor-pointer font-extrabold">
-            ខ្លឹមសារ និងគោលដៅ
-          </summary>
           <div class="mt-4 space-y-4">
             <label
               ><span class="label">គោលដៅ QR</span
-              ><select v-model="draft.targetType" class="input">
-                <option value="menu">ម៉ឺនុយទូទៅ</option>
-                <option value="table">ម៉ឺនុយសម្រាប់តុនីមួយៗ</option>
-              </select></label
+              ><Select
+                size="lg"
+                variant="outline"
+                v-model="draft.targetType"
+                :options="[
+                  { label: 'ម៉ឺនុយទូទៅ', value: 'menu' },
+                  { label: 'ម៉ឺនុយសម្រាប់តុនីមួយៗ', value: 'table' },
+                ]"
+              /></label
             >
             <div v-if="draft.targetType === 'table'" class="space-y-3">
               <label class="flex cursor-pointer items-center gap-3 text-sm font-bold">
-                <input
+                <Checkbox
                   v-model="draft.config.showTableGroup"
                   type="checkbox"
                   class="size-4 shrink-0 accent-black"
@@ -64,50 +65,56 @@
               </label>
               <label class="block">
                 <span class="label">{{ t("pages.qrDesigns.tablePrefix") }}</span>
-                <input
+                <TextInput size="lg" variant="outline"
                   v-model.trim="draft.config.tablePrefix"
-                  class="input"
                   :maxlength="maxQrTablePrefixLength"
                 />
               </label>
             </div>
             <label
               ><span class="label">ឈ្មោះអាជីវកម្ម</span
-              ><select v-model="draft.config.businessNameMode" class="input">
-                <option value="profile">យកតាមព័ត៌មានអាជីវកម្ម</option>
-                <option value="custom">កំណត់អត្ថបទផ្ទាល់ខ្លួន</option>
-              </select></label
+              ><Select
+                size="lg"
+                variant="outline"
+                v-model="draft.config.businessNameMode"
+                :options="[
+                  { label: 'យកតាមព័ត៌មានអាជីវកម្ម', value: 'profile' },
+                  { label: 'កំណត់អត្ថបទផ្ទាល់ខ្លួន', value: 'custom' },
+                ]"
+              /></label
             >
-            <input
+            <TextInput size="lg" variant="outline"
               v-if="draft.config.businessNameMode === 'custom'"
               v-model="draft.config.customBusinessName"
-              class="input"
               maxlength="100"
               placeholder="ឈ្មោះអាជីវកម្ម"
             />
             <label
               ><span class="label">ពាក្យស្លោក</span
-              ><select v-model="draft.config.taglineMode" class="input">
-                <option value="profile">យកតាមព័ត៌មានអាជីវកម្ម</option>
-                <option value="custom">កំណត់អត្ថបទផ្ទាល់ខ្លួន</option>
-              </select></label
+              ><Select
+                size="lg"
+                variant="outline"
+                v-model="draft.config.taglineMode"
+                :options="[
+                  { label: 'យកតាមព័ត៌មានអាជីវកម្ម', value: 'profile' },
+                  { label: 'កំណត់អត្ថបទផ្ទាល់ខ្លួន', value: 'custom' },
+                ]"
+              /></label
             >
-            <input
+            <TextInput size="lg" variant="outline"
               v-if="draft.config.taglineMode === 'custom'"
               v-model="draft.config.customTagline"
-              class="input"
               maxlength="180"
               placeholder="ពាក្យស្លោករបស់អ្នក"
             />
             <label
               ><span class="label">អត្ថបទអំពាវនាវឱ្យចុច</span
-              ><input
+              ><TextInput size="lg" variant="outline"
                 v-model="draft.config.ctaText"
-                class="input"
                 maxlength="120"
             /></label>
             <label class="flex cursor-pointer items-center gap-3 text-sm font-bold">
-              <input
+              <Checkbox
                 v-model="draft.config.showFooterText"
                 type="checkbox"
                 class="size-4 shrink-0 accent-black"
@@ -116,9 +123,8 @@
             </label>
             <label v-if="draft.config.showFooterText" class="block">
               <span class="label">{{ t("pages.qrDesigns.footerText") }}</span>
-              <input
+              <TextInput size="lg" variant="outline"
                 v-model.trim="draft.config.footerText"
-                class="input"
                 :maxlength="maxQrFooterTextLength"
               />
             </label>
@@ -126,7 +132,7 @@
               <label
                 class="flex cursor-pointer items-start gap-3 rounded-2xl bg-cream p-4 text-sm font-bold"
               >
-                <input
+                <Checkbox
                   v-model="draft.config.showLogo"
                   type="checkbox"
                   class="mt-0.5 size-4 shrink-0 accent-black"
@@ -141,7 +147,7 @@
               <label
                 class="flex cursor-pointer items-start gap-3 rounded-2xl bg-cream p-4 text-sm font-bold"
               >
-                <input
+                <Checkbox
                   v-model="draft.config.showBusinessName"
                   type="checkbox"
                   class="mt-0.5 size-4 shrink-0 accent-black"
@@ -155,68 +161,53 @@
               </label>
             </div>
           </div>
-        </details>
+        </DisclosureSection>
 
-        <details class="rounded-3xl border border-black/[.07] bg-white p-5">
-          <summary class="cursor-pointer font-extrabold">
-            ផ្ទៃខាងក្រោយ និងពណ៌
-          </summary>
+        <DisclosureSection title="ផ្ទៃខាងក្រោយ និងពណ៌" class="rounded-6 border border-outline-gray-1 bg-surface-base px-3">
           <div class="mt-4 space-y-4">
             <label
               ><span class="label">ផ្ទៃខាងក្រោយ</span
-              ><select v-model="draft.config.backgroundType" class="input">
-                <option value="color">ពណ៌តែមួយ</option>
-                <option value="image">រូបថតដែលបានបង្ហោះ</option>
-              </select></label
+              ><Select
+                size="lg"
+                variant="outline"
+                v-model="draft.config.backgroundType"
+                :options="[
+                  { label: 'ពណ៌តែមួយ', value: 'color' },
+                  { label: 'រូបថតដែលបានបង្ហោះ', value: 'image' },
+                ]"
+              /></label
             >
-            <label
+            <ImageUploadButton
               v-if="draft.config.backgroundType === 'image'"
-              class="btn-soft w-full cursor-pointer"
-            >
-              <ImageUp :size="16" />{{
-                uploading
-                  ? "កំពុងកែរូបភាព…"
-                  : "ជ្រើសរើសផ្ទៃខាងក្រោយសម្រាប់បោះពុម្ព"
-              }}
-              <input
-                class="hidden"
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                :disabled="uploading"
-                @change="uploadBackground"
-              />
-            </label>
+              class="w-full"
+              :loading="uploading"
+              label="ជ្រើសរើសផ្ទៃខាងក្រោយសម្រាប់បោះពុម្ព"
+              loading-text="កំពុងកែរូបភាព…"
+              @select="uploadBackground"
+            />
             <div
               v-if="draft.config.backgroundType === 'image'"
               class="grid grid-cols-2 gap-3"
             >
-              <label
-                ><span class="label">កាត់រូបផ្តេក</span
-                ><input
-                  v-model.number="draft.config.backgroundPositionX"
-                  type="range"
-                  min="0"
-                  max="100"
-                  class="w-full"
-              /></label>
-              <label
-                ><span class="label">កាត់រូបបញ្ឈរ</span
-                ><input
-                  v-model.number="draft.config.backgroundPositionY"
-                  type="range"
-                  min="0"
-                  max="100"
-                  class="w-full"
-              /></label>
-              <label class="col-span-2"
-                ><span class="label">កម្រិតស្រទាប់គ្រប</span
-                ><input
-                  v-model.number="draft.config.overlayOpacity"
-                  type="range"
-                  min="0"
-                  max="90"
-                  class="w-full"
-              /></label>
+              <RangeField
+                label="កាត់រូបផ្តេក"
+                v-model="draft.config.backgroundPositionX"
+                :min="0"
+                :max="100"
+              />
+              <RangeField
+                label="កាត់រូបបញ្ឈរ"
+                v-model="draft.config.backgroundPositionY"
+                :min="0"
+                :max="100"
+              />
+              <RangeField
+                label="កម្រិតស្រទាប់គ្រប"
+                v-model="draft.config.overlayOpacity"
+                :min="0"
+                :max="90"
+                class="col-span-2"
+              />
             </div>
             <div class="grid grid-cols-2 gap-3">
               <ColorField
@@ -239,27 +230,36 @@
               />
             </div>
           </div>
-        </details>
+        </DisclosureSection>
 
-        <details class="rounded-3xl border border-black/[.07] bg-white p-5">
-          <summary class="cursor-pointer font-extrabold">អក្សរ និងទំហំ</summary>
+        <DisclosureSection title="អក្សរ និងទំហំ" class="rounded-6 border border-outline-gray-1 bg-surface-base px-3">
           <div class="mt-4 space-y-4">
             <label
               ><span class="label">ពុម្ពអក្សរ</span
-              ><select v-model="draft.config.fontFamily" class="input">
-                <option>Manrope</option>
-                <option>DM Sans</option>
-                <option>Noto Sans Khmer</option>
-                <option>Noto Sans SC</option>
-              </select></label
+              ><Select
+                size="lg"
+                variant="outline"
+                v-model="draft.config.fontFamily"
+                :options="[
+                  { label: 'Manrope', value: 'Manrope' },
+                  { label: 'DM Sans', value: 'DM Sans' },
+                  { label: 'Noto Sans Khmer', value: 'Noto Sans Khmer' },
+                  { label: 'Noto Sans SC', value: 'Noto Sans SC' },
+                ]"
+              /></label
             >
             <label
               ><span class="label">តម្រឹម</span
-              ><select v-model="draft.config.alignment" class="input">
-                <option value="left">ឆ្វេង</option>
-                <option value="center">កណ្តាល</option>
-                <option value="right">ស្តាំ</option>
-              </select></label
+              ><Select
+                size="lg"
+                variant="outline"
+                v-model="draft.config.alignment"
+                :options="[
+                  { label: 'ឆ្វេង', value: 'left' },
+                  { label: 'កណ្តាល', value: 'center' },
+                  { label: 'ស្តាំ', value: 'right' },
+                ]"
+              /></label
             >
             <RangeField
               v-model="draft.config.headingSize"
@@ -309,18 +309,16 @@
             >
               <label
                 ><span class="label">ទទឹង (mm)</span
-                ><input
+                ><TextInput size="lg" variant="outline"
                   v-model.number="draft.config.customWidthMm"
-                  class="input"
                   type="number"
                   min="50"
                   max="420"
               /></label>
               <label
                 ><span class="label">កម្ពស់ (mm)</span
-                ><input
+                ><TextInput size="lg" variant="outline"
                   v-model.number="draft.config.customHeightMm"
-                  class="input"
                   type="number"
                   min="50"
                   max="420"
@@ -331,7 +329,7 @@
               ដើម្បីឱ្យផ្ទៃទាំងពីរបោះពុម្ពបានត្រឹមត្រូវ។
             </p>
           </div>
-        </details>
+        </DisclosureSection>
       </div>
 
       <aside class="min-w-0 xl:sticky xl:top-0 xl:self-start">
@@ -345,65 +343,68 @@
         <div class="mt-4 rounded-3xl border border-black/[.07] bg-white p-5">
           <div class="mb-4 grid gap-3 sm:grid-cols-2">
             <label><span class="label">{{ t('menus.branch') }}</span>
-              <select v-model="draft.config.branchSlug" class="input" @change="selectFirstTable">
-                <option value="">{{ t(draft.targetType === 'table' ? 'menus.allBranches' : 'menus.defaultBranch') }}</option>
-                <option v-if="unavailableBranch" :value="draft.config.branchSlug" disabled>
-                  {{ t("pages.qrDesigns.unavailableBranch") }}
-                </option>
-                <option v-for="branch in qrStore.activeBranches" :key="branch.id" :value="branch.slug">{{ branch.name }}</option>
-              </select>
+              <Select
+                size="lg"
+                variant="outline"
+                v-model="draft.config.branchSlug"
+                @update:model-value="selectFirstTable"
+                :options="[
+                  { label: t(draft.targetType === 'table' ? 'menus.allBranches' : 'menus.defaultBranch'), value: '' },
+                  ...(unavailableBranch ? [{ label: t('pages.qrDesigns.unavailableBranch'), value: draft.config.branchSlug, disabled: true }] : []),
+                  ...qrStore.activeBranches.map(branch => ({ label: branch.name, value: branch.slug })),
+                ]"
+              />
             </label>
             <label><span class="label">{{ t('nav.menus') }}</span>
-              <select v-model="draft.config.menuSlug" class="input">
-                <option value="" :disabled="!qrStore.allowCategoryBrowsing">
-                  {{ t(qrStore.allowCategoryBrowsing ? 'menus.catalog' : 'pages.qrDesigns.chooseMenu') }}
-                </option>
-                <option v-if="unavailableMenu" :value="draft.config.menuSlug" disabled>
-                  {{ t("pages.qrDesigns.unavailableMenu") }}
-                </option>
-                <option v-for="menu in menuRoots" :key="menu.id" :value="menu.slug">{{ menuName(menu, locale) }}</option>
-              </select>
+              <Select
+                size="lg"
+                variant="outline"
+                v-model="draft.config.menuSlug"
+                :options="[
+                  { label: t(qrStore.allowCategoryBrowsing ? 'menus.catalog' : 'pages.qrDesigns.chooseMenu'), value: '', disabled: !qrStore.allowCategoryBrowsing },
+                  ...(unavailableMenu ? [{ label: t('pages.qrDesigns.unavailableMenu'), value: draft.config.menuSlug, disabled: true }] : []),
+                  ...menuRoots.map(menu => ({ label: menuName(menu, locale), value: menu.slug })),
+                ]"
+              />
             </label>
           </div>
           <div v-if="draft.targetType === 'table'" class="space-y-3">
             <p class="label">ជ្រើសរើសតុសម្រាប់នាំចេញ</p>
-            <select v-model="exportScope" class="input">
-              <option value="single">មួយតុ</option>
-              <option value="group">មួយក្រុមតុ</option>
-              <option value="all">តុដែលកំពុងប្រើទាំងអស់</option>
-            </select>
-            <select
+            <Select
+              size="lg"
+              variant="outline"
+              v-model="exportScope"
+              :options="[
+                { label: 'មួយតុ', value: 'single' },
+                { label: 'មួយក្រុមតុ', value: 'group' },
+                { label: 'តុដែលកំពុងប្រើទាំងអស់', value: 'all' },
+              ]"
+            />
+            <Select
+              size="lg"
+              variant="outline"
               v-if="exportScope === 'single'"
               v-model="selectedTableId"
-              class="input"
-            >
-              <option
-                v-for="table in availableTables"
-                :key="table.id"
-                :value="table.id"
-              >
-                {{ branchById.get(table.branchId)?.name }} · {{ table.groupName }} · {{ table.label }} ({{ table.code }})
-              </option>
-            </select>
-            <select
+              :options="[...availableTables.map(table => ({ label: [branchById.get(table.branchId)?.name, ' · ', table.groupName, ' · ', table.label, ' (', table.code, ')'].join(''), value: table.id }))]"
+            />
+            <Select
+              size="lg"
+              variant="outline"
               v-if="exportScope === 'group'"
               v-model="selectedGroupId"
-              class="input"
-            >
-              <option
-                v-for="group in availableGroups"
-                :key="group.id"
-                :value="group.id"
-              >
-                {{ branchById.get(group.branchId)?.name }} · {{ group.name }}
-              </option>
-            </select>
+              :options="[...availableGroups.map(group => ({ label: [branchById.get(group.branchId)?.name, ' · ', group.name].join(''), value: group.id }))]"
+            />
             <label class="block">
               <span class="label">{{ t("pages.qrDesigns.tableExport") }}</span>
-              <select v-model="tableExport" class="input">
-                <option value="separate">{{ t("pages.qrDesigns.separateTableFiles") }}</option>
-                <option value="a4-pdf">{{ t("pages.qrDesigns.combinedA4Pdf") }}</option>
-              </select>
+              <Select
+                size="lg"
+                variant="outline"
+                v-model="tableExport"
+                :options="[
+                  { label: t('pages.qrDesigns.separateTableFiles'), value: 'separate' },
+                  { label: t('pages.qrDesigns.combinedA4Pdf'), value: 'a4-pdf' },
+                ]"
+              />
             </label>
             <p v-if="combinedPdf || format === 'pdf'" class="m-0 text-xs leading-5 text-black/55">
               {{ t(combinedPdf ? "pages.qrDesigns.combinedA4Hint" : "pages.qrDesigns.tableA4Hint") }}
@@ -413,64 +414,72 @@
             <label
               v-if="!combinedPdf"
               ><span class="label">ទម្រង់ឯកសារ</span
-              ><select v-model="format" class="input">
-                <option value="pdf">PDF សម្រាប់បោះពុម្ព</option>
-                <option value="png">PNG កម្រិត 300 DPI</option>
-              </select></label
+              ><Select
+                size="lg"
+                variant="outline"
+                v-model="format"
+                :options="[
+                  { label: 'PDF សម្រាប់បោះពុម្ព', value: 'pdf' },
+                  { label: 'PNG កម្រិត 300 DPI', value: 'png' },
+                ]"
+              /></label
             >
             <label
               ><span class="label">របៀបបោះពុម្ព</span
-              ><select
+              ><Select
+                size="lg"
+                variant="outline"
                 v-model="printMode"
-                class="input"
                 :disabled="!combinedPdf && format === 'png'"
-              >
-                <option value="home">នៅផ្ទះ / ទំហំពិត</option>
-                <option value="print-shop">រោងពុម្ព + គែមកាត់</option>
-              </select></label
+                :options="[
+                  { label: 'នៅផ្ទះ / ទំហំពិត', value: 'home' },
+                  { label: 'រោងពុម្ព + គែមកាត់', value: 'print-shop' },
+                ]"
+              /></label
             >
           </div>
-          <p v-if="error" class="mb-0 mt-3 text-sm font-bold text-red-600">
-            {{ error }}
-          </p>
+          <Alert v-if="error" theme="red" :title="error" class="mb-0 mt-3" />
         </div>
       </aside>
     </div>
 
     <template #footer>
       <div class="flex flex-col gap-3 sm:flex-row sm:justify-end">
-        <button
+        <Button variant="solid" size="lg"
           type="button"
-          class="btn-primary sm:min-w-52"
+          class="sm:min-w-52"
           :disabled="saving || menuRequired"
           @click="save"
         >
-          <Save :size="16" />{{ saving ? "កំពុងរក្សាទុក…" : "រក្សាទុកការរចនា" }}
-        </button>
-        <button
+          <template #prefix><Save :size="16" /></template>{{ saving ? "កំពុងរក្សាទុក…" : "រក្សាទុកការរចនា" }}
+        </Button>
+        <Button variant="subtle" size="lg"
           type="button"
-          class="btn-soft sm:min-w-40"
+          class="sm:min-w-40"
           :disabled="saving || exporting || Boolean(warning?.blocksExport)"
           @click="download"
         >
-          <Download :size="16" />{{ exporting ? exportProgress : "ទាញយក" }}
-        </button>
+          <template #prefix><Download :size="16" /></template>{{ exporting ? exportProgress : "ទាញយក" }}
+        </Button>
       </div>
     </template>
   </ModalPanel>
 </template>
 
 <script setup lang="ts">
+import ImageUploadButton from "./ImageUploadButton.vue";
+import { Alert, Button, Checkbox, Select, TextInput } from "frappe-ui";
 import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { Download, ImageUp, Save, TriangleAlert } from "lucide-vue-next";
+import { Download, Save, TriangleAlert } from "lucide-vue-next";
 import {
   maxQrFooterTextLength,
   maxQrTablePrefixLength,
 } from "../../../../shared/qrDesign";
+import DisclosureSection from "./DisclosureSection.vue";
 import ModalPanel from "./ModalPanel.vue";
 import QrDesignPreview from "./QrDesignPreview.vue";
-import ColorField from "./qr/ColorField.vue";
+import ColorField from "./ColorField.vue";
 import RangeField from "./qr/RangeField.vue";
 import { useAdminStore, type Business } from "../stores/admin";
 import { useQrDesignStore } from "../stores/qrDesigns";

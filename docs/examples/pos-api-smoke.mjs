@@ -164,7 +164,7 @@ async function run() {
       );
     }
     const accepted = context.payment_types.filter((type) =>
-      type.currencies.includes(sale.currency),
+      type.currency === sale.currency,
     );
     const cash = accepted.find((type) => type.kind === "cash");
     const qr = accepted.find((type) => type.kind === "qr");

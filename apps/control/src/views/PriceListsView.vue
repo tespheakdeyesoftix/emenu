@@ -1,13 +1,9 @@
 <template>
   <div>
-    <PageHeader
-      :eyebrow="$t('pages.priceLists.eyebrow')"
-      :title="$t('pages.priceLists.title')"
-      :description="$t('pages.priceLists.description')"
-    >
-      <button class="btn-primary" @click="openNew">
-        <Plus :size="17" />បញ្ជីតម្លៃថ្មី
-      </button>
+    <PageHeader :title="$t('pages.priceLists.title')">
+      <Button variant="solid" size="lg" @click="openNew">
+        <template #prefix><Plus :size="17" /></template>បញ្ជីតម្លៃថ្មី
+      </Button>
     </PageHeader>
 
     <div class="mb-5 rounded-3xl bg-ink p-5 text-white">
@@ -18,10 +14,7 @@
         <h2 class="display m-0 text-2xl font-extrabold">
           {{ displayListName(activeList?.name) }}
         </h2>
-        <span
-          class="rounded-full bg-mint px-3 py-1 text-xs font-extrabold text-ink"
-          >កំពុងប្រើ</span
-        >
+        <Badge theme="green" variant="solid">កំពុងប្រើ</Badge>
       </div>
       <p class="mb-0 mt-2 text-sm text-white/55">
         {{
@@ -50,34 +43,22 @@
               <h2 class="display m-0 text-lg font-extrabold">
                 {{ displayListName(list.name) }}
               </h2>
-              <span
-                v-if="list.isNormal"
-                class="rounded-full bg-black/5 px-2 py-1 text-[10px] font-bold"
-                >បានការពារ</span
-              >
-              <span
-                v-if="list.id === store.activePriceListId"
-                class="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-bold text-emerald-700"
-                >កំពុងប្រើ</span
-              >
-              <span
-                v-if="list.isArchived"
-                class="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600"
-                >ប័ណ្ណសារ</span
-              >
+              <Badge v-if="list.isNormal">បានការពារ</Badge>
+              <Badge v-if="list.id === store.activePriceListId" theme="green">កំពុងប្រើ</Badge>
+              <Badge v-if="list.isArchived" theme="gray">ប័ណ្ណសារ</Badge>
             </div>
             <p class="mb-0 mt-1 text-xs text-black/40">
               {{ scheduleText(list) }} · បានរក្សាទុក
               {{ Number(list.overrideCount || 0) }} តម្លៃ
             </p>
           </div>
-          <button
-            class="btn-soft !px-3"
+          <Button variant="subtle" size="lg"
+            class="!px-3"
             :aria-label="`កែសម្រួល ${list.name}`"
             @click="openEdit(list)"
           >
-            <Pencil :size="15" />
-          </button>
+            <template #icon><Pencil :size="15" /></template>
+          </Button>
         </div>
       </article>
     </div>
@@ -90,9 +71,8 @@
       <form id="price-list-form" class="space-y-4" @submit.prevent="save">
         <label>
           <span class="label">ឈ្មោះ</span>
-          <input
+          <TextInput size="lg" variant="outline"
             v-model.trim="form.name"
-            class="input"
             maxlength="80"
             required
             :disabled="form.isNormal"
@@ -103,7 +83,7 @@
           v-if="!form.isNormal"
           class="flex items-center gap-3 rounded-2xl bg-cream p-4 text-sm font-bold"
         >
-          <input
+          <Checkbox
             v-model="form.scheduleEnabled"
             type="checkbox"
             class="size-4 accent-black"
@@ -114,22 +94,8 @@
           v-if="form.scheduleEnabled && !form.isNormal"
           class="grid gap-4 sm:grid-cols-2"
         >
-          <label
-            ><span class="label">ចាប់ផ្តើម</span
-            ><input
-              v-model="form.scheduleStartLocal"
-              type="datetime-local"
-              class="input"
-              required
-          /></label>
-          <label
-            ><span class="label">បញ្ចប់</span
-            ><input
-              v-model="form.scheduleEndLocal"
-              type="datetime-local"
-              class="input"
-              required
-          /></label>
+          <ScheduleDateTimePicker v-model="form.scheduleStartLocal" label="ចាប់ផ្តើម" />
+          <ScheduleDateTimePicker v-model="form.scheduleEndLocal" label="បញ្ចប់" />
           <p class="m-0 text-xs leading-5 text-black/45 sm:col-span-2">
             ម៉ោងប្រើតំបន់ {{ store.business.timezone }}។
             ម៉ោងបញ្ចប់មិនត្រូវបានរាប់បញ្ចូលទេ។
@@ -139,7 +105,7 @@
           v-if="editingId && !form.isNormal"
           class="flex items-start gap-3 rounded-2xl border border-black/10 p-4 text-sm"
         >
-          <input
+          <Checkbox
             v-model="form.isArchived"
             type="checkbox"
             class="mt-0.5 size-4 accent-black"
@@ -153,31 +119,28 @@
             ></span
           >
         </label>
-        <p
-          v-if="error"
-          class="m-0 rounded-2xl bg-red-50 p-3 text-sm font-bold text-red-700"
-        >
-          {{ error }}
-        </p>
+        <Alert v-if="error" theme="red" :title="error" class="mt-2" />
       </form>
 
       <template #footer>
-        <button
+        <Button variant="solid" size="lg"
           type="submit"
           form="price-list-form"
-          class="btn-primary w-full"
+          class="w-full"
           :disabled="saving"
         >
           {{ saving ? "កំពុងរក្សាទុក…" : "រក្សាទុកបញ្ជីតម្លៃ" }}
-        </button>
+        </Button>
       </template>
     </ModalPanel>
   </div>
 </template>
 
 <script setup lang="ts">
+import { Badge, Alert, Button, Checkbox, TextInput } from "frappe-ui";
 import { computed, reactive, ref } from "vue";
 import { BadgeDollarSign, Pencil, Plus } from "lucide-vue-next";
+import ScheduleDateTimePicker from "../components/ScheduleDateTimePicker.vue";
 import PageHeader from "../components/PageHeader.vue";
 import ModalPanel from "../components/ModalPanel.vue";
 import { useAdminStore, type PriceList } from "../stores/admin";

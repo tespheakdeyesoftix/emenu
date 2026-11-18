@@ -3,6 +3,326 @@
 part of 'register_database.dart';
 
 // ignore_for_file: type=lint
+class $RegisterUiPreferencesTable extends RegisterUiPreferences
+    with TableInfo<$RegisterUiPreferencesTable, RegisterUiPreference> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $RegisterUiPreferencesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(1),
+  );
+  static const VerificationMeta _sellScreenLayoutMeta = const VerificationMeta(
+    'sellScreenLayout',
+  );
+  @override
+  late final GeneratedColumn<String> sellScreenLayout = GeneratedColumn<String>(
+    'sell_screen_layout',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('menu_top'),
+  );
+  static const VerificationMeta _orderProductListWidthMeta =
+      const VerificationMeta('orderProductListWidth');
+  @override
+  late final GeneratedColumn<int> orderProductListWidth = GeneratedColumn<int>(
+    'order_product_list_width',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(350),
+  );
+  static const VerificationMeta _catalogWidthMeta = const VerificationMeta(
+    'catalogWidth',
+  );
+  @override
+  late final GeneratedColumn<int> catalogWidth = GeneratedColumn<int>(
+    'catalog_width',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(200),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    sellScreenLayout,
+    orderProductListWidth,
+    catalogWidth,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'register_ui_preferences';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<RegisterUiPreference> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('sell_screen_layout')) {
+      context.handle(
+        _sellScreenLayoutMeta,
+        sellScreenLayout.isAcceptableOrUnknown(
+          data['sell_screen_layout']!,
+          _sellScreenLayoutMeta,
+        ),
+      );
+    }
+    if (data.containsKey('order_product_list_width')) {
+      context.handle(
+        _orderProductListWidthMeta,
+        orderProductListWidth.isAcceptableOrUnknown(
+          data['order_product_list_width']!,
+          _orderProductListWidthMeta,
+        ),
+      );
+    }
+    if (data.containsKey('catalog_width')) {
+      context.handle(
+        _catalogWidthMeta,
+        catalogWidth.isAcceptableOrUnknown(
+          data['catalog_width']!,
+          _catalogWidthMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  RegisterUiPreference map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return RegisterUiPreference(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      sellScreenLayout: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}sell_screen_layout'],
+      )!,
+      orderProductListWidth: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}order_product_list_width'],
+      )!,
+      catalogWidth: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}catalog_width'],
+      )!,
+    );
+  }
+
+  @override
+  $RegisterUiPreferencesTable createAlias(String alias) {
+    return $RegisterUiPreferencesTable(attachedDatabase, alias);
+  }
+}
+
+class RegisterUiPreference extends DataClass
+    implements Insertable<RegisterUiPreference> {
+  final int id;
+  final String sellScreenLayout;
+  final int orderProductListWidth;
+  final int catalogWidth;
+  const RegisterUiPreference({
+    required this.id,
+    required this.sellScreenLayout,
+    required this.orderProductListWidth,
+    required this.catalogWidth,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['sell_screen_layout'] = Variable<String>(sellScreenLayout);
+    map['order_product_list_width'] = Variable<int>(orderProductListWidth);
+    map['catalog_width'] = Variable<int>(catalogWidth);
+    return map;
+  }
+
+  RegisterUiPreferencesCompanion toCompanion(bool nullToAbsent) {
+    return RegisterUiPreferencesCompanion(
+      id: Value(id),
+      sellScreenLayout: Value(sellScreenLayout),
+      orderProductListWidth: Value(orderProductListWidth),
+      catalogWidth: Value(catalogWidth),
+    );
+  }
+
+  factory RegisterUiPreference.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return RegisterUiPreference(
+      id: serializer.fromJson<int>(json['id']),
+      sellScreenLayout: serializer.fromJson<String>(json['sellScreenLayout']),
+      orderProductListWidth: serializer.fromJson<int>(
+        json['orderProductListWidth'],
+      ),
+      catalogWidth: serializer.fromJson<int>(json['catalogWidth']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'sellScreenLayout': serializer.toJson<String>(sellScreenLayout),
+      'orderProductListWidth': serializer.toJson<int>(orderProductListWidth),
+      'catalogWidth': serializer.toJson<int>(catalogWidth),
+    };
+  }
+
+  RegisterUiPreference copyWith({
+    int? id,
+    String? sellScreenLayout,
+    int? orderProductListWidth,
+    int? catalogWidth,
+  }) => RegisterUiPreference(
+    id: id ?? this.id,
+    sellScreenLayout: sellScreenLayout ?? this.sellScreenLayout,
+    orderProductListWidth: orderProductListWidth ?? this.orderProductListWidth,
+    catalogWidth: catalogWidth ?? this.catalogWidth,
+  );
+  RegisterUiPreference copyWithCompanion(RegisterUiPreferencesCompanion data) {
+    return RegisterUiPreference(
+      id: data.id.present ? data.id.value : this.id,
+      sellScreenLayout: data.sellScreenLayout.present
+          ? data.sellScreenLayout.value
+          : this.sellScreenLayout,
+      orderProductListWidth: data.orderProductListWidth.present
+          ? data.orderProductListWidth.value
+          : this.orderProductListWidth,
+      catalogWidth: data.catalogWidth.present
+          ? data.catalogWidth.value
+          : this.catalogWidth,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RegisterUiPreference(')
+          ..write('id: $id, ')
+          ..write('sellScreenLayout: $sellScreenLayout, ')
+          ..write('orderProductListWidth: $orderProductListWidth, ')
+          ..write('catalogWidth: $catalogWidth')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, sellScreenLayout, orderProductListWidth, catalogWidth);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is RegisterUiPreference &&
+          other.id == this.id &&
+          other.sellScreenLayout == this.sellScreenLayout &&
+          other.orderProductListWidth == this.orderProductListWidth &&
+          other.catalogWidth == this.catalogWidth);
+}
+
+class RegisterUiPreferencesCompanion
+    extends UpdateCompanion<RegisterUiPreference> {
+  final Value<int> id;
+  final Value<String> sellScreenLayout;
+  final Value<int> orderProductListWidth;
+  final Value<int> catalogWidth;
+  const RegisterUiPreferencesCompanion({
+    this.id = const Value.absent(),
+    this.sellScreenLayout = const Value.absent(),
+    this.orderProductListWidth = const Value.absent(),
+    this.catalogWidth = const Value.absent(),
+  });
+  RegisterUiPreferencesCompanion.insert({
+    this.id = const Value.absent(),
+    this.sellScreenLayout = const Value.absent(),
+    this.orderProductListWidth = const Value.absent(),
+    this.catalogWidth = const Value.absent(),
+  });
+  static Insertable<RegisterUiPreference> custom({
+    Expression<int>? id,
+    Expression<String>? sellScreenLayout,
+    Expression<int>? orderProductListWidth,
+    Expression<int>? catalogWidth,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (sellScreenLayout != null) 'sell_screen_layout': sellScreenLayout,
+      if (orderProductListWidth != null)
+        'order_product_list_width': orderProductListWidth,
+      if (catalogWidth != null) 'catalog_width': catalogWidth,
+    });
+  }
+
+  RegisterUiPreferencesCompanion copyWith({
+    Value<int>? id,
+    Value<String>? sellScreenLayout,
+    Value<int>? orderProductListWidth,
+    Value<int>? catalogWidth,
+  }) {
+    return RegisterUiPreferencesCompanion(
+      id: id ?? this.id,
+      sellScreenLayout: sellScreenLayout ?? this.sellScreenLayout,
+      orderProductListWidth:
+          orderProductListWidth ?? this.orderProductListWidth,
+      catalogWidth: catalogWidth ?? this.catalogWidth,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (sellScreenLayout.present) {
+      map['sell_screen_layout'] = Variable<String>(sellScreenLayout.value);
+    }
+    if (orderProductListWidth.present) {
+      map['order_product_list_width'] = Variable<int>(
+        orderProductListWidth.value,
+      );
+    }
+    if (catalogWidth.present) {
+      map['catalog_width'] = Variable<int>(catalogWidth.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RegisterUiPreferencesCompanion(')
+          ..write('id: $id, ')
+          ..write('sellScreenLayout: $sellScreenLayout, ')
+          ..write('orderProductListWidth: $orderProductListWidth, ')
+          ..write('catalogWidth: $catalogWidth')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $RegisterInstallationsTable extends RegisterInstallations
     with TableInfo<$RegisterInstallationsTable, RegisterInstallation> {
   @override
@@ -2670,6 +2990,586 @@ class HeldBillsCompanion extends UpdateCompanion<HeldBill> {
   }
 }
 
+class $DiscardedBillsTable extends DiscardedBills
+    with TableInfo<$DiscardedBillsTable, DiscardedBill> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DiscardedBillsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _profileIdMeta = const VerificationMeta(
+    'profileId',
+  );
+  @override
+  late final GeneratedColumn<String> profileId = GeneratedColumn<String>(
+    'profile_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _billIdMeta = const VerificationMeta('billId');
+  @override
+  late final GeneratedColumn<String> billId = GeneratedColumn<String>(
+    'bill_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _shiftIdMeta = const VerificationMeta(
+    'shiftId',
+  );
+  @override
+  late final GeneratedColumn<String> shiftId = GeneratedColumn<String>(
+    'shift_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _workingDayIdMeta = const VerificationMeta(
+    'workingDayId',
+  );
+  @override
+  late final GeneratedColumn<String> workingDayId = GeneratedColumn<String>(
+    'working_day_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _businessDateMeta = const VerificationMeta(
+    'businessDate',
+  );
+  @override
+  late final GeneratedColumn<String> businessDate = GeneratedColumn<String>(
+    'business_date',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _operatorNameMeta = const VerificationMeta(
+    'operatorName',
+  );
+  @override
+  late final GeneratedColumn<String> operatorName = GeneratedColumn<String>(
+    'operator_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _payloadMeta = const VerificationMeta(
+    'payload',
+  );
+  @override
+  late final GeneratedColumn<String> payload = GeneratedColumn<String>(
+    'payload',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _discardedAtMeta = const VerificationMeta(
+    'discardedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> discardedAt = GeneratedColumn<DateTime>(
+    'discarded_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    profileId,
+    billId,
+    shiftId,
+    workingDayId,
+    businessDate,
+    operatorName,
+    payload,
+    discardedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'discarded_bills';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<DiscardedBill> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('profile_id')) {
+      context.handle(
+        _profileIdMeta,
+        profileId.isAcceptableOrUnknown(data['profile_id']!, _profileIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_profileIdMeta);
+    }
+    if (data.containsKey('bill_id')) {
+      context.handle(
+        _billIdMeta,
+        billId.isAcceptableOrUnknown(data['bill_id']!, _billIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_billIdMeta);
+    }
+    if (data.containsKey('shift_id')) {
+      context.handle(
+        _shiftIdMeta,
+        shiftId.isAcceptableOrUnknown(data['shift_id']!, _shiftIdMeta),
+      );
+    }
+    if (data.containsKey('working_day_id')) {
+      context.handle(
+        _workingDayIdMeta,
+        workingDayId.isAcceptableOrUnknown(
+          data['working_day_id']!,
+          _workingDayIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('business_date')) {
+      context.handle(
+        _businessDateMeta,
+        businessDate.isAcceptableOrUnknown(
+          data['business_date']!,
+          _businessDateMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_businessDateMeta);
+    }
+    if (data.containsKey('operator_name')) {
+      context.handle(
+        _operatorNameMeta,
+        operatorName.isAcceptableOrUnknown(
+          data['operator_name']!,
+          _operatorNameMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_operatorNameMeta);
+    }
+    if (data.containsKey('payload')) {
+      context.handle(
+        _payloadMeta,
+        payload.isAcceptableOrUnknown(data['payload']!, _payloadMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_payloadMeta);
+    }
+    if (data.containsKey('discarded_at')) {
+      context.handle(
+        _discardedAtMeta,
+        discardedAt.isAcceptableOrUnknown(
+          data['discarded_at']!,
+          _discardedAtMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_discardedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  DiscardedBill map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DiscardedBill(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      profileId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}profile_id'],
+      )!,
+      billId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}bill_id'],
+      )!,
+      shiftId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}shift_id'],
+      ),
+      workingDayId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}working_day_id'],
+      ),
+      businessDate: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}business_date'],
+      )!,
+      operatorName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}operator_name'],
+      )!,
+      payload: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}payload'],
+      )!,
+      discardedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}discarded_at'],
+      )!,
+    );
+  }
+
+  @override
+  $DiscardedBillsTable createAlias(String alias) {
+    return $DiscardedBillsTable(attachedDatabase, alias);
+  }
+}
+
+class DiscardedBill extends DataClass implements Insertable<DiscardedBill> {
+  final String id;
+  final String profileId;
+  final String billId;
+  final String? shiftId;
+  final String? workingDayId;
+  final String businessDate;
+  final String operatorName;
+  final String payload;
+  final DateTime discardedAt;
+  const DiscardedBill({
+    required this.id,
+    required this.profileId,
+    required this.billId,
+    this.shiftId,
+    this.workingDayId,
+    required this.businessDate,
+    required this.operatorName,
+    required this.payload,
+    required this.discardedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['profile_id'] = Variable<String>(profileId);
+    map['bill_id'] = Variable<String>(billId);
+    if (!nullToAbsent || shiftId != null) {
+      map['shift_id'] = Variable<String>(shiftId);
+    }
+    if (!nullToAbsent || workingDayId != null) {
+      map['working_day_id'] = Variable<String>(workingDayId);
+    }
+    map['business_date'] = Variable<String>(businessDate);
+    map['operator_name'] = Variable<String>(operatorName);
+    map['payload'] = Variable<String>(payload);
+    map['discarded_at'] = Variable<DateTime>(discardedAt);
+    return map;
+  }
+
+  DiscardedBillsCompanion toCompanion(bool nullToAbsent) {
+    return DiscardedBillsCompanion(
+      id: Value(id),
+      profileId: Value(profileId),
+      billId: Value(billId),
+      shiftId: shiftId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(shiftId),
+      workingDayId: workingDayId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(workingDayId),
+      businessDate: Value(businessDate),
+      operatorName: Value(operatorName),
+      payload: Value(payload),
+      discardedAt: Value(discardedAt),
+    );
+  }
+
+  factory DiscardedBill.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DiscardedBill(
+      id: serializer.fromJson<String>(json['id']),
+      profileId: serializer.fromJson<String>(json['profileId']),
+      billId: serializer.fromJson<String>(json['billId']),
+      shiftId: serializer.fromJson<String?>(json['shiftId']),
+      workingDayId: serializer.fromJson<String?>(json['workingDayId']),
+      businessDate: serializer.fromJson<String>(json['businessDate']),
+      operatorName: serializer.fromJson<String>(json['operatorName']),
+      payload: serializer.fromJson<String>(json['payload']),
+      discardedAt: serializer.fromJson<DateTime>(json['discardedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'profileId': serializer.toJson<String>(profileId),
+      'billId': serializer.toJson<String>(billId),
+      'shiftId': serializer.toJson<String?>(shiftId),
+      'workingDayId': serializer.toJson<String?>(workingDayId),
+      'businessDate': serializer.toJson<String>(businessDate),
+      'operatorName': serializer.toJson<String>(operatorName),
+      'payload': serializer.toJson<String>(payload),
+      'discardedAt': serializer.toJson<DateTime>(discardedAt),
+    };
+  }
+
+  DiscardedBill copyWith({
+    String? id,
+    String? profileId,
+    String? billId,
+    Value<String?> shiftId = const Value.absent(),
+    Value<String?> workingDayId = const Value.absent(),
+    String? businessDate,
+    String? operatorName,
+    String? payload,
+    DateTime? discardedAt,
+  }) => DiscardedBill(
+    id: id ?? this.id,
+    profileId: profileId ?? this.profileId,
+    billId: billId ?? this.billId,
+    shiftId: shiftId.present ? shiftId.value : this.shiftId,
+    workingDayId: workingDayId.present ? workingDayId.value : this.workingDayId,
+    businessDate: businessDate ?? this.businessDate,
+    operatorName: operatorName ?? this.operatorName,
+    payload: payload ?? this.payload,
+    discardedAt: discardedAt ?? this.discardedAt,
+  );
+  DiscardedBill copyWithCompanion(DiscardedBillsCompanion data) {
+    return DiscardedBill(
+      id: data.id.present ? data.id.value : this.id,
+      profileId: data.profileId.present ? data.profileId.value : this.profileId,
+      billId: data.billId.present ? data.billId.value : this.billId,
+      shiftId: data.shiftId.present ? data.shiftId.value : this.shiftId,
+      workingDayId: data.workingDayId.present
+          ? data.workingDayId.value
+          : this.workingDayId,
+      businessDate: data.businessDate.present
+          ? data.businessDate.value
+          : this.businessDate,
+      operatorName: data.operatorName.present
+          ? data.operatorName.value
+          : this.operatorName,
+      payload: data.payload.present ? data.payload.value : this.payload,
+      discardedAt: data.discardedAt.present
+          ? data.discardedAt.value
+          : this.discardedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DiscardedBill(')
+          ..write('id: $id, ')
+          ..write('profileId: $profileId, ')
+          ..write('billId: $billId, ')
+          ..write('shiftId: $shiftId, ')
+          ..write('workingDayId: $workingDayId, ')
+          ..write('businessDate: $businessDate, ')
+          ..write('operatorName: $operatorName, ')
+          ..write('payload: $payload, ')
+          ..write('discardedAt: $discardedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    profileId,
+    billId,
+    shiftId,
+    workingDayId,
+    businessDate,
+    operatorName,
+    payload,
+    discardedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DiscardedBill &&
+          other.id == this.id &&
+          other.profileId == this.profileId &&
+          other.billId == this.billId &&
+          other.shiftId == this.shiftId &&
+          other.workingDayId == this.workingDayId &&
+          other.businessDate == this.businessDate &&
+          other.operatorName == this.operatorName &&
+          other.payload == this.payload &&
+          other.discardedAt == this.discardedAt);
+}
+
+class DiscardedBillsCompanion extends UpdateCompanion<DiscardedBill> {
+  final Value<String> id;
+  final Value<String> profileId;
+  final Value<String> billId;
+  final Value<String?> shiftId;
+  final Value<String?> workingDayId;
+  final Value<String> businessDate;
+  final Value<String> operatorName;
+  final Value<String> payload;
+  final Value<DateTime> discardedAt;
+  final Value<int> rowid;
+  const DiscardedBillsCompanion({
+    this.id = const Value.absent(),
+    this.profileId = const Value.absent(),
+    this.billId = const Value.absent(),
+    this.shiftId = const Value.absent(),
+    this.workingDayId = const Value.absent(),
+    this.businessDate = const Value.absent(),
+    this.operatorName = const Value.absent(),
+    this.payload = const Value.absent(),
+    this.discardedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  DiscardedBillsCompanion.insert({
+    required String id,
+    required String profileId,
+    required String billId,
+    this.shiftId = const Value.absent(),
+    this.workingDayId = const Value.absent(),
+    required String businessDate,
+    required String operatorName,
+    required String payload,
+    required DateTime discardedAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       profileId = Value(profileId),
+       billId = Value(billId),
+       businessDate = Value(businessDate),
+       operatorName = Value(operatorName),
+       payload = Value(payload),
+       discardedAt = Value(discardedAt);
+  static Insertable<DiscardedBill> custom({
+    Expression<String>? id,
+    Expression<String>? profileId,
+    Expression<String>? billId,
+    Expression<String>? shiftId,
+    Expression<String>? workingDayId,
+    Expression<String>? businessDate,
+    Expression<String>? operatorName,
+    Expression<String>? payload,
+    Expression<DateTime>? discardedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (profileId != null) 'profile_id': profileId,
+      if (billId != null) 'bill_id': billId,
+      if (shiftId != null) 'shift_id': shiftId,
+      if (workingDayId != null) 'working_day_id': workingDayId,
+      if (businessDate != null) 'business_date': businessDate,
+      if (operatorName != null) 'operator_name': operatorName,
+      if (payload != null) 'payload': payload,
+      if (discardedAt != null) 'discarded_at': discardedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  DiscardedBillsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? profileId,
+    Value<String>? billId,
+    Value<String?>? shiftId,
+    Value<String?>? workingDayId,
+    Value<String>? businessDate,
+    Value<String>? operatorName,
+    Value<String>? payload,
+    Value<DateTime>? discardedAt,
+    Value<int>? rowid,
+  }) {
+    return DiscardedBillsCompanion(
+      id: id ?? this.id,
+      profileId: profileId ?? this.profileId,
+      billId: billId ?? this.billId,
+      shiftId: shiftId ?? this.shiftId,
+      workingDayId: workingDayId ?? this.workingDayId,
+      businessDate: businessDate ?? this.businessDate,
+      operatorName: operatorName ?? this.operatorName,
+      payload: payload ?? this.payload,
+      discardedAt: discardedAt ?? this.discardedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (profileId.present) {
+      map['profile_id'] = Variable<String>(profileId.value);
+    }
+    if (billId.present) {
+      map['bill_id'] = Variable<String>(billId.value);
+    }
+    if (shiftId.present) {
+      map['shift_id'] = Variable<String>(shiftId.value);
+    }
+    if (workingDayId.present) {
+      map['working_day_id'] = Variable<String>(workingDayId.value);
+    }
+    if (businessDate.present) {
+      map['business_date'] = Variable<String>(businessDate.value);
+    }
+    if (operatorName.present) {
+      map['operator_name'] = Variable<String>(operatorName.value);
+    }
+    if (payload.present) {
+      map['payload'] = Variable<String>(payload.value);
+    }
+    if (discardedAt.present) {
+      map['discarded_at'] = Variable<DateTime>(discardedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DiscardedBillsCompanion(')
+          ..write('id: $id, ')
+          ..write('profileId: $profileId, ')
+          ..write('billId: $billId, ')
+          ..write('shiftId: $shiftId, ')
+          ..write('workingDayId: $workingDayId, ')
+          ..write('businessDate: $businessDate, ')
+          ..write('operatorName: $operatorName, ')
+          ..write('payload: $payload, ')
+          ..write('discardedAt: $discardedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $RegisterCartDraftsTable extends RegisterCartDrafts
     with TableInfo<$RegisterCartDraftsTable, RegisterCartDraft> {
   @override
@@ -2988,6 +3888,332 @@ class RegisterCartDraftsCompanion extends UpdateCompanion<RegisterCartDraft> {
           ..write('operatorId: $operatorId, ')
           ..write('profileId: $profileId, ')
           ..write('billId: $billId, ')
+          ..write('payload: $payload, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $ParkedTableDraftsTable extends ParkedTableDrafts
+    with TableInfo<$ParkedTableDraftsTable, ParkedTableDraft> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $ParkedTableDraftsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _operatorIdMeta = const VerificationMeta(
+    'operatorId',
+  );
+  @override
+  late final GeneratedColumn<String> operatorId = GeneratedColumn<String>(
+    'operator_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES register_operators (id)',
+    ),
+  );
+  static const VerificationMeta _profileIdMeta = const VerificationMeta(
+    'profileId',
+  );
+  @override
+  late final GeneratedColumn<String> profileId = GeneratedColumn<String>(
+    'profile_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _tableIdMeta = const VerificationMeta(
+    'tableId',
+  );
+  @override
+  late final GeneratedColumn<String> tableId = GeneratedColumn<String>(
+    'table_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _payloadMeta = const VerificationMeta(
+    'payload',
+  );
+  @override
+  late final GeneratedColumn<String> payload = GeneratedColumn<String>(
+    'payload',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    operatorId,
+    profileId,
+    tableId,
+    payload,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'parked_table_drafts';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<ParkedTableDraft> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('operator_id')) {
+      context.handle(
+        _operatorIdMeta,
+        operatorId.isAcceptableOrUnknown(data['operator_id']!, _operatorIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_operatorIdMeta);
+    }
+    if (data.containsKey('profile_id')) {
+      context.handle(
+        _profileIdMeta,
+        profileId.isAcceptableOrUnknown(data['profile_id']!, _profileIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_profileIdMeta);
+    }
+    if (data.containsKey('table_id')) {
+      context.handle(
+        _tableIdMeta,
+        tableId.isAcceptableOrUnknown(data['table_id']!, _tableIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_tableIdMeta);
+    }
+    if (data.containsKey('payload')) {
+      context.handle(
+        _payloadMeta,
+        payload.isAcceptableOrUnknown(data['payload']!, _payloadMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_payloadMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {operatorId, profileId, tableId};
+  @override
+  ParkedTableDraft map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return ParkedTableDraft(
+      operatorId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}operator_id'],
+      )!,
+      profileId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}profile_id'],
+      )!,
+      tableId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}table_id'],
+      )!,
+      payload: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}payload'],
+      )!,
+    );
+  }
+
+  @override
+  $ParkedTableDraftsTable createAlias(String alias) {
+    return $ParkedTableDraftsTable(attachedDatabase, alias);
+  }
+}
+
+class ParkedTableDraft extends DataClass
+    implements Insertable<ParkedTableDraft> {
+  final String operatorId;
+  final String profileId;
+  final String tableId;
+  final String payload;
+  const ParkedTableDraft({
+    required this.operatorId,
+    required this.profileId,
+    required this.tableId,
+    required this.payload,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['operator_id'] = Variable<String>(operatorId);
+    map['profile_id'] = Variable<String>(profileId);
+    map['table_id'] = Variable<String>(tableId);
+    map['payload'] = Variable<String>(payload);
+    return map;
+  }
+
+  ParkedTableDraftsCompanion toCompanion(bool nullToAbsent) {
+    return ParkedTableDraftsCompanion(
+      operatorId: Value(operatorId),
+      profileId: Value(profileId),
+      tableId: Value(tableId),
+      payload: Value(payload),
+    );
+  }
+
+  factory ParkedTableDraft.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return ParkedTableDraft(
+      operatorId: serializer.fromJson<String>(json['operatorId']),
+      profileId: serializer.fromJson<String>(json['profileId']),
+      tableId: serializer.fromJson<String>(json['tableId']),
+      payload: serializer.fromJson<String>(json['payload']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'operatorId': serializer.toJson<String>(operatorId),
+      'profileId': serializer.toJson<String>(profileId),
+      'tableId': serializer.toJson<String>(tableId),
+      'payload': serializer.toJson<String>(payload),
+    };
+  }
+
+  ParkedTableDraft copyWith({
+    String? operatorId,
+    String? profileId,
+    String? tableId,
+    String? payload,
+  }) => ParkedTableDraft(
+    operatorId: operatorId ?? this.operatorId,
+    profileId: profileId ?? this.profileId,
+    tableId: tableId ?? this.tableId,
+    payload: payload ?? this.payload,
+  );
+  ParkedTableDraft copyWithCompanion(ParkedTableDraftsCompanion data) {
+    return ParkedTableDraft(
+      operatorId: data.operatorId.present
+          ? data.operatorId.value
+          : this.operatorId,
+      profileId: data.profileId.present ? data.profileId.value : this.profileId,
+      tableId: data.tableId.present ? data.tableId.value : this.tableId,
+      payload: data.payload.present ? data.payload.value : this.payload,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ParkedTableDraft(')
+          ..write('operatorId: $operatorId, ')
+          ..write('profileId: $profileId, ')
+          ..write('tableId: $tableId, ')
+          ..write('payload: $payload')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(operatorId, profileId, tableId, payload);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is ParkedTableDraft &&
+          other.operatorId == this.operatorId &&
+          other.profileId == this.profileId &&
+          other.tableId == this.tableId &&
+          other.payload == this.payload);
+}
+
+class ParkedTableDraftsCompanion extends UpdateCompanion<ParkedTableDraft> {
+  final Value<String> operatorId;
+  final Value<String> profileId;
+  final Value<String> tableId;
+  final Value<String> payload;
+  final Value<int> rowid;
+  const ParkedTableDraftsCompanion({
+    this.operatorId = const Value.absent(),
+    this.profileId = const Value.absent(),
+    this.tableId = const Value.absent(),
+    this.payload = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  ParkedTableDraftsCompanion.insert({
+    required String operatorId,
+    required String profileId,
+    required String tableId,
+    required String payload,
+    this.rowid = const Value.absent(),
+  }) : operatorId = Value(operatorId),
+       profileId = Value(profileId),
+       tableId = Value(tableId),
+       payload = Value(payload);
+  static Insertable<ParkedTableDraft> custom({
+    Expression<String>? operatorId,
+    Expression<String>? profileId,
+    Expression<String>? tableId,
+    Expression<String>? payload,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (operatorId != null) 'operator_id': operatorId,
+      if (profileId != null) 'profile_id': profileId,
+      if (tableId != null) 'table_id': tableId,
+      if (payload != null) 'payload': payload,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  ParkedTableDraftsCompanion copyWith({
+    Value<String>? operatorId,
+    Value<String>? profileId,
+    Value<String>? tableId,
+    Value<String>? payload,
+    Value<int>? rowid,
+  }) {
+    return ParkedTableDraftsCompanion(
+      operatorId: operatorId ?? this.operatorId,
+      profileId: profileId ?? this.profileId,
+      tableId: tableId ?? this.tableId,
+      payload: payload ?? this.payload,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (operatorId.present) {
+      map['operator_id'] = Variable<String>(operatorId.value);
+    }
+    if (profileId.present) {
+      map['profile_id'] = Variable<String>(profileId.value);
+    }
+    if (tableId.present) {
+      map['table_id'] = Variable<String>(tableId.value);
+    }
+    if (payload.present) {
+      map['payload'] = Variable<String>(payload.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ParkedTableDraftsCompanion(')
+          ..write('operatorId: $operatorId, ')
+          ..write('profileId: $profileId, ')
+          ..write('tableId: $tableId, ')
           ..write('payload: $payload, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -6504,6 +7730,8 @@ class StoreOperatingEventsCompanion
 abstract class _$RegisterDatabase extends GeneratedDatabase {
   _$RegisterDatabase(QueryExecutor e) : super(e);
   $RegisterDatabaseManager get managers => $RegisterDatabaseManager(this);
+  late final $RegisterUiPreferencesTable registerUiPreferences =
+      $RegisterUiPreferencesTable(this);
   late final $RegisterInstallationsTable registerInstallations =
       $RegisterInstallationsTable(this);
   late final $RegisterOperatorsTable registerOperators =
@@ -6514,8 +7742,11 @@ abstract class _$RegisterDatabase extends GeneratedDatabase {
   late final $LocalSalesTable localSales = $LocalSalesTable(this);
   late final $SaleOutboxTable saleOutbox = $SaleOutboxTable(this);
   late final $HeldBillsTable heldBills = $HeldBillsTable(this);
+  late final $DiscardedBillsTable discardedBills = $DiscardedBillsTable(this);
   late final $RegisterCartDraftsTable registerCartDrafts =
       $RegisterCartDraftsTable(this);
+  late final $ParkedTableDraftsTable parkedTableDrafts =
+      $ParkedTableDraftsTable(this);
   late final $RegisterCommandsTable registerCommands = $RegisterCommandsTable(
     this,
   );
@@ -6544,13 +7775,16 @@ abstract class _$RegisterDatabase extends GeneratedDatabase {
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
   List<DatabaseSchemaEntity> get allSchemaEntities => [
+    registerUiPreferences,
     registerInstallations,
     registerOperators,
     profileSnapshots,
     localSales,
     saleOutbox,
     heldBills,
+    discardedBills,
     registerCartDrafts,
+    parkedTableDrafts,
     registerCommands,
     storeNetworkSettings,
     storeDevices,
@@ -6564,6 +7798,218 @@ abstract class _$RegisterDatabase extends GeneratedDatabase {
   ];
 }
 
+typedef $$RegisterUiPreferencesTableCreateCompanionBuilder =
+    RegisterUiPreferencesCompanion Function({
+      Value<int> id,
+      Value<String> sellScreenLayout,
+      Value<int> orderProductListWidth,
+      Value<int> catalogWidth,
+    });
+typedef $$RegisterUiPreferencesTableUpdateCompanionBuilder =
+    RegisterUiPreferencesCompanion Function({
+      Value<int> id,
+      Value<String> sellScreenLayout,
+      Value<int> orderProductListWidth,
+      Value<int> catalogWidth,
+    });
+
+class $$RegisterUiPreferencesTableFilterComposer
+    extends Composer<_$RegisterDatabase, $RegisterUiPreferencesTable> {
+  $$RegisterUiPreferencesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get sellScreenLayout => $composableBuilder(
+    column: $table.sellScreenLayout,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get orderProductListWidth => $composableBuilder(
+    column: $table.orderProductListWidth,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get catalogWidth => $composableBuilder(
+    column: $table.catalogWidth,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$RegisterUiPreferencesTableOrderingComposer
+    extends Composer<_$RegisterDatabase, $RegisterUiPreferencesTable> {
+  $$RegisterUiPreferencesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get sellScreenLayout => $composableBuilder(
+    column: $table.sellScreenLayout,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get orderProductListWidth => $composableBuilder(
+    column: $table.orderProductListWidth,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get catalogWidth => $composableBuilder(
+    column: $table.catalogWidth,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$RegisterUiPreferencesTableAnnotationComposer
+    extends Composer<_$RegisterDatabase, $RegisterUiPreferencesTable> {
+  $$RegisterUiPreferencesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get sellScreenLayout => $composableBuilder(
+    column: $table.sellScreenLayout,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get orderProductListWidth => $composableBuilder(
+    column: $table.orderProductListWidth,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get catalogWidth => $composableBuilder(
+    column: $table.catalogWidth,
+    builder: (column) => column,
+  );
+}
+
+class $$RegisterUiPreferencesTableTableManager
+    extends
+        RootTableManager<
+          _$RegisterDatabase,
+          $RegisterUiPreferencesTable,
+          RegisterUiPreference,
+          $$RegisterUiPreferencesTableFilterComposer,
+          $$RegisterUiPreferencesTableOrderingComposer,
+          $$RegisterUiPreferencesTableAnnotationComposer,
+          $$RegisterUiPreferencesTableCreateCompanionBuilder,
+          $$RegisterUiPreferencesTableUpdateCompanionBuilder,
+          (
+            RegisterUiPreference,
+            BaseReferences<
+              _$RegisterDatabase,
+              $RegisterUiPreferencesTable,
+              RegisterUiPreference
+            >,
+          ),
+          RegisterUiPreference,
+          PrefetchHooks Function()
+        > {
+  $$RegisterUiPreferencesTableTableManager(
+    _$RegisterDatabase db,
+    $RegisterUiPreferencesTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$RegisterUiPreferencesTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$RegisterUiPreferencesTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$RegisterUiPreferencesTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<String> sellScreenLayout = const Value.absent(),
+                Value<int> orderProductListWidth = const Value.absent(),
+                Value<int> catalogWidth = const Value.absent(),
+              }) => RegisterUiPreferencesCompanion(
+                id: id,
+                sellScreenLayout: sellScreenLayout,
+                orderProductListWidth: orderProductListWidth,
+                catalogWidth: catalogWidth,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<String> sellScreenLayout = const Value.absent(),
+                Value<int> orderProductListWidth = const Value.absent(),
+                Value<int> catalogWidth = const Value.absent(),
+              }) => RegisterUiPreferencesCompanion.insert(
+                id: id,
+                sellScreenLayout: sellScreenLayout,
+                orderProductListWidth: orderProductListWidth,
+                catalogWidth: catalogWidth,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<
+                    $RegisterUiPreferencesTable,
+                    RegisterUiPreference
+                  >(table),
+                  BaseReferences<
+                    _$RegisterDatabase,
+                    $RegisterUiPreferencesTable,
+                    RegisterUiPreference
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$RegisterUiPreferencesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$RegisterDatabase,
+      $RegisterUiPreferencesTable,
+      RegisterUiPreference,
+      $$RegisterUiPreferencesTableFilterComposer,
+      $$RegisterUiPreferencesTableOrderingComposer,
+      $$RegisterUiPreferencesTableAnnotationComposer,
+      $$RegisterUiPreferencesTableCreateCompanionBuilder,
+      $$RegisterUiPreferencesTableUpdateCompanionBuilder,
+      (
+        RegisterUiPreference,
+        BaseReferences<
+          _$RegisterDatabase,
+          $RegisterUiPreferencesTable,
+          RegisterUiPreference
+        >,
+      ),
+      RegisterUiPreference,
+      PrefetchHooks Function()
+    >;
 typedef $$RegisterInstallationsTableCreateCompanionBuilder =
     RegisterInstallationsCompanion Function({
       Value<int> id,
@@ -6868,6 +8314,27 @@ final class $$RegisterOperatorsTableReferences
       manager.$state.copyWith(prefetchedData: cache),
     );
   }
+
+  static MultiTypedResultKey<$ParkedTableDraftsTable, List<ParkedTableDraft>>
+  _parkedTableDraftsRefsTable(_$RegisterDatabase db) =>
+      MultiTypedResultKey.fromTable(
+        db.parkedTableDrafts,
+        aliasName: 'register_operators__id__parked_table_drafts__operator_id',
+      );
+
+  $$ParkedTableDraftsTableProcessedTableManager get parkedTableDraftsRefs {
+    final manager = $$ParkedTableDraftsTableTableManager(
+      $_db,
+      $_db.parkedTableDrafts,
+    ).filter((f) => f.operatorId.id.sqlEquals($_itemColumn<String>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(
+      _parkedTableDraftsRefsTable($_db),
+    );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
 }
 
 class $$RegisterOperatorsTableFilterComposer
@@ -6930,6 +8397,31 @@ class $$RegisterOperatorsTableFilterComposer
           }) => $$RegisterCartDraftsTableFilterComposer(
             $db: $db,
             $table: $db.registerCartDrafts,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> parkedTableDraftsRefs(
+    Expression<bool> Function($$ParkedTableDraftsTableFilterComposer f) f,
+  ) {
+    final $$ParkedTableDraftsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.parkedTableDrafts,
+      getReferencedColumn: (t) => t.operatorId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ParkedTableDraftsTableFilterComposer(
+            $db: $db,
+            $table: $db.parkedTableDrafts,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -7048,6 +8540,32 @@ class $$RegisterOperatorsTableAnnotationComposer
         );
     return f(composer);
   }
+
+  Expression<T> parkedTableDraftsRefs<T extends Object>(
+    Expression<T> Function($$ParkedTableDraftsTableAnnotationComposer a) f,
+  ) {
+    final $$ParkedTableDraftsTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.id,
+          referencedTable: $db.parkedTableDrafts,
+          getReferencedColumn: (t) => t.operatorId,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$ParkedTableDraftsTableAnnotationComposer(
+                $db: $db,
+                $table: $db.parkedTableDrafts,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
 }
 
 class $$RegisterOperatorsTableTableManager
@@ -7063,7 +8581,10 @@ class $$RegisterOperatorsTableTableManager
           $$RegisterOperatorsTableUpdateCompanionBuilder,
           (RegisterOperator, $$RegisterOperatorsTableReferences),
           RegisterOperator,
-          PrefetchHooks Function({bool registerCartDraftsRefs})
+          PrefetchHooks Function({
+            bool registerCartDraftsRefs,
+            bool parkedTableDraftsRefs,
+          })
         > {
   $$RegisterOperatorsTableTableManager(
     _$RegisterDatabase db,
@@ -7129,39 +8650,64 @@ class $$RegisterOperatorsTableTableManager
                 ),
               )
               .toList(),
-          prefetchHooksCallback: ({registerCartDraftsRefs = false}) {
-            return PrefetchHooks(
-              db: db,
-              explicitlyWatchedTables: [
-                if (registerCartDraftsRefs) db.registerCartDrafts,
-              ],
-              addJoins: null,
-              getPrefetchedDataCallback: (items) async {
-                return [
-                  if (registerCartDraftsRefs)
-                    await $_getPrefetchedDataByColumns<
-                      RegisterOperator,
-                      $RegisterOperatorsTable,
-                      RegisterCartDraft,
-                      $RegisterCartDraftsTable
-                    >(
-                      currentTable: table,
-                      referencedTable: $$RegisterOperatorsTableReferences
-                          ._registerCartDraftsRefsTable(db),
-                      managerFromTypedResult: (p0) =>
-                          $$RegisterOperatorsTableReferences(
-                            db,
-                            table,
-                            p0,
-                          ).registerCartDraftsRefs,
-                      currentColumn: 'id',
-                      referencedColumn: 'operator_id',
-                      typedResults: items,
-                    ),
-                ];
+          prefetchHooksCallback:
+              ({
+                registerCartDraftsRefs = false,
+                parkedTableDraftsRefs = false,
+              }) {
+                return PrefetchHooks(
+                  db: db,
+                  explicitlyWatchedTables: [
+                    if (registerCartDraftsRefs) db.registerCartDrafts,
+                    if (parkedTableDraftsRefs) db.parkedTableDrafts,
+                  ],
+                  addJoins: null,
+                  getPrefetchedDataCallback: (items) async {
+                    return [
+                      if (registerCartDraftsRefs)
+                        await $_getPrefetchedDataByColumns<
+                          RegisterOperator,
+                          $RegisterOperatorsTable,
+                          RegisterCartDraft,
+                          $RegisterCartDraftsTable
+                        >(
+                          currentTable: table,
+                          referencedTable: $$RegisterOperatorsTableReferences
+                              ._registerCartDraftsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$RegisterOperatorsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).registerCartDraftsRefs,
+                          currentColumn: 'id',
+                          referencedColumn: 'operator_id',
+                          typedResults: items,
+                        ),
+                      if (parkedTableDraftsRefs)
+                        await $_getPrefetchedDataByColumns<
+                          RegisterOperator,
+                          $RegisterOperatorsTable,
+                          ParkedTableDraft,
+                          $ParkedTableDraftsTable
+                        >(
+                          currentTable: table,
+                          referencedTable: $$RegisterOperatorsTableReferences
+                              ._parkedTableDraftsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$RegisterOperatorsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).parkedTableDraftsRefs,
+                          currentColumn: 'id',
+                          referencedColumn: 'operator_id',
+                          typedResults: items,
+                        ),
+                    ];
+                  },
+                );
               },
-            );
-          },
         ),
       );
 }
@@ -7178,7 +8724,10 @@ typedef $$RegisterOperatorsTableProcessedTableManager =
       $$RegisterOperatorsTableUpdateCompanionBuilder,
       (RegisterOperator, $$RegisterOperatorsTableReferences),
       RegisterOperator,
-      PrefetchHooks Function({bool registerCartDraftsRefs})
+      PrefetchHooks Function({
+        bool registerCartDraftsRefs,
+        bool parkedTableDraftsRefs,
+      })
     >;
 typedef $$ProfileSnapshotsTableCreateCompanionBuilder =
     ProfileSnapshotsCompanion Function({
@@ -8439,6 +9988,305 @@ typedef $$HeldBillsTableProcessedTableManager =
       HeldBill,
       PrefetchHooks Function()
     >;
+typedef $$DiscardedBillsTableCreateCompanionBuilder =
+    DiscardedBillsCompanion Function({
+      required String id,
+      required String profileId,
+      required String billId,
+      Value<String?> shiftId,
+      Value<String?> workingDayId,
+      required String businessDate,
+      required String operatorName,
+      required String payload,
+      required DateTime discardedAt,
+      Value<int> rowid,
+    });
+typedef $$DiscardedBillsTableUpdateCompanionBuilder =
+    DiscardedBillsCompanion Function({
+      Value<String> id,
+      Value<String> profileId,
+      Value<String> billId,
+      Value<String?> shiftId,
+      Value<String?> workingDayId,
+      Value<String> businessDate,
+      Value<String> operatorName,
+      Value<String> payload,
+      Value<DateTime> discardedAt,
+      Value<int> rowid,
+    });
+
+class $$DiscardedBillsTableFilterComposer
+    extends Composer<_$RegisterDatabase, $DiscardedBillsTable> {
+  $$DiscardedBillsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get profileId => $composableBuilder(
+    column: $table.profileId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get billId => $composableBuilder(
+    column: $table.billId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get shiftId => $composableBuilder(
+    column: $table.shiftId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get workingDayId => $composableBuilder(
+    column: $table.workingDayId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get businessDate => $composableBuilder(
+    column: $table.businessDate,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get operatorName => $composableBuilder(
+    column: $table.operatorName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get discardedAt => $composableBuilder(
+    column: $table.discardedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$DiscardedBillsTableOrderingComposer
+    extends Composer<_$RegisterDatabase, $DiscardedBillsTable> {
+  $$DiscardedBillsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get profileId => $composableBuilder(
+    column: $table.profileId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get billId => $composableBuilder(
+    column: $table.billId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get shiftId => $composableBuilder(
+    column: $table.shiftId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get workingDayId => $composableBuilder(
+    column: $table.workingDayId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get businessDate => $composableBuilder(
+    column: $table.businessDate,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get operatorName => $composableBuilder(
+    column: $table.operatorName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get discardedAt => $composableBuilder(
+    column: $table.discardedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$DiscardedBillsTableAnnotationComposer
+    extends Composer<_$RegisterDatabase, $DiscardedBillsTable> {
+  $$DiscardedBillsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get profileId =>
+      $composableBuilder(column: $table.profileId, builder: (column) => column);
+
+  GeneratedColumn<String> get billId =>
+      $composableBuilder(column: $table.billId, builder: (column) => column);
+
+  GeneratedColumn<String> get shiftId =>
+      $composableBuilder(column: $table.shiftId, builder: (column) => column);
+
+  GeneratedColumn<String> get workingDayId => $composableBuilder(
+    column: $table.workingDayId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get businessDate => $composableBuilder(
+    column: $table.businessDate,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get operatorName => $composableBuilder(
+    column: $table.operatorName,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get payload =>
+      $composableBuilder(column: $table.payload, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get discardedAt => $composableBuilder(
+    column: $table.discardedAt,
+    builder: (column) => column,
+  );
+}
+
+class $$DiscardedBillsTableTableManager
+    extends
+        RootTableManager<
+          _$RegisterDatabase,
+          $DiscardedBillsTable,
+          DiscardedBill,
+          $$DiscardedBillsTableFilterComposer,
+          $$DiscardedBillsTableOrderingComposer,
+          $$DiscardedBillsTableAnnotationComposer,
+          $$DiscardedBillsTableCreateCompanionBuilder,
+          $$DiscardedBillsTableUpdateCompanionBuilder,
+          (
+            DiscardedBill,
+            BaseReferences<
+              _$RegisterDatabase,
+              $DiscardedBillsTable,
+              DiscardedBill
+            >,
+          ),
+          DiscardedBill,
+          PrefetchHooks Function()
+        > {
+  $$DiscardedBillsTableTableManager(
+    _$RegisterDatabase db,
+    $DiscardedBillsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DiscardedBillsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$DiscardedBillsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$DiscardedBillsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> profileId = const Value.absent(),
+                Value<String> billId = const Value.absent(),
+                Value<String?> shiftId = const Value.absent(),
+                Value<String?> workingDayId = const Value.absent(),
+                Value<String> businessDate = const Value.absent(),
+                Value<String> operatorName = const Value.absent(),
+                Value<String> payload = const Value.absent(),
+                Value<DateTime> discardedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => DiscardedBillsCompanion(
+                id: id,
+                profileId: profileId,
+                billId: billId,
+                shiftId: shiftId,
+                workingDayId: workingDayId,
+                businessDate: businessDate,
+                operatorName: operatorName,
+                payload: payload,
+                discardedAt: discardedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String profileId,
+                required String billId,
+                Value<String?> shiftId = const Value.absent(),
+                Value<String?> workingDayId = const Value.absent(),
+                required String businessDate,
+                required String operatorName,
+                required String payload,
+                required DateTime discardedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => DiscardedBillsCompanion.insert(
+                id: id,
+                profileId: profileId,
+                billId: billId,
+                shiftId: shiftId,
+                workingDayId: workingDayId,
+                businessDate: businessDate,
+                operatorName: operatorName,
+                payload: payload,
+                discardedAt: discardedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$DiscardedBillsTable, DiscardedBill>(table),
+                  BaseReferences<
+                    _$RegisterDatabase,
+                    $DiscardedBillsTable,
+                    DiscardedBill
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$DiscardedBillsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$RegisterDatabase,
+      $DiscardedBillsTable,
+      DiscardedBill,
+      $$DiscardedBillsTableFilterComposer,
+      $$DiscardedBillsTableOrderingComposer,
+      $$DiscardedBillsTableAnnotationComposer,
+      $$DiscardedBillsTableCreateCompanionBuilder,
+      $$DiscardedBillsTableUpdateCompanionBuilder,
+      (
+        DiscardedBill,
+        BaseReferences<_$RegisterDatabase, $DiscardedBillsTable, DiscardedBill>,
+      ),
+      DiscardedBill,
+      PrefetchHooks Function()
+    >;
 typedef $$RegisterCartDraftsTableCreateCompanionBuilder =
     RegisterCartDraftsCompanion Function({
       required String operatorId,
@@ -8751,6 +10599,318 @@ typedef $$RegisterCartDraftsTableProcessedTableManager =
       $$RegisterCartDraftsTableUpdateCompanionBuilder,
       (RegisterCartDraft, $$RegisterCartDraftsTableReferences),
       RegisterCartDraft,
+      PrefetchHooks Function({bool operatorId})
+    >;
+typedef $$ParkedTableDraftsTableCreateCompanionBuilder =
+    ParkedTableDraftsCompanion Function({
+      required String operatorId,
+      required String profileId,
+      required String tableId,
+      required String payload,
+      Value<int> rowid,
+    });
+typedef $$ParkedTableDraftsTableUpdateCompanionBuilder =
+    ParkedTableDraftsCompanion Function({
+      Value<String> operatorId,
+      Value<String> profileId,
+      Value<String> tableId,
+      Value<String> payload,
+      Value<int> rowid,
+    });
+
+final class $$ParkedTableDraftsTableReferences
+    extends
+        BaseReferences<
+          _$RegisterDatabase,
+          $ParkedTableDraftsTable,
+          ParkedTableDraft
+        > {
+  $$ParkedTableDraftsTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $RegisterOperatorsTable _operatorIdTable(_$RegisterDatabase db) => db
+      .registerOperators
+      .createAlias('parked_table_drafts__operator_id__register_operators__id');
+
+  $$RegisterOperatorsTableProcessedTableManager get operatorId {
+    final $_column = $_itemColumn<String>('operator_id')!;
+
+    final manager = $$RegisterOperatorsTableTableManager(
+      $_db,
+      $_db.registerOperators,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_operatorIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$ParkedTableDraftsTableFilterComposer
+    extends Composer<_$RegisterDatabase, $ParkedTableDraftsTable> {
+  $$ParkedTableDraftsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get profileId => $composableBuilder(
+    column: $table.profileId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get tableId => $composableBuilder(
+    column: $table.tableId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$RegisterOperatorsTableFilterComposer get operatorId {
+    final $$RegisterOperatorsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.operatorId,
+      referencedTable: $db.registerOperators,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$RegisterOperatorsTableFilterComposer(
+            $db: $db,
+            $table: $db.registerOperators,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ParkedTableDraftsTableOrderingComposer
+    extends Composer<_$RegisterDatabase, $ParkedTableDraftsTable> {
+  $$ParkedTableDraftsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get profileId => $composableBuilder(
+    column: $table.profileId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get tableId => $composableBuilder(
+    column: $table.tableId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$RegisterOperatorsTableOrderingComposer get operatorId {
+    final $$RegisterOperatorsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.operatorId,
+      referencedTable: $db.registerOperators,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$RegisterOperatorsTableOrderingComposer(
+            $db: $db,
+            $table: $db.registerOperators,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ParkedTableDraftsTableAnnotationComposer
+    extends Composer<_$RegisterDatabase, $ParkedTableDraftsTable> {
+  $$ParkedTableDraftsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get profileId =>
+      $composableBuilder(column: $table.profileId, builder: (column) => column);
+
+  GeneratedColumn<String> get tableId =>
+      $composableBuilder(column: $table.tableId, builder: (column) => column);
+
+  GeneratedColumn<String> get payload =>
+      $composableBuilder(column: $table.payload, builder: (column) => column);
+
+  $$RegisterOperatorsTableAnnotationComposer get operatorId {
+    final $$RegisterOperatorsTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.operatorId,
+          referencedTable: $db.registerOperators,
+          getReferencedColumn: (t) => t.id,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$RegisterOperatorsTableAnnotationComposer(
+                $db: $db,
+                $table: $db.registerOperators,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return composer;
+  }
+}
+
+class $$ParkedTableDraftsTableTableManager
+    extends
+        RootTableManager<
+          _$RegisterDatabase,
+          $ParkedTableDraftsTable,
+          ParkedTableDraft,
+          $$ParkedTableDraftsTableFilterComposer,
+          $$ParkedTableDraftsTableOrderingComposer,
+          $$ParkedTableDraftsTableAnnotationComposer,
+          $$ParkedTableDraftsTableCreateCompanionBuilder,
+          $$ParkedTableDraftsTableUpdateCompanionBuilder,
+          (ParkedTableDraft, $$ParkedTableDraftsTableReferences),
+          ParkedTableDraft,
+          PrefetchHooks Function({bool operatorId})
+        > {
+  $$ParkedTableDraftsTableTableManager(
+    _$RegisterDatabase db,
+    $ParkedTableDraftsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$ParkedTableDraftsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$ParkedTableDraftsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$ParkedTableDraftsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> operatorId = const Value.absent(),
+                Value<String> profileId = const Value.absent(),
+                Value<String> tableId = const Value.absent(),
+                Value<String> payload = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => ParkedTableDraftsCompanion(
+                operatorId: operatorId,
+                profileId: profileId,
+                tableId: tableId,
+                payload: payload,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String operatorId,
+                required String profileId,
+                required String tableId,
+                required String payload,
+                Value<int> rowid = const Value.absent(),
+              }) => ParkedTableDraftsCompanion.insert(
+                operatorId: operatorId,
+                profileId: profileId,
+                tableId: tableId,
+                payload: payload,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$ParkedTableDraftsTable, ParkedTableDraft>(table),
+                  $$ParkedTableDraftsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({operatorId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (operatorId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.operatorId,
+                        referencedTable: $$ParkedTableDraftsTableReferences
+                            ._operatorIdTable(db),
+                        referencedColumn: $$ParkedTableDraftsTableReferences
+                            ._operatorIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$ParkedTableDraftsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$RegisterDatabase,
+      $ParkedTableDraftsTable,
+      ParkedTableDraft,
+      $$ParkedTableDraftsTableFilterComposer,
+      $$ParkedTableDraftsTableOrderingComposer,
+      $$ParkedTableDraftsTableAnnotationComposer,
+      $$ParkedTableDraftsTableCreateCompanionBuilder,
+      $$ParkedTableDraftsTableUpdateCompanionBuilder,
+      (ParkedTableDraft, $$ParkedTableDraftsTableReferences),
+      ParkedTableDraft,
       PrefetchHooks Function({bool operatorId})
     >;
 typedef $$RegisterCommandsTableCreateCompanionBuilder =
@@ -10960,6 +13120,8 @@ typedef $$StoreOperatingEventsTableProcessedTableManager =
 class $RegisterDatabaseManager {
   final _$RegisterDatabase _db;
   $RegisterDatabaseManager(this._db);
+  $$RegisterUiPreferencesTableTableManager get registerUiPreferences =>
+      $$RegisterUiPreferencesTableTableManager(_db, _db.registerUiPreferences);
   $$RegisterInstallationsTableTableManager get registerInstallations =>
       $$RegisterInstallationsTableTableManager(_db, _db.registerInstallations);
   $$RegisterOperatorsTableTableManager get registerOperators =>
@@ -10972,8 +13134,12 @@ class $RegisterDatabaseManager {
       $$SaleOutboxTableTableManager(_db, _db.saleOutbox);
   $$HeldBillsTableTableManager get heldBills =>
       $$HeldBillsTableTableManager(_db, _db.heldBills);
+  $$DiscardedBillsTableTableManager get discardedBills =>
+      $$DiscardedBillsTableTableManager(_db, _db.discardedBills);
   $$RegisterCartDraftsTableTableManager get registerCartDrafts =>
       $$RegisterCartDraftsTableTableManager(_db, _db.registerCartDrafts);
+  $$ParkedTableDraftsTableTableManager get parkedTableDrafts =>
+      $$ParkedTableDraftsTableTableManager(_db, _db.parkedTableDrafts);
   $$RegisterCommandsTableTableManager get registerCommands =>
       $$RegisterCommandsTableTableManager(_db, _db.registerCommands);
   $$StoreNetworkSettingsTableTableManager get storeNetworkSettings =>

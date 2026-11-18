@@ -1,19 +1,11 @@
 <template>
   <div>
-    <PageHeader
-      :eyebrow="$t('pages.business.eyebrow')"
-      :title="$t('pages.business.title')"
-      :description="$t('pages.business.description')"
-      ><button type="submit" form="business-profile-form" class="btn-primary">
-        <Save :size="17" />{{ $t("pages.business.save") }}
-      </button></PageHeader
-    >
-    <SettingsTabs
-      v-model="businessTab"
-      :tabs="businessTabs"
-      :label="$t('pages.business.tabs.label')"
-      id-prefix="business-settings"
-    />
+    <PageHeader :title="$t('pages.business.title')">
+      <Button variant="solid" size="lg" type="submit" form="business-profile-form">
+        <template #prefix><Save :size="17" /></template>{{ $t("pages.business.save") }}
+      </Button>
+    </PageHeader>
+
     <div class="grid gap-5 xl:grid-cols-[1fr_360px]">
       <form
         id="business-profile-form"
@@ -21,13 +13,10 @@
         novalidate
         @submit.prevent="saveBusiness"
       >
-        <section
-          v-show="businessTab === 'profile'"
-          id="business-settings-panel-profile"
-          role="tabpanel"
-          aria-labelledby="business-settings-tab-profile"
+        <SettingsTabs v-model="businessTab" :tabs="businessTabs" :label="$t('pages.business.tabs.label')">
+        <TabPanel as="section" :force-mount="true" value="profile"
           data-business-tab="profile"
-          class="grid gap-5 md:grid-cols-2"
+          class="data-[state=inactive]:hidden grid gap-5 md:grid-cols-2"
         >
           <div class="md:col-span-2">
             <span class="label">ឡូហ្គោភោជនីយដ្ឋាន</span>
@@ -47,54 +36,38 @@
                   និងបង្រួមមកប្រហែល 100–200 KB មុនពេលបង្ហោះ។
                 </p>
                 <div class="flex flex-wrap gap-2">
-                  <label
-                    class="btn-soft cursor-pointer"
-                    :class="
-                      logoUploading ? 'pointer-events-none opacity-60' : ''
-                    "
-                  >
-                    <ImageUp :size="16" />
-                    {{
-                      logoUploading ? "កំពុងកែសម្រួល និងបង្ហោះ…" : "ជ្រើសឡូហ្គោ"
-                    }}
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      class="hidden"
-                      @change="uploadLogo"
-                    />
-                  </label>
-                  <button
+                  <ImageUploadButton
+                    :loading="logoUploading"
+                    label="ជ្រើសឡូហ្គោ"
+                    loading-text="កំពុងកែសម្រួល និងបង្ហោះ…"
+                    @select="uploadLogo"
+                  />
+                  <Button variant="subtle" size="lg"
                     v-if="store.business.logoUrl"
                     type="button"
-                    class="btn-soft text-red-600"
+                    class="text-red-600"
                     @click="removeLogo"
                   >
-                    <Trash2 :size="16" />លុប
-                  </button>
+                    <template #prefix><Trash2 :size="16" /></template>លុប
+                  </Button>
                 </div>
-                <p
-                  v-if="logoError"
-                  class="mb-0 mt-2 text-xs font-bold text-red-600"
-                >
-                  {{ logoError }}
-                </p>
+                <Alert v-if="logoError" theme="red" :title="logoError" class="mb-0 mt-2" />
               </div>
             </div>
           </div>
           <label class="md:col-span-2"
             ><span class="label">ឈ្មោះអាជីវកម្ម</span
-            ><input v-model="store.business.name" class="input" /></label
+            ><TextInput size="lg" variant="outline" v-model="store.business.name" /></label
           ><label class="md:col-span-2"
             ><span class="label">ពាក្យស្លោក</span
-            ><input v-model="store.business.tagline" class="input" /></label
+            ><TextInput size="lg" variant="outline" v-model="store.business.tagline" /></label
           ><label class="md:col-span-2"
             ><span class="label">អំពីអាជីវកម្មរបស់អ្នក</span
-            ><textarea
+            ><Textarea size="lg" variant="outline"
               v-model="store.business.description"
-              rows="4"
-              class="input resize-none"
-            ></textarea>
+              :rows="4"
+              class="resize-none"
+            ></Textarea>
           </label>
           <fieldset class="md:col-span-2 rounded-3xl bg-cream p-5">
             <div class="mb-4 flex items-center justify-between gap-3">
@@ -104,9 +77,9 @@
                   បន្ថែមលេខទូរសព្ទដែលភ្ញៀវអាចហៅបាន។
                 </p>
               </div>
-              <button type="button" class="btn-soft" @click="addContact">
-                <Plus :size="15" />បន្ថែមលេខ
-              </button>
+              <Button variant="subtle" size="lg" type="button" @click="addContact">
+                <template #prefix><Plus :size="15" /></template>បន្ថែមលេខ
+              </Button>
             </div>
             <div
               v-if="!store.business.contactNumbers.length"
@@ -119,57 +92,49 @@
               :key="index"
               class="mb-2 grid gap-2 sm:grid-cols-[140px_1fr_auto]"
             >
-              <input
+              <TextInput size="lg" variant="outline"
                 v-model="contact.label"
-                class="input"
                 placeholder="ចម្បង"
                 maxlength="30"
               />
-              <input
+              <TextInput size="lg" variant="outline"
                 v-model="contact.number"
-                class="input"
                 placeholder="+855 12 345 678"
                 maxlength="40"
               />
-              <button
+              <Button variant="subtle" size="lg"
                 type="button"
-                class="btn-soft !px-3 text-red-600"
+                class="!px-3 text-red-600"
                 aria-label="លុបលេខទំនាក់ទំនង"
                 @click="store.business.contactNumbers.splice(index, 1)"
               >
-                <Trash2 :size="16" />
-              </button>
+                <template #icon><Trash2 :size="16" /></template>
+              </Button>
             </div>
           </fieldset>
           <label
             ><span class="label">អ៊ីមែល</span
-            ><input
+            ><TextInput size="lg" variant="outline"
               v-model="store.business.email"
               type="email"
-              class="input"
               placeholder="hello@restaurant.com"
           /></label>
           <label
             ><span class="label">គេហទំព័រ</span
-            ><input
+            ><TextInput size="lg" variant="outline"
               v-model="store.business.websiteUrl"
               type="url"
-              class="input"
               placeholder="https://restaurant.com"
           /></label>
           <label class="md:col-span-2"
             ><span class="label">អាសយដ្ឋាន</span
-            ><input v-model="store.business.address" class="input"
+            ><TextInput size="lg" variant="outline" v-model="store.business.address"
           /></label>
-        </section>
+        </TabPanel>
 
-        <section
-          v-show="businessTab === 'public'"
-          id="business-settings-panel-public"
-          role="tabpanel"
-          aria-labelledby="business-settings-tab-public"
+        <TabPanel as="section" :force-mount="true" value="public"
           data-business-tab="public"
-          class="grid gap-5 md:grid-cols-2"
+          class="data-[state=inactive]:hidden grid gap-5 md:grid-cols-2"
         >
           <fieldset class="md:col-span-2 rounded-3xl bg-cream p-5">
             <div class="mb-4 flex items-start justify-between gap-4">
@@ -181,14 +146,14 @@
                   {{ $t("pages.business.locations.description") }}
                 </p>
               </div>
-              <button
+              <Button variant="subtle" size="lg"
                 type="button"
-                class="btn-soft shrink-0"
+                class="shrink-0"
                 :disabled="store.business.locations.length >= 20"
                 @click="addLocation"
               >
-                <Plus :size="15" />{{ $t("pages.business.locations.add") }}
-              </button>
+                <template #prefix><Plus :size="15" /></template>{{ $t("pages.business.locations.add") }}
+              </Button>
             </div>
 
             <div
@@ -211,14 +176,14 @@
                   <label
                     class="flex cursor-pointer items-center gap-2 rounded-full bg-cream px-3 py-2 text-xs font-bold"
                   >
-                    <input
+                    <Checkbox
                       v-model="location.showInMenu"
                       type="checkbox"
                       class="size-4 accent-black"
                     />
                     {{ $t("pages.business.locations.showInMenu") }}
                   </label>
-                  <button
+                  <Button variant="ghost"
                     type="button"
                     class="grid size-9 place-items-center rounded-xl text-red-600 transition hover:bg-red-50"
                     :aria-label="
@@ -228,8 +193,8 @@
                     "
                     @click="removeLocation(index)"
                   >
-                    <Trash2 :size="16" />
-                  </button>
+                    <template #icon><Trash2 :size="16" /></template>
+                  </Button>
                 </div>
               </div>
               <div class="grid gap-4 sm:grid-cols-2">
@@ -237,9 +202,8 @@
                   <span class="label">{{
                     $t("pages.business.locations.label")
                   }}</span>
-                  <input
+                  <TextInput size="lg" variant="outline"
                     v-model.trim="location.label"
-                    class="input"
                     maxlength="80"
                     required
                     :placeholder="
@@ -251,9 +215,8 @@
                   <span class="label">{{
                     $t("pages.business.locations.address")
                   }}</span>
-                  <input
+                  <TextInput size="lg" variant="outline"
                     v-model.trim="location.address"
-                    class="input"
                     maxlength="240"
                     :placeholder="
                       $t('pages.business.locations.addressPlaceholder')
@@ -264,10 +227,9 @@
                   <span class="label">{{
                     $t("pages.business.locations.mapUrl")
                   }}</span>
-                  <input
+                  <TextInput size="lg" variant="outline"
                     v-model.trim="location.mapUrl"
                     type="url"
-                    class="input"
                     required
                     placeholder="https://maps.google.com/..."
                   />
@@ -292,7 +254,7 @@
                 :key="option.key"
                 class="flex cursor-pointer items-start gap-3 rounded-2xl bg-cream p-4 text-sm font-bold"
               >
-                <input
+                <Checkbox
                   v-model="store.business[option.key]"
                   type="checkbox"
                   class="mt-0.5 size-4 accent-black"
@@ -312,9 +274,8 @@
             >
               <label>
                 <span class="label">ឈ្មោះ Wi-Fi (SSID)</span>
-                <input
+                <TextInput size="lg" variant="outline"
                   v-model.trim="store.business.wifiSsid"
-                  class="input"
                   maxlength="64"
                   required
                   placeholder="Restaurant Wi-Fi"
@@ -322,19 +283,23 @@
               </label>
               <label>
                 <span class="label">សុវត្ថិភាព</span>
-                <select v-model="store.business.wifiSecurity" class="input">
-                  <option value="wpa">WPA / WPA2</option>
-                  <option value="open">Open network</option>
-                </select>
+                <Select
+                  size="lg"
+                  variant="outline"
+                  v-model="store.business.wifiSecurity"
+                  :options="[
+                    { label: 'WPA / WPA2', value: 'wpa' },
+                    { label: 'Open network', value: 'open' },
+                  ]"
+                />
               </label>
               <label
                 v-if="store.business.wifiSecurity === 'wpa'"
                 class="sm:col-span-2"
               >
                 <span class="label">ពាក្យសម្ងាត់ Wi-Fi</span>
-                <input
+                <TextInput size="lg" variant="outline"
                   v-model="store.business.wifiPassword"
-                  class="input"
                   maxlength="128"
                   required
                   autocomplete="off"
@@ -354,7 +319,7 @@
             <label
               class="mb-4 flex cursor-pointer items-start gap-3 rounded-2xl bg-cream p-4 text-sm font-bold"
             >
-              <input
+              <Checkbox
                 v-model="store.business.showBusinessHours"
                 type="checkbox"
                 class="mt-0.5 size-4 accent-black"
@@ -374,25 +339,27 @@
               >
                 <strong class="text-sm">{{ dayNames[hours.day] }}</strong>
                 <label class="flex items-center gap-2 text-xs font-bold"
-                  ><input
+                  ><Checkbox
                     v-model="hours.enabled"
                     type="checkbox"
                     class="size-4 accent-black"
                   />{{ hours.enabled ? "បើក" : "បិទ" }}</label
                 >
-                <input
-                  v-model="hours.open"
-                  type="time"
-                  class="input"
+                <TimePicker
+                  :model-value="hours.open"
                   :disabled="!hours.enabled"
-                  aria-label="ម៉ោងបើក"
+                  label="ម៉ោងបើក"
+                  size="lg"
+                  variant="outline"
+                  @update:model-value="hours.open = $event.slice(0, 5)"
                 />
-                <input
-                  v-model="hours.close"
-                  type="time"
-                  class="input"
+                <TimePicker
+                  :model-value="hours.close"
                   :disabled="!hours.enabled"
-                  aria-label="ម៉ោងបិទ"
+                  label="ម៉ោងបិទ"
+                  size="lg"
+                  variant="outline"
+                  @update:model-value="hours.close = $event.slice(0, 5)"
                 />
               </div>
             </div>
@@ -406,9 +373,9 @@
                   ភ្ជាប់ភ្ញៀវទៅគណនីបណ្ដាញសង្គមផ្លូវការរបស់អ្នក។
                 </p>
               </div>
-              <button type="button" class="btn-soft" @click="addSocial">
-                <Plus :size="15" />បន្ថែមតំណ
-              </button>
+              <Button variant="subtle" size="lg" type="button" @click="addSocial">
+                <template #prefix><Plus :size="15" /></template>បន្ថែមតំណ
+              </Button>
             </div>
             <div
               v-if="!store.business.socialLinks.length"
@@ -421,36 +388,32 @@
               :key="index"
               class="mb-2 grid gap-2 sm:grid-cols-[150px_1fr_auto]"
             >
-              <select v-model="social.platform" class="input">
-                <option v-for="platform in socialPlatforms" :key="platform">
-                  {{ platform }}
-                </option>
-              </select>
-              <input
+              <Select
+                size="lg"
+                variant="outline"
+                v-model="social.platform"
+                :options="[...socialPlatforms]"
+              />
+              <TextInput size="lg" variant="outline"
                 v-model="social.url"
                 type="url"
-                class="input"
                 placeholder="https://..."
               />
-              <button
+              <Button variant="subtle" size="lg"
                 type="button"
-                class="btn-soft !px-3 text-red-600"
+                class="!px-3 text-red-600"
                 aria-label="លុបតំណបណ្ដាញសង្គម"
                 @click="store.business.socialLinks.splice(index, 1)"
               >
-                <Trash2 :size="16" />
-              </button>
+                <template #icon><Trash2 :size="16" /></template>
+              </Button>
             </div>
           </fieldset>
-        </section>
+        </TabPanel>
 
-        <section
-          v-show="businessTab === 'menu'"
-          id="business-settings-panel-menu"
-          role="tabpanel"
-          aria-labelledby="business-settings-tab-menu"
+        <TabPanel as="section" :force-mount="true" value="menu"
           data-business-tab="menu"
-          class="grid gap-5 md:grid-cols-2"
+          class="data-[state=inactive]:hidden grid gap-5 md:grid-cols-2"
         >
           <fieldset
             class="md:col-span-2 rounded-3xl border border-black/[.07] p-5"
@@ -459,10 +422,15 @@
             <div class="grid gap-4 sm:grid-cols-2">
               <label
                 ><span class="label">របៀបកំណត់តម្លៃ</span
-                ><select v-model="store.business.pricingMode" class="input">
-                  <option value="automatic">កាលវិភាគស្វ័យប្រវត្តិ</option>
-                  <option value="manual">កំណត់ដោយដៃ</option>
-                </select></label
+                ><Select
+                  size="lg"
+                  variant="outline"
+                  v-model="store.business.pricingMode"
+                  :options="[
+                    { label: 'កាលវិភាគស្វ័យប្រវត្តិ', value: 'automatic' },
+                    { label: 'កំណត់ដោយដៃ', value: 'manual' },
+                  ]"
+                /></label
               >
               <label
                 ><span class="label">{{
@@ -470,27 +438,18 @@
                     ? "បញ្ជីតម្លៃបម្រុង"
                     : "បញ្ជីតម្លៃកំពុងប្រើ"
                 }}</span
-                ><select
+                ><Select
+                  size="lg"
+                  variant="outline"
                   v-model="store.business.defaultPriceListId"
-                  class="input"
-                >
-                  <option
-                    v-for="list in store.priceLists.filter(
-                      (item) => !item.isArchived,
-                    )"
-                    :key="list.id"
-                    :value="list.id"
-                  >
-                    {{ displayPriceListName(list.name) }}
-                  </option>
-                </select></label
+                  :options="[...(store.priceLists.filter( (item) => !item.isArchived, )).map(list => ({ label: displayPriceListName(list.name), value: list.id }))]"
+                /></label
               >
               <label
                 ><span class="label">តំបន់ម៉ោងអាជីវកម្ម</span
-                ><input
+                ><TextInput size="lg" variant="outline"
                   v-model.trim="store.business.timezone"
                   list="timezone-options"
-                  class="input"
                   placeholder="Asia/Phnom_Penh" /><datalist
                   id="timezone-options"
                 >
@@ -517,48 +476,41 @@
             <div class="grid gap-4 sm:grid-cols-2">
               <label>
                 <span class="label">រូបិយប័ណ្ណចម្បង</span>
-                <select
-                  :value="store.business.currency"
-                  class="input"
-                  @change="changePrimaryCurrency"
-                >
-                  <option value="KHR">KHR · រៀលខ្មែរ</option>
-                  <option value="USD">USD · ដុល្លារអាមេរិក</option>
-                </select>
+                <Select
+                  size="lg"
+                  variant="outline"
+                  :model-value="store.business.currency"
+                  @update:model-value="changePrimaryCurrency"
+                  :options="[
+                    { label: 'KHR · រៀលខ្មែរ', value: 'KHR' },
+                    { label: 'USD · ដុល្លារអាមេរិក', value: 'USD' },
+                  ]"
+                />
               </label>
               <label>
                 <span class="label">រូបិយប័ណ្ណទីពីរ</span>
-                <select
+                <Select
+                  size="lg"
+                  variant="outline"
                   v-model="store.business.secondaryCurrency"
-                  class="input"
-                >
-                  <option
-                    value="KHR"
-                    :disabled="store.business.currency === 'KHR'"
-                  >
-                    KHR · រៀលខ្មែរ
-                  </option>
-                  <option
-                    value="USD"
-                    :disabled="store.business.currency === 'USD'"
-                  >
-                    USD · ដុល្លារអាមេរិក
-                  </option>
-                </select>
+                  :options="[
+                    { label: 'KHR · រៀលខ្មែរ', value: 'KHR', disabled: store.business.currency === 'KHR' },
+                    { label: 'USD · ដុល្លារអាមេរិក', value: 'USD', disabled: store.business.currency === 'USD' },
+                  ]"
+                />
               </label>
               <label>
                 <span class="label">
                   អត្រាប្តូរ · 1 {{ store.business.currency }} = ?
                   {{ store.business.secondaryCurrency }}
                 </span>
-                <input
+                <TextInput size="lg" variant="outline"
                   v-model.number="store.business.secondaryExchangeRate"
                   type="number"
                   min="0.000000001"
                   max="1000000000"
                   step="any"
                   required
-                  class="input"
                   :placeholder="
                     store.business.currency === 'KHR' ? '0.00025' : '4000'
                   "
@@ -580,7 +532,7 @@
               <label
                 class="sm:col-span-2 flex cursor-pointer items-start gap-3 rounded-2xl bg-cream p-4 text-sm font-bold"
               >
-                <input
+                <Checkbox
                   v-model="store.business.showSecondaryCurrency"
                   type="checkbox"
                   class="mt-0.5 size-4 accent-black"
@@ -605,7 +557,7 @@
             <label
               class="flex cursor-pointer items-start gap-3 rounded-2xl bg-cream p-4 text-sm font-bold"
             >
-              <input
+              <Checkbox
                 v-model="store.business.enableAddToOrder"
                 type="checkbox"
                 class="mt-0.5 size-4 accent-black"
@@ -628,14 +580,14 @@
               <label
                 class="flex items-center gap-3 rounded-2xl border border-black/[.08] bg-cream p-4 text-sm font-bold"
               >
-                <input type="checkbox" checked disabled class="size-4" />
+                <Checkbox type="checkbox" checked disabled class="size-4" />
                 <span>ខ្មែរ</span>
                 <span class="ml-auto text-[10px] text-emerald-700">ចម្បង</span>
               </label>
               <label
                 class="flex cursor-pointer items-center gap-3 rounded-2xl border border-black/[.08] p-4 text-sm font-bold"
               >
-                <input
+                <Checkbox
                   v-model="store.business.enableEn"
                   type="checkbox"
                   class="size-4 accent-black"
@@ -645,7 +597,7 @@
               <label
                 class="flex cursor-pointer items-center gap-3 rounded-2xl border border-black/[.08] p-4 text-sm font-bold"
               >
-                <input
+                <Checkbox
                   v-model="store.business.enableZh"
                   type="checkbox"
                   class="size-4 accent-black"
@@ -654,7 +606,8 @@
               </label>
             </div>
           </fieldset>
-        </section>
+        </TabPanel>
+        </SettingsTabs>
       </form>
       <aside class="space-y-5">
         <div class="card p-5">
@@ -663,14 +616,14 @@
             <span class="min-w-0 flex-1 truncate py-2 text-sm">{{
               store.publicMenuUrl
             }}</span
-            ><button
+            ><Button variant="ghost"
               type="button"
               aria-label="ចម្លង URL ម៉ឺនុយសាធារណៈ"
               class="grid size-9 place-items-center rounded-xl bg-white"
               @click="store.copyMenuUrl(store.publicMenuUrl)"
             >
-              <Copy :size="16" />
-            </button>
+              <template #icon><Copy :size="16" /></template>
+            </Button>
           </div>
           <p class="mb-0 mt-3 text-xs leading-5 text-black/40">
             ការប្តូរ URL នៅពេលក្រោយអាចធ្វើឱ្យកូដ QR ដែលបានបោះពុម្ពមិនដំណើរការ។
@@ -694,16 +647,15 @@
                 <div class="truncate font-semibold">
                   {{ store.business.name || "ឈ្មោះអាជីវកម្ម" }}
                 </div>
-                <a
+                <Button
                   v-if="previewMapLink"
                   :href="previewMapLink"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="mt-1 flex w-fit max-w-full items-center gap-1.5 text-xs text-black/50 transition hover:text-ink"
-                >
-                  <MapPin :size="14" class="shrink-0" />
-                  <span class="truncate">{{ previewLocationText }}</span>
-                </a>
+                  :label="previewLocationText"
+                  variant="ghost"
+                  size="xs"
+                  class="mt-1 max-w-full"
+                  icon-left="lucide-map-pin"
+                />
               </div>
             </div>
 
@@ -711,14 +663,17 @@
               v-if="previewContacts.length || previewWifiText"
               class="no-scrollbar mt-3 flex items-center gap-3 overflow-x-auto whitespace-nowrap"
             >
-              <a
+              <Button
                 v-for="contact in previewContacts"
-                :key="`${contact.label}-${contact.number}`"
-                :href="`tel:${phoneHref(contact.number)}`"
-                class="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-black/50 hover:text-ink"
-              >
-                <Phone :size="14" />{{ contact.number }}
-              </a>
+                :key="contact.label + contact.number"
+                :href="'tel:' + phoneHref(contact.number)"
+                :label="contact.number"
+                target="_self"
+                variant="ghost"
+                size="xs"
+                icon-left="lucide-phone"
+                class="shrink-0"
+              />
               <span
                 v-if="previewWifiText"
                 class="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-black/50"
@@ -731,21 +686,18 @@
               v-if="previewSocials.length"
               class="mt-3 flex flex-wrap gap-1.5"
             >
-              <a
+              <Button
                 v-for="social in previewSocials"
-                :key="`${social.platform}-${social.url}`"
+                :key="social.platform + social.url"
                 :href="social.url"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="grid size-8 place-items-center rounded-full bg-cream text-ink transition hover:bg-ink hover:text-white"
+                variant="subtle"
+                size="sm"
+                class="shrink-0"
                 :aria-label="social.platform"
-                :title="social.platform"
+                :tooltip="social.platform"
               >
-                <component
-                  :is="previewSocialIcon(social.platform)"
-                  :size="15"
-                />
-              </a>
+                <template #icon><component :is="previewSocialIcon(social.platform)" /></template>
+              </Button>
             </div>
 
             <p
@@ -764,12 +716,13 @@
   </div>
 </template>
 <script setup lang="ts">
+import ImageUploadButton from "../components/ImageUploadButton.vue";
+import { Alert, Button, Checkbox, Select, TabPanel, TextInput, Textarea, TimePicker } from "frappe-ui";
 import { computed, nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   Copy,
   Facebook,
-  ImageUp,
   Instagram,
   Link2,
   MapPin,
@@ -993,9 +946,9 @@ function addSocial() {
     store.business.socialLinks.push({ platform: "Facebook", url: "" });
 }
 
-function changePrimaryCurrency(event: Event) {
-  const nextCurrency = (event.target as HTMLSelectElement).value as
-    "USD" | "KHR";
+function changePrimaryCurrency(value: string | number | null | undefined) {
+  if (value !== "USD" && value !== "KHR") return;
+  const nextCurrency = value;
   const previousCurrency = store.business.currency;
   const previousRate = Number(store.business.secondaryExchangeRate);
   store.business.currency = nextCurrency;

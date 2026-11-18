@@ -3,12 +3,13 @@ import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 import 'package:drift/drift.dart' show Value;
 
-import 'cart_line.dart';
+import '../features/sales/sale/cart_line.dart';
 import 'pos_api.dart';
+import 'bill_information.dart';
 import 'pricing.dart';
 import 'register_database.dart';
 import 'register_operating.dart';
-import 'register_reversal.dart';
+import '../features/sales/sale/sale_reversal.dart';
 
 export 'register_operating.dart' show RegisterAction, registerOperatingContext;
 
@@ -251,7 +252,13 @@ class RegisterAuthority {
     final id = held?.id ?? commandId;
     if (action == RegisterAction.discard) {
       if (held == null) throw invalidCommand;
-      await database.discardHeldBill(id, profileId, held.revision);
+      await database.recordDiscardedBill(
+        commandId: commandId,
+        bill: held,
+        operatorName: actor.displayName,
+        time: time,
+        operating: registerOperatingContext(context, time),
+      );
     } else {
       await _saveBill(
         action,
@@ -311,6 +318,16 @@ class RegisterAuthority {
       );
     }
     final saved = held == null ? null : jsonObject(jsonDecode(held.payload));
+    final postingOverride =
+        input['posting_date'] ??
+        (activeConfig['cashier_shift_enabled'] != true
+            ? (saved?['posting_date'])
+            : null);
+    final postingDate = resolveBillPostingDate(
+      postingOverride,
+      activeConfig,
+      operating['business_date'] as String,
+    );
     final quoteContext = saved == null
         ? {
             'profile': context['profile'],
@@ -323,14 +340,37 @@ class RegisterAuthority {
     final currency = business['currency'] as String;
     final rate = business['secondary_exchange_rate'].toString();
     final tableId = input['table_id'] as String?;
+    final cover = input['guest_cover'];
+    if ((postingOverride != null || (tableId == null && cover != null)) &&
+        (context['capabilities'] as Map?)?['bill_information'] != true) {
+      throw const PosApiError(
+        503,
+        'SERVER_UPGRADE_REQUIRED',
+        'Update the server to save bill dates and counter guest cover.',
+      );
+    }
+    if (cover != null &&
+        (cover is! int ||
+            cover < 1 ||
+            cover > 1000 ||
+            (tableId == null && activeConfig['prompt_guest_cover'] != true))) {
+      throw const FormatException('INVALID_GUEST_COVER');
+    }
+    final tableStatus = input['table_status'] ?? 'hold';
+    if (!const ['hold', 'occupied', 'bill_requested'].contains(tableStatus) ||
+        (tableStatus != 'hold' &&
+            (tableId == null || action != RegisterAction.hold))) {
+      throw invalidCommand;
+    }
     final table = jsonRows(snapshot['tables'])
         .where((row) => row['id'] == tableId)
         .firstOrNull;
-    if (config['table_mode'] == 'required' && tableId == null) {
+    final tableMode = activeConfig['table_mode'];
+    if (tableMode == 'required' && tableId == null) {
       throw const FormatException('TABLE_REQUIRED');
     }
     if (tableId != null &&
-        (config['table_mode'] == 'disabled' ||
+        (tableMode == 'disabled' ||
             (table == null && held?.tableId != tableId))) {
       throw const PosApiError(
         409,
@@ -358,6 +398,20 @@ class RegisterAuthority {
     }
 
     final quoted = jsonRows(input['quote']);
+    final savedLines = jsonRows(saved?['lines']);
+    bool hasEdits(Json line) =>
+        line['base_price_override_minor'] != null ||
+        line['is_free'] == true ||
+        line['note'] != null;
+    if ((savedLines.any(hasEdits) || quoted.any(hasEdits)) &&
+        (input['cart_line_edits_version'] != 1 ||
+            (context['capabilities'] as Map?)?['cart_line_edits'] != true)) {
+      throw const PosApiError(
+        409,
+        'CART_LINE_UPGRADE_REQUIRED',
+        'Update the register and server to use these order line edits.',
+      );
+    }
     final lines = _pricedLines(snapshot, saved, quoted);
     final prices = lines.map((line) => line.quote(config)).toList();
     final total = prices.fold<int>(
@@ -400,10 +454,15 @@ class RegisterAuthority {
         workingDayId: workingDay,
         revision: held?.revision,
         payload: {
+          'operating_context': operating,
+          'operator_name': actor.displayName,
           'customer_id': customerId,
           'customer_name': customerName,
           'table_code': tableCode,
           'table_label': tableLabel,
+          'guest_cover': cover,
+          if (postingOverride != null) 'posting_date': postingDate,
+          'table_status': tableStatus,
           'total_minor': total,
           'currency': currency,
           'quote_context': quoteContext,
@@ -430,12 +489,13 @@ class RegisterAuthority {
       'business_name': business['name'],
       'profile_name': quotedProfile['name'],
       'branch_name': quotedProfile['branch_name'],
-      'business_date': operating['business_date'],
+      'business_date': postingDate,
       'operator_name': actor.displayName,
       'customer_name': customerName,
       'table_label': tableLabel,
+      'guest_cover': cover,
       'template': config['receipt_template'],
-      'copies': config['print_copies'],
+      'copies': config['print_copies'] ?? 1,
       'payment_type_names': {
         for (final type in types) type['id'] as String: type['name'],
       },
@@ -450,7 +510,9 @@ class RegisterAuthority {
       createdAt: time,
       request: {
         'draft': {
+          if (postingOverride != null) 'posting_date': postingDate,
           'table_id': tableId,
+          'guest_cover': cover,
           'customer_id': customerId,
           'lines': lines.map((line) => line.request).toList(),
           'expected_context': operating,
@@ -463,14 +525,21 @@ class RegisterAuthority {
     );
     if (store != null) {
       final catalog = jsonObject(snapshot['catalog']);
+      final legacyTax = legacyTaxSettings(config);
+      final taxRule = config['default_tax_rule'] is Map
+          ? jsonObject(config['default_tax_rule'])
+          : null;
       await store.checkout(commandId, id, {
+        if (postingOverride != null) 'posting_date': postingDate,
         'expected_context': operating,
         'currency': currency,
         'exchange_rate': rate,
-        'tax_mode': config['tax_mode'],
-        'tax_rate_bps': config['tax_rate_bps'],
-        'table_mode': config['table_mode'],
+        'tax_mode': taxRule?['tax_mode'] ?? legacyTax['tax_mode'] ?? 'disabled',
+        'tax_rate_bps': legacyTax['tax_rate_bps'] ?? 0,
+        'tax_rule': ?taxRule,
+        'table_mode': tableMode,
         'table_id': tableId,
+        'guest_cover': cover,
         'table_label': tableLabel,
         'table_code': tableCode,
         'customer_id': customerId,
@@ -519,7 +588,7 @@ class RegisterAuthority {
           .where((line) => line.matchesSelection(row, selected))
           .firstOrNull;
       if (existing != null) {
-        return existing.withQuantity(row['quantity'] as int);
+        return existing.withQuantity(row['quantity'] as int).withLineEdits(row);
       }
       final product = catalog[row['product_id']];
       if (product == null) throw CartLine.unavailable;

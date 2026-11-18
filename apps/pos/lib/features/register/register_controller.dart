@@ -4,51 +4,124 @@ import 'dart:convert';
 import 'package:get/get.dart';
 import 'package:uuid/uuid.dart';
 
-import '../../core/cart_line.dart';
+import '../sales/sale/cart_line.dart';
+import '../sales/sale/sale_service.dart';
+import '../sales/sales_register.dart';
+import '../../core/api_endpoint.dart';
 import '../../core/pos_api.dart';
 import '../../core/pricing.dart';
 import '../../core/register_access.dart';
 import '../../core/register_authority.dart';
 import '../../core/register_database.dart';
 import '../../core/register_network.dart';
-import '../../core/sale_sync.dart';
+import '../../core/register_shift_reports.dart';
+import '../../global.dart';
+import '../sales/sale/sale_sync.dart';
 
-export '../../core/cart_line.dart' show CartLine;
+export '../sales/sale/cart_line.dart' show CartLine;
 
 enum RegisterStage { loading, activation, locked, selectProfile, ready }
 
-class RegisterController extends GetxController {
+class RegisterController extends GetxController implements SalesRegister {
   RegisterController(this.database, {RegisterAccess? access})
     : access = access ?? RegisterAccess(database),
       authority = RegisterAuthority(database);
 
+  @override
   final RegisterDatabase database;
+  @override
   final RegisterAccess access;
   final RegisterAuthority authority;
-  late final network = RegisterNetwork(authority, access, onError: _show);
+  late final network = RegisterNetwork(authority, access, onError: showError);
   final stage = RegisterStage.loading.obs;
+  @override
   final busy = false.obs;
+  @override
   final online = false.obs;
+  @override
   final paired = false.obs;
   final hosting = false.obs;
+  @override
   final commandPending = false.obs;
   final storeSyncHead = Rxn<StoreOperatingEvent>();
+  final shiftRefreshRevision = 0.obs;
+  @override
   final message = RxnString();
+  @override
   final installation = Rxn<RegisterInstallation>();
+  @override
   final operator = Rxn<RegisterOperator>();
   final staff = <RegisterOperator>[].obs;
-  final profiles = <Json>[].obs;
+  final pinConfigured = false.obs;
+  bool offerPinSetup = false;
+  @override
   final snapshot = Rxn<Json>();
-  final cart = <CartLine>[].obs;
-  final tableId = RxnString();
-  final customerId = RxnString();
-  final tab = 0.obs;
+  static const sellTab = SalesRegister.sellTab,
+      historyTab = 1,
+      shiftTab = 2,
+      tablesTab = SalesRegister.tablesTab,
+      profileTab = 4,
+      customersTab = 5;
+  @override
+  final tab = sellTab.obs;
+  @override
   final pending = <(LocalSale, SaleOutboxData)>[].obs;
+  @override
   final heldBills = <HeldBill>[].obs;
-  final _activeBill = Rxn<({String id, int revision})>();
-  final _quoteContext = Rxn<Json>();
-  Future<void> _cartWrites = Future.value();
-  bool _cartSaveFailed = false;
+
+  // Shared register entry points keep existing shift, access and device flows
+  // using the same sales state as the GetX sales feature.
+  late final sales = SaleService(this);
+  @override
+  PosApi get api => _api!;
+  @override
+  void wakeSaleSync() => unawaited(_sync?.wake());
+  RxList<CartLine> get cart => sales.cart;
+  RxnString get tableId => sales.tableId;
+  RxnString get tableGroupId => sales.tableGroupId;
+  RxnInt get guestCover => sales.guestCover;
+  RxnString get customerId => sales.customerId;
+  Json get quoteConfig => sales.quoteConfig;
+  Json get business => sales.business;
+  String get currency => sales.currency;
+  String get exchangeRate => sales.exchangeRate;
+  List<Json> get quotePaymentTypes => sales.quotePaymentTypes;
+  String get tableMode => sales.tableMode;
+  bool get cartEditable => sales.cartEditable;
+  bool get supportsCartLineEdits => sales.supportsCartLineEdits;
+  bool get hasCartDraft => sales.hasCartDraft;
+  bool get promptGuestCover => sales.promptGuestCover;
+  BillTotals totalOf(CartLine line) => sales.totalOf(line);
+  int get cartTotal => sales.cartTotal;
+  void selectTable(String? id, {int? cover}) =>
+      sales.selectTable(id, cover: cover);
+  Future<void> openTable(String id, {int? cover}) =>
+      sales.openTable(id, cover: cover);
+  bool hasParkedTable(String id) => sales.hasParkedTable(id);
+  bool canAssignTable(String id) => sales.canAssignTable(id);
+  String tableStatus(Json table) => sales.tableStatus(table);
+  void selectCustomer(String? id) => sales.selectCustomer(id);
+  Future<void> discardCart() => sales.discardCart();
+  bool isHeldTable(String id) => sales.isHeldTable(id);
+  Future<bool> holdCart({String tableStatus = 'hold'}) =>
+      sales.holdCart(tableStatus: tableStatus);
+  void openHeldBillFromHistory(HeldBill bill) =>
+      sales.openHeldBillFromHistory(bill);
+  void resumeBill(HeldBill bill) => sales.resumeBill(bill);
+  Future<void> discardBill(HeldBill bill) => sales.discardBill(bill);
+  void add(CartLine line) => sales.add(line);
+  void quantity(int index, int amount) => sales.quantity(index, amount);
+  CartLine? replaceCartLine(CartLine original, CartLine replacement) =>
+      sales.replaceCartLine(original, replacement);
+  void reorderCartLine(CartLine line) => sales.reorderCartLine(line);
+  Json? cartCatalogProduct(CartLine line) => sales.cartCatalogProduct(line);
+  Future<void> checkout(List<Json> payments) => sales.checkout(payments);
+  bool canReverseSale(LocalSale sale) => sales.canReverseSale(sale);
+  Future<void> reverseSale(
+    LocalSale sale,
+    String reason,
+    Json expectedContext,
+  ) => sales.reverseSale(sale, reason, expectedContext);
 
   PosApi? _api;
   SaleSync? _sync;
@@ -59,31 +132,34 @@ class RegisterController extends GetxController {
   Timer? _refreshTimer;
   Timer? _storeTimer;
   bool _refreshing = false;
+  Completer<void>? _refreshFinished;
   int _operatingRevision = 0;
-  PosApi? _setupApi;
-  String? _discovery;
-  String? _setupEmail;
-  String? _setupSlug;
 
+  @override
   Json get context => jsonObject(snapshot.value!['context']);
+  @override
   Json get operatingContext =>
       registerOperatingContext(context, DateTime.now());
+  @override
   bool get storeOperations =>
       snapshot.value != null && context['store_operations'] == true;
+  @override
   bool get storeAuthorityPending =>
       snapshot.value != null && context['store_authority_pending'] == true;
+  bool get supportsShiftManagement =>
+      (context['capabilities'] as Map?)?['shift_management'] == true;
+  bool get supportsStoreShiftManagement =>
+      storeOperations &&
+      (!paired.value || context['store_shift_management'] == true);
+  @override
   Json get config => jsonObject(jsonObject(context['profile'])['config']);
-  Json get _quoted => _quoteContext.value ?? context;
-  Json get quoteConfig => jsonObject(jsonObject(_quoted['profile'])['config']);
-  Json get business => jsonObject(_quoted['business']);
-  String get currency => business['currency'] as String;
-  String get exchangeRate => business['secondary_exchange_rate'].toString();
-  List<Json> get products =>
-      jsonRows(jsonObject(snapshot.value!['catalog'])['products']);
+  @override
+  List<Json> get products => sales.products;
+  @override
   List<Json> get tables => jsonRows(snapshot.value!['tables']);
+  @override
   List<Json> get customers => jsonRows(snapshot.value!['customers']);
   List<Json> get paymentTypes => jsonRows(context['payment_types']);
-  List<Json> get quotePaymentTypes => jsonRows(_quoted['payment_types']);
   bool get canManageStaffUsernames =>
       (operator.value?.role == 'owner' || operator.value?.role == 'manager') &&
       (context['capabilities'] as Map?)?['staff_usernames'] == true;
@@ -91,10 +167,9 @@ class RegisterController extends GetxController {
   @override
   void onInit() {
     super.onInit();
-    unawaited(initializeRegister());
     _storeEvents = database.watchStoreEventHead().listen(
       (event) => storeSyncHead.value = event,
-      onError: (Object error) => _show(error),
+      onError: (Object error) => showError(error),
     );
     _refreshTimer = Timer.periodic(const Duration(seconds: 45), (_) {
       if (!paired.value && stage.value == RegisterStage.ready && !busy.value) {
@@ -108,19 +183,26 @@ class RegisterController extends GetxController {
     });
   }
 
+  @override
+  void onReady() {
+    super.onReady();
+    unawaited(initializeRegister());
+  }
+
   Future<void> initializeRegister() => run(() async {
     installation.value = await database.installation();
-    staff.assignAll(await database.operators());
+    await sales.loadScreenSettings();
+    await refreshPinStaff();
     final setup = installation.value;
     if (setup == null) {
       stage.value = RegisterStage.activation;
     } else {
-      await _connect(setup.apiOrigin);
+      await connectToApi(setup.apiOrigin);
       stage.value = RegisterStage.locked;
     }
   });
 
-  Future<void> _connect(String origin) async {
+  Future<void> connectToApi(String origin) async {
     final api = _api ??= PosApi(origin);
     await network.restore(api);
     paired.value = network.isTill;
@@ -132,7 +214,7 @@ class RegisterController extends GetxController {
         api,
         (id, profileId, operation) =>
             access.withSession(api, id, operation, profileId: profileId),
-        onError: _show,
+        onError: showError,
       )..start();
     }
   }
@@ -140,24 +222,28 @@ class RegisterController extends GetxController {
   void _watchLocalProfile(String profileId) {
     _sales ??= database.watchSales(profileId: profileId).listen((sales) {
       if (!paired.value) pending.assignAll(sales);
-    }, onError: _show);
+    }, onError: showError);
     _heldSales ??= database.watchHeldBills(profileId: profileId).listen((
       bills,
     ) {
       if (!paired.value) heldBills.assignAll(bills);
-    }, onError: _show);
+    }, onError: showError);
     _profileState ??= database.watchSnapshot(profileId).listen((state) {
       final existing = snapshot.value;
       if (!paired.value &&
           state != null &&
           existing != null &&
-          jsonEncode(existing['context']) != jsonEncode(state['context'])) {
-        snapshot.value = state;
+          (jsonEncode(existing['context']) != jsonEncode(state['context']) ||
+              jsonEncode(existing['catalog']) != jsonEncode(state['catalog']) ||
+              jsonEncode(existing['customers']) !=
+                  jsonEncode(state['customers']))) {
+        applyProfileSnapshot(state);
       }
-    }, onError: _show);
+    }, onError: showError);
   }
 
-  void _show(Object error) {
+  @override
+  void showError(Object error) {
     message.value = switch (error) {
       PosApiError() => error.code,
       FormatException() => error.message,
@@ -165,80 +251,22 @@ class RegisterController extends GetxController {
     };
   }
 
+  @override
   Future<void> run(Future<void> Function() action) async {
     if (busy.value) return;
     busy.value = true;
     message.value = null;
+    LoadingHandle? loading;
     try {
+      if (!app.isLoading) loading = await app.showLoading();
       await action();
     } catch (error) {
-      _show(error);
+      showError(error);
     } finally {
+      loading?.close();
       busy.value = false;
     }
   }
-
-  Future<void> signIn(
-    String origin,
-    String slug,
-    String identifier,
-    String password,
-  ) => run(() async {
-    final account = identifier.trim();
-    if (slug.trim().isEmpty || account.isEmpty || password.isEmpty) {
-      throw const FormatException('FILL_SIGN_IN');
-    }
-    final setup = installation.value;
-    final username = account.contains('@') ? null : account;
-    if (setup == null && username != null) {
-      throw const FormatException('OWNER_REQUIRED');
-    }
-    final api = PosApi(setup?.apiOrigin ?? origin);
-    try {
-      final email = username == null
-          ? account
-          : await access.resolveStaffEmail(api, username);
-      final login = await api.login(
-        slug.trim(),
-        email,
-        password,
-        username: username,
-      );
-      final token = login['token'] as String;
-      if (setup != null && login['business_id'] != setup.businessId) {
-        throw const PosApiError(
-          403,
-          'WRONG_PROFILE',
-          'This register belongs to another business.',
-        );
-      }
-      final available = await api.pages('/profiles', 'profiles', token);
-      profiles.assignAll(
-        available.where(
-          (profile) =>
-              setup == null ||
-              (profile['id'] == setup.profileId &&
-                  profile['branch_id'] == setup.branchId),
-        ),
-      );
-      if (profiles.isEmpty) {
-        throw const PosApiError(
-          403,
-          'NO_PROFILES',
-          'No available POS profile.',
-        );
-      }
-      _setupApi?.close();
-      _setupApi = api;
-      _setupEmail = email;
-      _setupSlug = slug.trim();
-      _discovery = token;
-      stage.value = RegisterStage.selectProfile;
-    } catch (_) {
-      api.close();
-      rethrow;
-    }
-  });
 
   Future<List<Json>?> loadStaffUsernames() async {
     List<Json>? rows;
@@ -247,7 +275,7 @@ class RegisterController extends GetxController {
       rows = await access.withSession(
         api,
         operator.value!.id,
-        (token) => api.pages('/staff', 'staff', token),
+        (token) => api.pages(ApiEndpoint.staff, 'staff', token),
       );
     });
     return rows;
@@ -263,7 +291,7 @@ class RegisterController extends GetxController {
         api,
         operator.value!.id,
         (token) => api.request(
-          '/staff/$id/username',
+          ApiEndpoint.staffUsernameFor(id),
           method: 'PUT',
           token: token,
           commandId: commandId,
@@ -275,235 +303,81 @@ class RegisterController extends GetxController {
     return saved;
   }
 
-  Future<void> selectProfile(String profileId, String pin, String confirmPin) =>
-      run(() async {
-        if (pin != confirmPin || !RegExp(r'^\d{6}$').hasMatch(pin)) {
-          throw const FormatException('PIN_MATCH');
-        }
-        final api = _setupApi!;
-        final login = _discovery!;
-        final session = await api.startSession(login, profileId);
-        final token = session['token'] as String;
-        try {
-          final isTill = network.isTill;
-          final data = isTill
-              ? {'context': await api.request('/context', token: token)}
-              : await access.prepareProfile(api, token);
-          final operatorId =
-              jsonObject(jsonObject(data['context'])['operator'])['id']
-                  as String;
-          if (isTill) await network.enroll(operatorId, token);
-          await access.enroll(
-            api: api,
-            slug: _setupSlug!,
-            email: _setupEmail!,
-            pin: pin,
-            session: session,
-            snapshot: data,
-            updateSnapshot: !isTill,
-          );
-          installation.value = await database.installation();
-          staff.assignAll(await database.operators());
-          operator.value = await database.operatorById(operatorId);
-          snapshot.value = await database.readSnapshot(
-            installation.value!.profileId,
-          );
-          if (snapshot.value == null) {
-            throw const PosApiError(
-              409,
-              'SYNC_REQUIRED',
-              'Load the store profile.',
-            );
-          }
-          online.value = !isTill;
-          await _connect(api.origin.toString());
-          if (isTill) await refreshRegister();
-          await _loadCart(operator.value!);
-          tab.value = _initialTab();
-          stage.value = RegisterStage.ready;
-        } catch (_) {
-          unawaited(_logout(api, token));
-          rethrow;
-        }
-        await _logout(api, login);
-        api.close();
-        _setupApi = null;
-        _discovery = null;
-      });
-
-  Future<void> _logout(PosApi api, String token) async {
-    try {
-      await api.request('/sessions/current', method: 'DELETE', token: token);
-    } on PosApiError {
-      // Short-lived discovery tokens expire if logout cannot reach the server.
+  void applyProfileSnapshot(Json? state) {
+    final wasRequired = snapshot.value != null && tableMode == 'required';
+    snapshot.value = state;
+    if (state == null || tableMode != 'required') return;
+    sales.clearStaleTableSelection(clearEmpty: !wasRequired);
+    if (tab.value == sellTab && (!wasRequired || tableId.value == null)) {
+      tab.value = tablesTab;
     }
   }
 
-  void cancelSignIn() {
-    _setupApi?.close();
-    _setupApi = null;
-    _discovery = null;
-    message.value = null;
-    stage.value = installation.value == null
-        ? RegisterStage.activation
-        : RegisterStage.locked;
+  int get landingTab => tableMode == 'required' ? tablesTab : sellTab;
+
+  @override
+  void selectTab(int destination) {
+    tab.value =
+        destination == sellTab &&
+            tableMode == 'required' &&
+            tableId.value == null
+        ? tablesTab
+        : destination;
   }
 
-  Future<void> unlock(String operatorId, String pin) => run(() async {
-    final current = await access.unlock(operatorId, pin);
-    final cached = await database.readSnapshot(installation.value!.profileId);
-    if (cached == null) {
-      throw const PosApiError(
-        409,
-        'SYNC_REQUIRED',
-        'Sign in online to load the profile.',
-      );
-    }
-    operator.value = current;
-    snapshot.value = cached;
-    await _loadCart(current);
-    tab.value = _initialTab();
-    stage.value = RegisterStage.ready;
-    unawaited(refreshRegister());
-  });
+  @override
+  bool get needsOperatingSetup =>
+      (config['working_day_enabled'] == true &&
+          context['working_day'] == null) ||
+      (config['cashier_shift_enabled'] == true &&
+          context['cashier_shift'] == null);
 
-  int _initialTab() {
-    final needsDay =
-        config['working_day_enabled'] == true && context['working_day'] == null;
-    final needsShift =
-        config['cashier_shift_enabled'] == true &&
-        context['cashier_shift'] == null;
-    return needsDay || needsShift ? 2 : 0;
+  Future<void> refreshPinStaff() async {
+    final eligible = <RegisterOperator>[];
+    for (final actor in await database.operators()) {
+      if (!actor.accessRevoked && await access.hasPin(actor.id)) {
+        eligible.add(actor);
+      }
+    }
+    staff.assignAll(eligible);
+  }
+
+  Future<bool> configurePin(String pin) async {
+    var saved = false;
+    await run(() async {
+      await access.configurePin(operator.value!.id, pin);
+      pinConfigured.value = true;
+      await refreshPinStaff();
+      saved = true;
+    });
+    return saved;
   }
 
   Future<void> lock() => run(() async {
-    await _flushCart();
-    _clearCart();
-    tab.value = 0;
+    await sales.flushCart();
+    sales.clearSession();
+    tab.value = sellTab;
+    offerPinSetup = false;
+    pinConfigured.value = false;
+    tableGroupId.value = null;
     operator.value = null;
     commandPending.value = false;
     message.value = null;
     stage.value = RegisterStage.locked;
   });
 
-  void _clearCart() {
-    cart.clear();
-    tableId.value = null;
-    customerId.value = null;
-    _activeBill.value = null;
-    _quoteContext.value = null;
-  }
-
-  bool get cartEditable => !commandPending.value && !busy.value;
-
-  bool get hasCartDraft =>
-      cart.isNotEmpty ||
-      _activeBill.value != null ||
-      tableId.value != null ||
-      customerId.value != null;
-
-  Future<void> _loadCart(RegisterOperator actor) async {
-    final profileId = installation.value!.profileId;
-    final (draft, waiting) = await database.transaction(
-      () async => (
-        await database.cartDraft(actor.id, profileId),
-        await database.tillCommand(actor.id) != null,
-      ),
-    );
-    if (!identical(operator.value, actor)) return;
-    _clearCart();
-    _cartSaveFailed = false;
-    commandPending.value = waiting;
-    if (draft == null) return;
-    final saved = jsonObject(jsonDecode(draft.payload));
-    final quote = saved['quote_context'];
-    _quoteContext.value = quote == null ? null : jsonObject(quote);
-    tableId.value = saved['table_id'] as String?;
-    customerId.value = saved['customer_id'] as String?;
-    if (draft.billId case final String id) {
-      _activeBill.value = (id: id, revision: saved['bill_revision'] as int);
-    }
-    cart.assignAll(jsonRows(saved['lines']).map(CartLine.fromHeldSnapshot));
-  }
-
-  void _saveCart() {
-    final actor = operator.value;
-    final setup = installation.value;
-    if (actor == null || setup == null) return;
-    final bill = _activeBill.value;
-    final payload = hasCartDraft
-        ? jsonEncode({
-            'bill_revision': bill?.revision,
-            'quote_context': _quoteContext.value,
-            'table_id': tableId.value,
-            'customer_id': customerId.value,
-            'lines': cart.map((line) => line.heldSnapshot).toList(),
-          })
-        : null;
-    _cartWrites = _cartWrites.then((_) async {
-      try {
-        if (payload == null) {
-          await database.removeCartDraft(actor.id, setup.profileId);
-        } else {
-          await database.saveCartDraft(
-            operatorId: actor.id,
-            profileId: setup.profileId,
-            billId: bill?.id,
-            payload: payload,
-          );
-        }
-        _cartSaveFailed = false;
-      } catch (_) {
-        _cartSaveFailed = true;
-        message.value = 'CART_SAVE_FAILED';
-      }
-    });
-  }
-
-  Future<void> _flushCart() async {
-    await _cartWrites;
-    if (!_cartSaveFailed) return;
-    _saveCart();
-    await _cartWrites;
-    if (_cartSaveFailed) throw const FormatException('CART_SAVE_FAILED');
-  }
-
-  void selectTable(String? id) {
-    if (!cartEditable) return;
-    tableId.value = id;
-    _saveCart();
-  }
-
-  void selectCustomer(String? id) {
-    if (!cartEditable) return;
-    customerId.value = id;
-    _saveCart();
-  }
-
-  Future<void> discardCart() => run(() async {
-    if (commandPending.value) {
-      throw const FormatException('STORE_COMMAND_PENDING');
-    }
-    await _cartWrites;
-    await database.removeCartDraft(
-      operator.value!.id,
-      installation.value!.profileId,
-    );
-    _clearCart();
-    _cartSaveFailed = false;
-  });
-
   Future<void> refreshRegister() async {
     final active = operator.value;
     if (_refreshing || active == null || _api == null) return;
     _refreshing = true;
+    _refreshFinished = Completer<void>();
     try {
       if (network.isTill) {
         if (!busy.value && commandPending.value) {
           final resumed = await network.retry(active.id);
           if ((resumed == null || resumed.consumesCart) &&
               identical(operator.value, active)) {
-            await _loadCart(active);
+            await sales.loadCart(active);
           }
           if (identical(operator.value, active)) {
             commandPending.value = false;
@@ -515,49 +389,107 @@ class RegisterController extends GetxController {
             };
           }
         }
-        final state = await network.state(active.id);
-        if (operator.value?.id == active.id) {
-          if (state.snapshot != null) snapshot.value = state.snapshot;
-          heldBills.assignAll(state.bills);
-          pending.assignAll(state.sales);
-          online.value = true;
-        }
+        await _refreshTillProfile(active);
         return;
       }
-      final revision = _operatingRevision;
-      final api = _api!;
-      final data = await access.withSession(
-        api,
-        active.id,
-        (token) => access.prepareProfile(api, token),
-      );
-      await access.adoptDeviceSession(
-        api,
-        active.id,
-        jsonObject(data['context']),
-      );
-      await authority.serialize(() async {
-        if (_operatingRevision != revision || network.isTill) return;
-        final effective = await database.saveSnapshot(
-          installation.value!.profileId,
-          data,
+      final pendingCommand = await database.tillCommand(active.id);
+      if (pendingCommand?.action == 'cloud_shift' &&
+          snapshot.value != null &&
+          !storeOperations &&
+          jsonObjectFromString(pendingCommand!.payload)['profile_id'] ==
+              installation.value?.profileId) {
+        await authority.serialize(
+          () => _finishCloudShift(pendingCommand, verify: true),
         );
-        if (operator.value?.id == active.id) {
-          snapshot.value = effective;
-          online.value = true;
-        }
-      });
+      }
+      await _refreshCloudProfile(active);
     } on PosApiError catch (error) {
       online.value = false;
       if (network.isTill && operator.value?.id == active.id) {
         commandPending.value = await database.tillCommand(active.id) != null;
       }
-      if (!error.transient) _show(error);
+      if (!error.transient) showError(error);
     } catch (error) {
-      _show(error);
+      showError(error);
     } finally {
       _refreshing = false;
+      _refreshFinished?.complete();
+      _refreshFinished = null;
     }
+  }
+
+  @override
+  Future<bool> reloadMenu() async {
+    var reloaded = false;
+    await run(() async {
+      // Finish an older poll before fetching the current profile configuration.
+      await _refreshFinished?.future;
+      final active = operator.value;
+      if (active == null || _api == null) {
+        throw const FormatException('SIGN_IN_REQUIRED');
+      }
+      _refreshing = true;
+      _refreshFinished = Completer<void>();
+      try {
+        reloaded = network.isTill
+            ? await _refreshTillProfile(active, reloadMenu: true)
+            : await _refreshCloudProfile(active);
+        if (!reloaded) throw const FormatException('SALE_CONTEXT_CHANGED');
+        message.value = 'MENU_RELOADED';
+      } catch (_) {
+        online.value = false;
+        rethrow;
+      } finally {
+        _refreshing = false;
+        _refreshFinished?.complete();
+        _refreshFinished = null;
+      }
+    });
+    return reloaded;
+  }
+
+  Future<bool> _refreshTillProfile(
+    RegisterOperator active, {
+    bool reloadMenu = false,
+  }) async {
+    final state = await network.state(active.id, reloadMenu: reloadMenu);
+    if (operator.value?.id != active.id) return false;
+    if (state.snapshot != null) applyProfileSnapshot(state.snapshot);
+    heldBills.assignAll(state.bills);
+    pending.assignAll(state.sales);
+    online.value = true;
+    shiftRefreshRevision.value++;
+    return true;
+  }
+
+  Future<bool> _refreshCloudProfile(RegisterOperator active) async {
+    final revision = _operatingRevision;
+    final profileId = installation.value!.profileId;
+    final api = _api!;
+    final data = await access.withSession(
+      api,
+      active.id,
+      (token) => access.prepareProfile(api, token),
+    );
+    final context = jsonObject(data['context']);
+    if (jsonObject(context['profile'])['id'] != profileId ||
+        jsonObject(context['operator'])['id'] != active.id) {
+      throw const FormatException('WRONG_REGISTER_SESSION');
+    }
+    await access.adoptDeviceSession(api, active.id, context);
+    return authority.serialize(() async {
+      if (_operatingRevision != revision ||
+          network.isTill ||
+          installation.value?.profileId != profileId ||
+          operator.value?.id != active.id) {
+        return false;
+      }
+      final effective = await database.saveSnapshot(profileId, data);
+      applyProfileSnapshot(effective);
+      online.value = true;
+      shiftRefreshRevision.value++;
+      return true;
+    });
   }
 
   Future<void> enableStoreHost() => run(() async {
@@ -569,6 +501,9 @@ class RegisterController extends GetxController {
   Future<void> pairStore(String code, String label) => run(() async {
     _requireOwner();
     if (hasCartDraft) throw const FormatException('HOLD_CURRENT_BILL');
+    if (await database.hasPendingCloudShift()) {
+      throw const FormatException('SHIFT_COMMAND_PENDING');
+    }
     final actor = operator.value!;
     final token = await access.passwordSessionForOperator(actor.id);
     if (token == null) {
@@ -598,6 +533,9 @@ class RegisterController extends GetxController {
 
   Future<void> enableOfflineOperations() => run(() async {
     _requireOwner();
+    if (await database.hasPendingCloudShift()) {
+      throw const FormatException('SHIFT_COMMAND_PENDING');
+    }
     if (network.host == null) throw const FormatException('USE_STORE_REGISTER');
     final api = _api!;
     final actor = operator.value!.id;
@@ -632,14 +570,14 @@ class RegisterController extends GetxController {
       await database.prepareStoreClaim(
         jsonObject(fresh['business'])['timezone'] as String,
       );
-      snapshot.value = await database.readSnapshot(profileId);
+      applyProfileSnapshot(await database.readSnapshot(profileId));
       final Json authorityResult;
       try {
         authorityResult = await access.withSession(
           api,
           actor,
           (token) => api.request(
-            '/store-authority',
+            ApiEndpoint.storeAuthority,
             method: 'POST',
             token: token,
             body: {},
@@ -649,9 +587,8 @@ class RegisterController extends GetxController {
         if (error.code == 'STORE_BRANCH_BUSY' ||
             error.code == 'STORE_OWNER_REQUIRED') {
           await database.releaseStoreAuthority();
-          snapshot.value = await database.saveSnapshot(
-            profileId,
-            freshSnapshot,
+          applyProfileSnapshot(
+            await database.saveSnapshot(profileId, freshSnapshot),
           );
         }
         rethrow;
@@ -663,7 +600,7 @@ class RegisterController extends GetxController {
         authorityResult['epoch'] as String,
         authorityResult['timezone'] as String,
       );
-      snapshot.value = await database.readSnapshot(profileId);
+      applyProfileSnapshot(await database.readSnapshot(profileId));
     });
   });
 
@@ -681,19 +618,19 @@ class RegisterController extends GetxController {
       final profileId = installation.value!.profileId;
       _operatingRevision++;
       await database.setStorePhase('releasing');
-      snapshot.value = await database.readSnapshot(profileId);
+      applyProfileSnapshot(await database.readSnapshot(profileId));
       await access.withSession(
         api,
         operator.value!.id,
         (token) => api.request(
-          '/store-authority',
+          ApiEndpoint.storeAuthority,
           method: 'DELETE',
           token: token,
           body: {'epoch': store.epoch, 'last_sequence': store.sequence},
         ),
       );
       await database.releaseStoreAuthority();
-      snapshot.value = await database.readSnapshot(profileId);
+      applyProfileSnapshot(await database.readSnapshot(profileId));
     });
     await refreshRegister();
   });
@@ -732,86 +669,236 @@ class RegisterController extends GetxController {
     }
   }
 
-  BillTotals totalOf(CartLine line) => line.totals(quoteConfig);
-
-  int get cartTotal =>
-      cart.fold(0, (total, line) => total + totalOf(line).total);
-
-  Future<void> operation(String path, Json body) => run(() async {
-    if (storeAuthorityPending) {
-      throw const FormatException('STORE_AUTHORITY_PENDING');
-    }
-    if (storeOperations) {
-      final parts = path.split('/');
-      final (action, payload) = switch (parts) {
-        ['', 'working-days'] => (RegisterAction.openDay, body),
-        ['', 'working-days', final id, 'close'] => (
-          RegisterAction.closeDay,
-          {...body, 'day_id': id},
-        ),
-        ['', 'cashier-shifts'] => (RegisterAction.openShift, body),
-        ['', 'cashier-shifts', final id, 'close'] => (
-          RegisterAction.closeShift,
-          {...body, 'shift_id': id},
-        ),
-        ['', 'cashier-shifts', final id, 'cash-floats'] => (
-          RegisterAction.cashMovement,
-          {...body, 'shift_id': id},
-        ),
-        _ => throw RegisterAuthority.invalidCommand,
-      };
-      await _sendCommand(action, payload);
-      await _refreshAfterStoreOperation();
-      unawaited(_sync?.wake());
-      return;
-    }
-    if (network.isTill) throw const FormatException('USE_STORE_REGISTER');
-    final operatorId = operator.value!.id;
-    final api = _api!;
-    await authority.serialize(() async {
-      final parts = path.split('/');
-      final day = parts[1] == 'working-days';
-      final contextKey = day ? 'working_day' : 'cashier_shift';
-      final opening = parts.length == 2;
-      final closing = parts.length == 4 && parts.last == 'close';
-      final profile = installation.value!.profileId;
-      if (closing) {
-        final id = parts[2];
-        final key = day ? 'working_day_id' : 'shift_id';
-        if (await database.hasUnsyncedSales(profile, key, id)) {
-          throw FormatException(
-            day ? 'UNSYNCED_DAY_SALES' : 'UNSYNCED_SHIFT_SALES',
-          );
-        }
-        if (day && await database.hasHeldBillsOnDay(id, profileId: profile)) {
-          throw const FormatException('WORKING_DAY_HAS_ACTIVITY');
-        }
+  Future<bool> operation(String path, Json body) async {
+    var saved = false;
+    await run(() async {
+      if (storeAuthorityPending) {
+        throw const FormatException('STORE_AUTHORITY_PENDING');
       }
-      final commandId = const Uuid().v4();
-      final serverBody = {...body}..remove('day_id');
-      final result = await access.withSession(
-        api,
-        operatorId,
-        (token) => api.request(
+      if (storeOperations) {
+        final parts = path.split('/');
+        final (action, payload) = switch (parts) {
+          ['', 'working-days'] => (RegisterAction.openDay, body),
+          ['', 'working-days', final id, 'close'] => (
+            RegisterAction.closeDay,
+            {...body, 'day_id': id},
+          ),
+          ['', 'cashier-shifts'] => (RegisterAction.openShift, body),
+          ['', 'cashier-shifts', final id, 'close'] => (
+            RegisterAction.closeShift,
+            {...body, 'shift_id': id},
+          ),
+          ['', 'cashier-shifts', final id, 'reopen'] => (
+            RegisterAction.reopenShift,
+            {...body, 'shift_id': id},
+          ),
+          ['', 'cashier-shifts', final id, 'cash-floats'] => (
+            RegisterAction.cashMovement,
+            {...body, 'shift_id': id},
+          ),
+          _ => throw RegisterAuthority.invalidCommand,
+        };
+        await sendCommand(action, payload);
+        saved = true;
+        await refreshAfterStoreOperation();
+        shiftRefreshRevision.value++;
+        unawaited(_sync?.wake());
+        return;
+      }
+      if (network.isTill) throw const FormatException('USE_STORE_REGISTER');
+      final operatorId = operator.value!.id;
+      await authority.serialize(() async {
+        final parts = path.split('/');
+        final day = parts[1] == 'working-days';
+        final closing = parts.length == 4 && parts.last == 'close';
+        final profile = installation.value!.profileId;
+        if (closing) {
+          final id = parts[2];
+          final key = day ? 'working_day_id' : 'shift_id';
+          if (await database.hasUnsyncedSales(profile, key, id)) {
+            throw FormatException(
+              day ? 'UNSYNCED_DAY_SALES' : 'UNSYNCED_SHIFT_SALES',
+            );
+          }
+          if (day && await database.hasHeldBillsOnDay(id, profileId: profile)) {
+            throw const FormatException('WORKING_DAY_HAS_ACTIVITY');
+          }
+        }
+        if (await database.tillCommand(operatorId) != null) {
+          throw const FormatException('SHIFT_COMMAND_PENDING');
+        }
+        final serverBody = {...body}..remove('day_id');
+        final command = TillCommand(
+          operatorId: operatorId,
+          commandId: const Uuid().v4(),
+          action: 'cloud_shift',
+          payload: jsonEncode({
+            'path': path,
+            'body': serverBody,
+            'profile_id': profile,
+          }),
+        );
+        await database.into(database.tillCommands).insert(command);
+        await _finishCloudShift(command);
+        saved = true;
+      });
+      await refreshRegister();
+    });
+    return saved;
+  }
+
+  Future<void> _finishCloudShift(
+    TillCommand command, {
+    bool verify = false,
+  }) async {
+    final payload = jsonObjectFromString(command.payload);
+    final path = payload['path'] as String;
+    final profileId = payload['profile_id'] as String;
+    final api = _api!;
+    final operatorId = command.operatorId;
+    commandPending.value = true;
+    try {
+      final result = await access.withSession(api, operatorId, (token) async {
+        if (verify && supportsShiftManagement) {
+          try {
+            final status = await api.request(
+              ApiEndpoint.commandStatusFor(command.commandId),
+              token: token,
+            );
+            return jsonObject(status['result']);
+          } on PosApiError catch (error) {
+            if (error.status != 404) rethrow;
+          }
+        }
+        return api.request(
           path,
           method: 'POST',
           token: token,
-          commandId: commandId,
-          body: serverBody,
-        ),
-      );
-      if (opening || closing) {
+          commandId: command.commandId,
+          body: jsonObject(payload['body']),
+        );
+      });
+      final parts = path.split('/');
+      final closing = parts.last == 'close';
+      if (parts.length == 2 || closing || parts.last == 'reopen') {
+        final key = parts[1] == 'working-days'
+            ? 'working_day'
+            : 'cashier_shift';
         final next = {
           ...snapshot.value!,
-          'context': {...context, contextKey: closing ? null : result},
+          'context': {...context, key: closing ? null : result},
         };
         _operatingRevision++;
-        await database.saveSnapshot(profile, next);
-        snapshot.value = next;
+        await database.saveSnapshot(profileId, next);
+        if (operator.value?.id == operatorId) applyProfileSnapshot(next);
       }
-    });
-    await refreshRegister();
-  });
+      await database.removeTillCommand(command.commandId);
+    } on PosApiError catch (error) {
+      if (!error.transient && !const {401, 403, 408}.contains(error.status)) {
+        await database.removeTillCommand(command.commandId);
+      }
+      rethrow;
+    } finally {
+      if (operator.value?.id == operatorId) {
+        commandPending.value = await database.tillCommand(operatorId) != null;
+      }
+    }
+  }
+
+  Future<Json> readShiftManagement(Json input) async {
+    final current = operator.value!;
+    final profileId = installation.value!.profileId;
+    final kind = input['kind'];
+    if (storeOperations) {
+      try {
+        final local = network.isTill
+            ? await network.shiftManagement(current.id, input)
+            : await RegisterShiftReports(database)
+                  .read(profileId, current.role, input);
+        if (kind != 'history' ||
+            !supportsShiftManagement ||
+            (!paired.value && !online.value)) {
+          return local;
+        }
+        try {
+          final cloud = await _readCloudShift(
+            current.id,
+            input,
+          ).timeout(const Duration(seconds: 2));
+          final activeShifts = (local['active_shift_ids'] as List? ?? [])
+              .toSet();
+          return {
+            'cashier_shifts': [
+              ...{
+                for (final row in [
+                  ...jsonRows(cloud['cashier_shifts']),
+                  ...jsonRows(local['cashier_shifts']),
+                ])
+                  if (!activeShifts.contains(row['id'])) row['id']: row,
+              }.values,
+            ],
+            for (final key in ['operators', 'registers'])
+              key: [
+                ...{
+                  for (final row in [
+                    ...jsonRows(cloud[key]),
+                    ...jsonRows(local[key]),
+                  ])
+                    row['id']: row,
+                }.values,
+              ],
+            'has_more': cloud['has_more'] == true || local['has_more'] == true,
+          };
+        } on PosApiError {
+          return local;
+        } on TimeoutException {
+          return local;
+        }
+      } on PosApiError catch (error) {
+        if (kind != 'summary' ||
+            input['historical'] != true ||
+            error.status != 404 ||
+            !supportsShiftManagement) {
+          rethrow;
+        }
+        return _readCloudShift(current.id, input);
+      }
+    }
+    return _readCloudShift(current.id, input);
+  }
+
+  Future<Json> _readCloudShift(String operatorId, Json input) {
+    final id = input['id'] as String?;
+    final kind = input['kind'];
+    final path = switch (kind) {
+      'preview' || 'review' => ApiEndpoint.cashierShiftReconciliationFor(id!),
+      'summary' => ApiEndpoint.cashierShiftSummaryFor(id!),
+      'day' => ApiEndpoint.workingDaySummaryFor(id!),
+      'history' => ApiEndpoint.cashierShifts,
+      _ => throw const FormatException('SHIFT_DETAILS_UNAVAILABLE'),
+    };
+    return access.withSession(
+      _api!,
+      operatorId,
+      (token) => _api!.request(
+        path,
+        method: kind == 'review' ? 'POST' : 'GET',
+        token: token,
+        body: kind == 'review' ? jsonObject(input['count']) : null,
+        query: {
+          if (kind == 'history') 'closed': 'true',
+          for (final key in [
+            'scope',
+            'business_date',
+            'profile_id',
+            'opened_by',
+            'page',
+          ])
+            if (input[key] != null) key: input[key].toString(),
+        },
+      ),
+    );
+  }
 
   Future<Json?> shiftPreview(String shiftId) async {
     if (storeOperations) {
@@ -820,7 +907,11 @@ class RegisterController extends GetxController {
         message.value = 'SALE_CONTEXT_CHANGED';
         return null;
       }
-      return jsonObject(shift);
+      if (!supportsStoreShiftManagement) return jsonObject(shift);
+      return cashierShiftMetadata(
+        jsonObject(shift),
+        shiftManager(operator.value?.role ?? ''),
+      );
     }
     Json? preview;
     await run(() async {
@@ -830,7 +921,7 @@ class RegisterController extends GetxController {
         api,
         operator.value!.id,
         (token) => api.request(
-          '/cashier-shifts/$shiftId/reconciliation',
+          ApiEndpoint.cashierShiftReconciliationFor(shiftId),
           token: token,
         ),
       );
@@ -848,193 +939,73 @@ class RegisterController extends GetxController {
     return false;
   }
 
-  bool isHeldTable(String id) => heldBills.any(
-    (bill) => bill.tableId == id && bill.id != _activeBill.value?.id,
-  );
-
-  Future<void> holdCart() => run(() async {
-    await _flushCart();
-    await _sendCommand(RegisterAction.hold, _cartCommand());
-    _clearCart();
-    message.value = 'BILL_HELD';
-  });
-
-  void resumeBill(HeldBill bill) {
-    if (!cartEditable) return;
-    if (hasCartDraft) {
-      message.value = 'HOLD_CURRENT_BILL';
-      return;
-    }
-    final saved = jsonObject(jsonDecode(bill.payload));
-    _quoteContext.value = jsonObject(saved['quote_context']);
-    tableId.value = bill.tableId;
-    customerId.value = saved['customer_id'] as String?;
-    _activeBill.value = (id: bill.id, revision: bill.revision);
-    cart.assignAll(jsonRows(saved['lines']).map(CartLine.fromHeldSnapshot));
-    message.value = null;
-    tab.value = 0;
-    _saveCart();
-  }
-
-  Future<void> discardBill(HeldBill bill) => run(() async {
-    await _flushCart();
-    await _sendCommand(RegisterAction.discard, {
-      'bill_id': bill.id,
-      'bill_revision': bill.revision,
-    });
-    if (_activeBill.value?.id == bill.id) _clearCart();
-  });
-
-  void add(CartLine line) {
-    if (!cartEditable) return;
-    try {
-      if (cart.isEmpty && _activeBill.value == null) {
-        final current = context;
-        _quoteContext.value = {
-          'profile': current['profile'],
-          'business': current['business'],
-          'payment_types': current['payment_types'],
-        };
-      }
-      totalOf(line);
-      final modifierIds = line.modifiers.map((item) => item['id']).toSet();
-      final index = cart.indexWhere(
-        (saved) =>
-            saved.product['id'] == line.product['id'] &&
-            saved.portion?['id'] == line.portion?['id'] &&
-            saved.unit == line.unit &&
-            saved.quantity + line.quantity <= 999 &&
-            saved.modifiers.length == line.modifiers.length &&
-            saved.modifiers.every((item) => modifierIds.contains(item['id'])),
-      );
-      if (index >= 0) {
-        final updated = cart[index].withQuantity(
-          cart[index].quantity + line.quantity,
-        );
-        totalOf(updated);
-        cart[index] = updated;
-        _saveCart();
-        return;
-      }
-      if (cart.length >= 60) throw const FormatException('CART_LIMIT');
-      cart.add(line);
-      _saveCart();
-    } catch (error) {
-      if (cart.isEmpty && _activeBill.value == null) _quoteContext.value = null;
-      _show(error);
-    }
-  }
-
-  void quantity(int index, int amount) {
-    if (!cartEditable || index < 0 || index >= cart.length) return;
-    if (amount <= 0) {
-      cart.removeAt(index);
-      if (cart.isEmpty && _activeBill.value == null) _quoteContext.value = null;
-      _saveCart();
-    } else if (amount <= 999) {
-      try {
-        final next = cart[index].withQuantity(amount);
-        totalOf(next);
-        cart[index] = next;
-        _saveCart();
-      } catch (error) {
-        _show(error);
-      }
-    }
-  }
-
-  Future<void> checkout(List<Json> payments) => run(() async {
-    await _flushCart();
-    await _sendCommand(RegisterAction.checkout, {
-      ..._cartCommand(),
-      'payments': payments,
-    });
-    _clearCart();
-    message.value = 'SAVED';
-    if (storeOperations) await _refreshAfterStoreOperation();
-    unawaited(_sync?.wake());
-  });
-
-  bool canReverseSale(LocalSale sale) {
-    final role = operator.value?.role;
-    return (role == 'owner' || role == 'manager') &&
-        (context['capabilities'] as Map?)?['reversal_context_guard'] == true &&
-        !busy.value &&
-        !commandPending.value &&
-        !storeAuthorityPending &&
-        context['read_only'] != true &&
-        sale.reversesSaleId == null &&
-        sale.total >= 0 &&
-        !pending.any((row) => row.$1.reversesSaleId == sale.id) &&
-        (storeOperations
-            ? (!paired.value || online.value)
-            : (!paired.value && online.value && sale.settlement != null));
-  }
-
-  Future<void> reverseSale(
-    LocalSale sale,
-    String reason,
-    Json expectedContext,
-  ) async {
-    if (!canReverseSale(sale)) {
-      message.value = 'SALE_NOT_REVERSIBLE';
-      return;
-    }
-    await run(() async {
-      if (!storeOperations) {
-        final api = _api!;
-        final saved = jsonObject(jsonDecode(sale.settlement!));
-        final original = await access.withSession(
-          api,
-          operator.value!.id,
-          (token) => api.request('/sales/${saved['id']}', token: token),
-        );
-        if (original['reversed_by_sale_id'] != null) {
-          throw const PosApiError(
-            409,
-            'SALE_ALREADY_REVERSED',
-            'This sale already has a reversal.',
-          );
-        }
-      }
-      await _sendCommand(RegisterAction.reverseSale, {
-        'sale_id': sale.id,
-        'reason': reason,
-        'expected_context': expectedContext,
-      });
-      if (storeOperations) {
-        await _refreshAfterStoreOperation();
-        message.value = 'REVERSAL_SAVED';
-      } else {
-        message.value = 'REVERSAL_QUEUED';
-      }
-      unawaited(_sync?.wake());
-    });
-  }
-
-  Future<void> _refreshAfterStoreOperation() async {
+  @override
+  Future<void> refreshAfterStoreOperation() async {
     if (network.isTill) {
       await refreshRegister();
     } else {
-      snapshot.value = await database.readSnapshot(
-        installation.value!.profileId,
+      applyProfileSnapshot(
+        await database.readSnapshot(installation.value!.profileId),
       );
     }
   }
 
-  Json _cartCommand() => {
-    'bill_id': _activeBill.value?.id,
-    'bill_revision': _activeBill.value?.revision,
-    'table_id': quoteConfig['table_mode'] == 'disabled' ? null : tableId.value,
-    'customer_id': customerId.value,
-    'currency': currency,
-    'exchange_rate': exchangeRate,
-    'total_minor': cartTotal,
-    'quote': cart.map((line) => line.quote(quoteConfig)).toList(),
-    'expected_context': operatingContext,
-  };
+  @override
+  Future<Json> readSalesHistory(
+    String operatorId, {
+    int? serverPage,
+    String? saleId,
+  }) {
+    if (network.isTill) {
+      return network.salesHistory(
+        operatorId,
+        serverPage: serverPage,
+        saleId: saleId,
+      );
+    }
+    return access.withSession(
+      api,
+      operatorId,
+      (token) => saleId == null
+          ? api.activeSalesPage(token, serverPage!)
+          : api.request(ApiEndpoint.saleById(saleId), token: token),
+    );
+  }
 
-  Future<void> _sendCommand(RegisterAction action, Json body) async {
+  Future<Json> requestCustomers(Json input) async {
+    final active = operator.value;
+    final setup = installation.value;
+    final api = _api;
+    if (active == null || setup == null || api == null) {
+      throw const FormatException('SIGN_IN_REQUIRED');
+    }
+    final operation = input['operation'];
+    final writes =
+        operation == 'create' || operation == 'update' || operation == 'delete';
+    if (writes) await _refreshFinished?.future;
+    if (!identical(operator.value, active) ||
+        installation.value?.profileId != setup.profileId) {
+      throw const FormatException('SIGN_IN_REQUIRED');
+    }
+    final result = await network.customerDirectory(
+      api,
+      active.id,
+      setup.profileId,
+      input,
+    );
+    if (writes &&
+        identical(operator.value, active) &&
+        installation.value?.profileId == setup.profileId) {
+      final cached = await database.readSnapshot(setup.profileId);
+      if (cached != null && identical(operator.value, active)) {
+        applyProfileSnapshot(cached);
+      }
+    }
+    return result;
+  }
+
+  @override
+  Future<void> sendCommand(RegisterAction action, Json body) async {
     final operatorId = operator.value!.id;
     if (network.isTill) {
       try {
@@ -1062,7 +1033,6 @@ class RegisterController extends GetxController {
     unawaited(_profileState?.cancel());
     unawaited(_storeEvents?.cancel());
     unawaited(_disconnect());
-    _setupApi?.close();
     super.onClose();
   }
 

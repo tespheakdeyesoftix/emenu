@@ -2584,6 +2584,63 @@ async function handlePosOrders(request, env, execution, subscriptionFor, orderId
 }
 __name(handlePosOrders, "handlePosOrders");
 
+// ../../shared/posReceipts.ts
+var posReceiptTypes = ["receipt", "kitchen_receipt", "qr_label"];
+var posReceiptLanguages = ["en", "km", "bilingual"];
+var posReceiptTextSizes = ["small", "normal", "large"];
+var posReceiptAlignments = ["left", "center", "right"];
+var posQrTargets = ["table_menu", "business_menu", "custom_url"];
+var posReceiptFields = {
+  receipt: [
+    "logo",
+    "business_details",
+    "branch",
+    "order_number",
+    "date_time",
+    "cashier",
+    "customer",
+    "table",
+    "service_type",
+    "item_codes",
+    "modifiers",
+    "item_notes",
+    "unit_prices",
+    "discount",
+    "tax",
+    "payments",
+    "change",
+    "order_notes",
+    "signature"
+  ],
+  kitchen_receipt: [
+    "logo",
+    "branch",
+    "order_number",
+    "date_time",
+    "cashier",
+    "table",
+    "service_type",
+    "station",
+    "item_codes",
+    "modifiers",
+    "item_notes",
+    "order_notes",
+    "highlight_notes"
+  ],
+  qr_label: ["logo", "branch", "table", "show_link"]
+};
+var posReceiptLimits = {
+  width: { min: 30, max: 216 },
+  labelHeight: { min: 20, max: 150 },
+  qrSize: { min: 15, max: 150 },
+  copies: { min: 1, max: 10 }
+};
+var emptyPosReceiptDefaults = {
+  receipt: null,
+  kitchen_receipt: null,
+  qr_label: null
+};
+
 // worker/subscriptionPlans.ts
 var DEFAULT_PLAN_ID = "plan_standard";
 var planOfferJoin = `
@@ -2674,6 +2731,31 @@ async function publicPlans(db) {
   return results.map(serializePlan);
 }
 __name(publicPlans, "publicPlans");
+
+// ../../shared/posProfile.ts
+var paymentKindByGroup = {
+  Cash: "cash",
+  "Credit Card": "card",
+  Bank: "other",
+  "QR Payment": "qr",
+  Other: "other"
+};
+var paymentTypeGroups = Object.keys(paymentKindByGroup);
+var defaultPaymentGroup = {
+  cash: "Cash",
+  card: "Credit Card",
+  qr: "QR Payment",
+  other: "Other"
+};
+var posTaxModes = ["disabled", "inclusive", "exclusive"];
+var posTableStatusColors = {
+  vacant: "#2F7656",
+  occupied: "#245EB2",
+  bill_requested: "#B45309",
+  hold: "#6B4AA0",
+  booked: "#AE356C"
+};
+var posTableStatuses = Object.keys(posTableStatusColors);
 
 // worker/posApiCore.ts
 var posApiPath = "/api/integrations/pos/v1";
@@ -2880,14 +2962,35 @@ var storeOperatorActive = `EXISTS (
 )`;
 var profileColumns = `p.id,p.branch_id,b.name AS branch_name,p.name,
   p.is_active,p.version,p.config_json,p.pending_config_json`;
+function readProfileConfig(json4) {
+  const config = JSON.parse(json4);
+  const taxRules = (config.tax_rules ?? []).map((rule, index) => ({
+    ...rule,
+    id: rule.id ?? "legacy_tax_rule_" + (index + 1),
+    tax_mode: rule.tax_mode ?? "disabled"
+  }));
+  const defaultTaxRule = taxRules.find(({ id: id2 }) => id2 === config.default_tax_rule_id) ?? null;
+  return {
+    ...config,
+    default_menu_id: config.default_menu_id ?? null,
+    prompt_guest_cover: config.prompt_guest_cover ?? false,
+    table_status_colors: { ...posTableStatusColors, ...config.table_status_colors },
+    receipt_templates: config.receipt_templates ?? [],
+    default_receipt_templates: { ...emptyPosReceiptDefaults, ...config.default_receipt_templates },
+    tax_rules: taxRules,
+    default_tax_rule_id: defaultTaxRule?.id ?? null,
+    default_tax_rule: defaultTaxRule
+  };
+}
+__name(readProfileConfig, "readProfileConfig");
 function profileView(profile, admin = false) {
   const { config_json, pending_config_json, is_active, ...fields } = profile;
   return {
     ...fields,
     is_active: Boolean(is_active),
-    config: JSON.parse(config_json),
+    config: readProfileConfig(config_json),
     ...admin ? {
-      pending_config: pending_config_json ? JSON.parse(pending_config_json) : null
+      pending_config: pending_config_json ? readProfileConfig(pending_config_json) : null
     } : {}
   };
 }
@@ -2895,7 +2998,7 @@ __name(profileView, "profileView");
 async function paymentTypes(context) {
   const { results } = await sql(
     context.db,
-    `SELECT t.id,t.name,t.kind,t.currency
+    `SELECT t.id,t.name,t.kind,t.currency,t.payment_type_group
     FROM pos_payment_types t WHERE t.business_id=? AND t.id IN (SELECT json_extract(value,'$.id') FROM json_each(?))`,
     context.identity.business_id,
     JSON.stringify(context.config.payment_types)
@@ -2904,13 +3007,12 @@ async function paymentTypes(context) {
   return context.config.payment_types.flatMap((entry) => {
     const stored = types.get(entry.id);
     if (!stored) return [];
-    const { currency, ...type } = stored;
-    const currencies = currency ? entry.currencies.filter((value) => value === currency) : entry.currencies;
-    return currencies.length ? [{
-      ...type,
-      currencies,
-      allow_cash_float: entry.allow_cash_float ?? (context.config.cashier_shift_enabled && type.kind === "cash")
-    }] : [];
+    if (stored.currency && stored.currency !== entry.currency) return [];
+    return [{
+      ...stored,
+      currency: entry.currency,
+      allow_cash_float: entry.allow_cash_float ?? (context.config.cashier_shift_enabled && stored.kind === "cash")
+    }];
   });
 }
 __name(paymentTypes, "paymentTypes");
@@ -3179,13 +3281,81 @@ function secondaryToPrimary(amount, primary, rate) {
   );
 }
 __name(secondaryToPrimary, "secondaryToPrimary");
-function saleLineTotals(gross, mode, bps) {
-  const denominator = mode === "inclusive" ? 1e4 + bps : 1e4;
-  const tax = mode === "disabled" ? 0 : Number(rounded(BigInt(gross) * BigInt(bps), BigInt(denominator)));
+function saleLineTotals(gross, mode, bps, rule = null, discount = 0) {
+  const rates = rule ? [rule.tax_1_rate, rule.tax_2_rate, rule.tax_3_rate].map(ratio) : [[BigInt(bps), 100n], [0n, 1n], [0n, 1n]];
+  const afterDiscount = rule ? [
+    rule.calculate_tax_1_after_discount,
+    rule.calculate_tax_2_after_discount,
+    rule.calculate_tax_3_after_discount
+  ] : [true, true, true];
+  const parents = [
+    [],
+    rule?.calculate_tax_2_after_adding_tax_1 ? [0] : [],
+    [
+      ...rule?.calculate_tax_3_after_adding_tax_1 ? [0] : [],
+      ...rule?.calculate_tax_3_after_adding_tax_2 ? [1] : []
+    ]
+  ];
+  let subtotal = gross;
+  let taxes = [0n, 0n, 0n];
+  if (mode === "inclusive") {
+    const scale = rates.reduce((max, [, d]) => d > max ? d : max, 1n) * 100n;
+    const base = scale ** 3n;
+    const coefficients = /* @__PURE__ */ __name((discounted) => {
+      const parts = [];
+      for (const [i, [n, d]] of rates.entries()) {
+        const input = !discounted || afterDiscount[i] ? base : 0n;
+        const prior = parents[i].reduce((sum, parent) => sum + parts[parent], 0n);
+        parts.push((input + prior) * (n * (scale / (d * 100n))) / scale);
+      }
+      return parts;
+    }, "coefficients");
+    const shares = coefficients(false);
+    const denominator = base + shares.reduce((sum, share) => sum + share, 0n);
+    const extract = /* @__PURE__ */ __name((amounts, divisor) => {
+      let running = 0n;
+      let prior = 0n;
+      return amounts.map((amount) => {
+        running += amount;
+        const cumulative = rounded(running, divisor);
+        const component = cumulative - prior;
+        prior = cumulative;
+        return component;
+      });
+    }, "extract");
+    taxes = extract(shares.map((share) => BigInt(gross) * share), denominator);
+    subtotal = gross - Number(taxes.reduce((sum, tax4) => sum + tax4, 0n));
+    if (discount > subtotal) invalid2("The discount exceeds the line subtotal");
+    if (discount) {
+      const grossBase = BigInt(gross) * base;
+      const discountBase = BigInt(discount) * denominator;
+      const applied = discountBase > grossBase ? grossBase : discountBase;
+      const reductions = coefficients(true);
+      taxes = extract(
+        shares.map((share, i) => grossBase * share - applied * reductions[i]),
+        denominator * base
+      );
+    }
+  } else {
+    if (discount > subtotal) invalid2("The discount exceeds the line subtotal");
+    if (mode === "exclusive") {
+      for (const [i, [n, d]] of rates.entries()) {
+        const net = BigInt(subtotal - (afterDiscount[i] ? discount : 0));
+        const prior = parents[i].reduce((sum, parent) => sum + taxes[parent], 0n);
+        taxes[i] = rounded((net + prior) * n, d * 100n);
+      }
+    }
+  }
+  const [tax1, tax2, tax3] = taxes.map(bounded);
+  const tax = bounded(taxes.reduce((sum, amount) => sum + amount, 0n));
   return {
-    subtotal_minor: mode === "inclusive" ? gross - tax : gross,
+    subtotal_minor: subtotal,
+    discount_minor: discount,
+    tax_1_amount: tax1,
+    tax_2_amount: tax2,
+    tax_3_amount: tax3,
     tax_minor: tax,
-    total_minor: mode === "exclusive" ? gross + tax : gross
+    total_minor: subtotal - discount + tax
   };
 }
 __name(saleLineTotals, "saleLineTotals");
@@ -3352,7 +3522,19 @@ async function getCatalog(env, deps, context, url) {
   });
 }
 __name(getCatalog, "getCatalog");
-async function saleLines(env, deps, context, value, currency, taxMode, taxRate) {
+function saleLineEdits(line) {
+  const free = line.is_free === void 0 ? false : boolean(line.is_free, "is_free");
+  const discount = integer2(line.discount_minor ?? 0, "discount_minor", 0);
+  if (free && discount !== 0) invalid2("A free item cannot have a line discount");
+  return {
+    base_price_override_minor: line.base_price_override_minor == null ? null : integer2(line.base_price_override_minor, "base_price_override_minor", 0),
+    is_free: free,
+    discount_minor: discount,
+    note: optionalText(line.note, "line note")
+  };
+}
+__name(saleLineEdits, "saleLineEdits");
+async function saleLines(env, deps, context, value, currency, taxMode, taxRate, taxRule) {
   const inputs = list(value, "lines", 60).map((entry) => {
     const line = object2(entry);
     const modifiers2 = list(line.modifier_ids ?? [], "modifier_ids", 120).map(
@@ -3365,7 +3547,7 @@ async function saleLines(env, deps, context, value, currency, taxMode, taxRate) 
       portionId: line.portion_id == null ? null : recordId(line.portion_id, "portion_id"),
       modifiers: modifiers2,
       quantity: integer2(line.quantity, "quantity", 1, 999),
-      note: optionalText(line.note, "line note")
+      edits: saleLineEdits(line)
     };
   });
   if (!inputs.length) invalid2("A bill needs at least one line");
@@ -3414,7 +3596,7 @@ async function saleLines(env, deps, context, value, currency, taxMode, taxRate) 
       Number(portion?.priceCents ?? product.priceCents),
       currency
     );
-    const unitPrice = base + modifiers2.reduce((sum, option) => sum + option.price_minor, 0);
+    const unitPrice = input.edits.is_free ? 0 : (input.edits.base_price_override_minor ?? base) + modifiers2.reduce((sum, option) => sum + option.price_minor, 0);
     const gross = unitPrice * input.quantity;
     if (gross < 0)
       conflict(
@@ -3438,8 +3620,8 @@ async function saleLines(env, deps, context, value, currency, taxMode, taxRate) 
       modifiers: modifiers2,
       quantity: input.quantity,
       unit_price_minor: unitPrice,
-      ...saleLineTotals(gross, taxMode, taxRate),
-      note: input.note
+      ...input.edits,
+      ...saleLineTotals(gross, taxMode, taxRate, taxRule, input.edits.discount_minor)
     };
   });
 }
@@ -3699,6 +3881,49 @@ async function revokeDevice(context, id2) {
 }
 __name(revokeDevice, "revokeDevice");
 
+// worker/posApiTaxRules.ts
+function readTaxRules(value) {
+  if (!Array.isArray(value)) invalid2("tax_rules must be an array");
+  const ids = /* @__PURE__ */ new Set();
+  return value.map((entry, index) => {
+    const rule = object2(entry);
+    const prefix = "tax_rules[" + index + "].";
+    const id2 = rule.id === void 0 ? newId("tax") : recordId(rule.id, prefix + "id");
+    if (ids.has(id2)) invalid2("Tax rule IDs must be unique within the profile");
+    ids.add(id2);
+    const name = /* @__PURE__ */ __name((key) => {
+      const value2 = rule[key];
+      return typeof value2 === "string" && !value2.trim() ? "" : string(value2, prefix + key);
+    }, "name");
+    const rate = /* @__PURE__ */ __name((key) => {
+      const value2 = rule[key];
+      if (typeof value2 !== "number" || !Number.isFinite(value2) || value2 < 0 || value2 > 100) {
+        invalid2(prefix + key + " must be between 0 and 100");
+      }
+      return value2;
+    }, "rate");
+    const flag2 = /* @__PURE__ */ __name((key) => boolean(rule[key], prefix + key), "flag");
+    return {
+      id: id2,
+      tax_name: string(rule.tax_name, prefix + "tax_name"),
+      tax_mode: choice(rule.tax_mode === void 0 ? "disabled" : rule.tax_mode, prefix + "tax_mode", posTaxModes),
+      tax_1_name: name("tax_1_name"),
+      tax_1_rate: rate("tax_1_rate"),
+      calculate_tax_1_after_discount: flag2("calculate_tax_1_after_discount"),
+      tax_2_name: name("tax_2_name"),
+      tax_2_rate: rate("tax_2_rate"),
+      calculate_tax_2_after_adding_tax_1: flag2("calculate_tax_2_after_adding_tax_1"),
+      calculate_tax_2_after_discount: flag2("calculate_tax_2_after_discount"),
+      tax_3_name: name("tax_3_name"),
+      tax_3_rate: rate("tax_3_rate"),
+      calculate_tax_3_after_adding_tax_1: flag2("calculate_tax_3_after_adding_tax_1"),
+      calculate_tax_3_after_adding_tax_2: flag2("calculate_tax_3_after_adding_tax_2"),
+      calculate_tax_3_after_discount: flag2("calculate_tax_3_after_discount")
+    };
+  });
+}
+__name(readTaxRules, "readTaxRules");
+
 // worker/posApiShifts.ts
 var dayColumns = "id branch_id business_date timezone opened_at opened_by closed_at closed_by";
 var shiftColumns = "id branch_id profile_id working_day_id opened_at opened_by closed_at closed_by activity_revision";
@@ -3948,7 +4173,10 @@ function expectedCounts(db, shiftId) {
     db,
     `WITH configured(payment_type_id,payment_type_name,payment_kind,currency) AS (
       SELECT json_extract(t.value,'$.id'),json_extract(t.value,'$.name'),json_extract(t.value,'$.kind'),currency.value
-      FROM cashier_shifts s,json_each(s.payment_types_json) t,json_each(t.value,'$.currencies') currency WHERE s.id=?1
+      FROM cashier_shifts s,json_each(s.payment_types_json) t,
+        json_each(CASE WHEN json_type(t.value,'$.currency')='text'
+          THEN json_array(json_extract(t.value,'$.currency'))
+          ELSE json_extract(t.value,'$.currencies') END) currency WHERE s.id=?1
     ), entries(payment_type_id,payment_type_name,payment_kind,currency,amount_minor) AS (
       SELECT payment_type_id,payment_type_name,payment_kind,currency,0 FROM configured
       UNION ALL
@@ -3974,7 +4202,7 @@ function validateFloatTender(entry, types) {
   const currency = currencyOf(entry.currency);
   const id2 = recordId(entry.payment_type_id, "payment_type_id");
   const type = types.find(
-    (type2) => type2.id === id2 && type2.currencies.includes(currency)
+    (type2) => type2.id === id2 && type2.currency === currency
   );
   if (!type || !allowsCashFloat(type))
     invalid2("Choose a payment type and currency that allow cash floats");
@@ -4031,25 +4259,23 @@ async function writeShift(context, command, id2, action) {
       )
     ];
     for (const type of types.filter(allowsCashFloat)) {
-      for (const currency of type.currencies) {
-        const amount = opening.find(
-          (entry) => entry.payment_type_id === type.id && entry.currency === currency
-        )?.amount_minor ?? 0;
-        writes.push(
-          sql(
-            db,
-            `INSERT INTO cash_floats(id,shift_id,payment_type_id,currency,kind,amount_minor,created_at,created_by)
+      const amount = opening.find(
+        (entry) => entry.payment_type_id === type.id && entry.currency === type.currency
+      )?.amount_minor ?? 0;
+      writes.push(
+        sql(
+          db,
+          `INSERT INTO cash_floats(id,shift_id,payment_type_id,currency,kind,amount_minor,created_at,created_by)
           VALUES (?,?,?,?,'opening',?,?,?)`,
-            newId("posf"),
-            shift2,
-            type.id,
-            currency,
-            amount,
-            now,
-            actor
-          )
-        );
-      }
+          newId("posf"),
+          shift2,
+          type.id,
+          type.currency,
+          amount,
+          now,
+          actor
+        )
+      );
     }
     return command.commit(
       201,
@@ -4063,9 +4289,12 @@ async function writeShift(context, command, id2, action) {
   if (shift.closed_at)
     conflict("This cashier shift is closed", "CASHIER_SHIFT_CLOSED");
   if (action === "cash-floats") {
+    const snapshot = JSON.parse(shift.payment_types_json);
     const { currency, payment_type_id } = validateFloatTender(
       command.body,
-      JSON.parse(shift.payment_types_json)
+      snapshot.flatMap(
+        ({ currency: currency2, currencies, ...type }) => (currency2 ? [currency2] : currencies ?? []).map((currency3) => ({ ...type, currency: currency3 }))
+      )
     );
     const kind = choice(command.body.kind, "kind", [
       "cash_in",
@@ -4188,19 +4417,36 @@ async function writeShift(context, command, id2, action) {
 __name(writeShift, "writeShift");
 
 // worker/posApiSales.ts
+var amountColumns = [
+  "subtotal_minor",
+  "discount_minor",
+  "tax_1_amount",
+  "tax_2_amount",
+  "tax_3_amount",
+  "tax_minor",
+  "total_minor"
+];
+var amountFields = amountColumns.join(" ");
+var amountInserts = amountColumns.map(() => "?").join(",");
+var amountReversal = amountColumns.map((column) => "-" + column).join(",");
+var calculatedAmounts = "total_tax_amount total_amount";
 var salesColumns = `id branch_id profile_id working_day_id shift_id reverses_sale_id status revision business_date
-  currency secondary_exchange_rate tax_mode tax_rate_bps subtotal_minor tax_minor total_minor table_id table_code
-  table_label customer_id customer_name note reason created_at created_by updated_at updated_by settled_at settled_by`;
+  currency secondary_exchange_rate tax_mode tax_rate_bps ${amountFields} ${calculatedAmounts} table_id table_code
+  table_label guest_cover customer_id customer_name note reason created_at created_by updated_at updated_by settled_at settled_by`;
 var lineColumns = `id line_number product_id product_code product_name portion_id portion_name
-  price_list_id quantity unit_price_minor subtotal_minor tax_minor total_minor note`;
+  price_list_id quantity unit_price_minor ${amountFields} note`;
+var savedLineColumns = `${lineColumns} base_price_override_minor is_free`;
 var paymentColumns = `id line_number payment_type_id payment_type_name payment_kind currency
   entry_type amount_minor reference reverses_payment_id`;
 var reversalId = "(SELECT r.id FROM sales r WHERE r.reverses_sale_id=s.id)";
-var lineJson = jsonRow("l", lineColumns, {
-  modifiers: "json(l.modifiers_json)"
+var lineJson = jsonRow("l", `${lineColumns} ${calculatedAmounts}`, {
+  modifiers: "json(l.modifiers_json)",
+  base_price_override_minor: "l.base_price_override_minor",
+  is_free: "json(CASE WHEN l.is_free=1 THEN 'true' ELSE 'false' END)"
 });
 var paymentJson = jsonRow("p", paymentColumns);
 var saleJson = jsonRow("s", salesColumns, {
+  tax_rule: "json(s.tax_rule_json)",
   reversed_by_sale_id: reversalId,
   receipt: "json(s.receipt_json)",
   lines: `json((SELECT json_group_array(${lineJson} ORDER BY l.line_number) FROM sale_products l WHERE l.sale_id=s.id))`,
@@ -4210,6 +4456,12 @@ var resultOf = /* @__PURE__ */ __name((id2) => ({
   query: `SELECT ${saleJson} AS value FROM sales s WHERE s.id=?`,
   params: [id2]
 }), "resultOf");
+function sumAmounts(lines) {
+  return Object.fromEntries(
+    amountColumns.map((column) => [column, lines.reduce((sum, line) => sum + line[column], 0)])
+  );
+}
+__name(sumAmounts, "sumAmounts");
 function findSale(context, id2) {
   return sql(
     context.db,
@@ -4243,7 +4495,7 @@ async function readBusinessSales(db, url, businessId) {
   }
   return respond(await pageOf(db, url, "sales", `
     SELECT s.id,s.business_date,s.created_at,s.customer_name,s.table_label,s.status,
-      s.currency,s.total_minor,s.reverses_sale_id,${reversalId} AS reversed_by_sale_id,
+      s.currency,s.total_minor,s.total_amount,s.total_tax_amount,s.reverses_sale_id,${reversalId} AS reversed_by_sale_id,
       b.name AS branch_name,p.name AS profile_name
     FROM sales s
     JOIN pos_profiles p ON p.id=s.profile_id AND p.business_id=s.business_id
@@ -4400,7 +4652,8 @@ async function saveSale(env, deps, context, command, id2) {
   if (existing && (day?.id ?? null) !== existing.working_day_id)
     conflict("The bill belongs to a different working day");
   const currency = existing?.currency ?? identity.currency;
-  const taxMode = existing?.tax_mode ?? config.tax_mode;
+  const taxRule = existing ? JSON.parse(existing.tax_rule_json ?? "null") : profileView(profile).config.default_tax_rule;
+  const taxMode = existing?.tax_mode ?? taxRule?.tax_mode ?? config.tax_mode;
   const taxRate = existing?.tax_rate_bps ?? config.tax_rate_bps;
   const note = body.note === void 0 ? existing?.note ?? null : optionalText(body.note, "note");
   if (body.lines !== void 0 && currency !== identity.currency) {
@@ -4412,17 +4665,11 @@ async function saveSale(env, deps, context, command, id2) {
   const [table, customer, lines] = await Promise.all([
     chooseTable(context, body.table_id, existing),
     chooseCustomer(context, body.customer_id, existing),
-    !existing || body.lines !== void 0 ? saleLines(env, deps, context, body.lines, currency, taxMode, taxRate) : null
+    !existing || body.lines !== void 0 ? saleLines(env, deps, context, body.lines, currency, taxMode, taxRate, taxRule) : null
   ]);
-  const amounts = lines?.reduce(
-    (sum, line) => ({
-      subtotal: sum.subtotal + line.subtotal_minor,
-      tax: sum.tax + line.tax_minor,
-      total: sum.total + line.total_minor
-    }),
-    { subtotal: 0, tax: 0, total: 0 }
-  );
-  if (amounts && amounts.total > MAX_AMOUNT)
+  const cover = table.id == null ? inputGuestCover(body.guest_cover, null) : body.guest_cover === void 0 ? existing?.table_id === table.id ? existing.guest_cover : null : inputGuestCover(body.guest_cover, table.id);
+  const amounts = lines ? sumAmounts(lines) : null;
+  if (amounts && amounts.total_minor > MAX_AMOUNT)
     conflict("The bill exceeds the POS amount limit", "AMOUNT_LIMIT");
   const sale = id2 ?? newId("possale");
   const guard = existing ? openSaleGuard(openGuard(day, shift), existing, revision) : openGuard(day, shift);
@@ -4449,18 +4696,17 @@ async function saveSale(env, deps, context, command, id2) {
     writes.push(
       sql(
         db,
-        `UPDATE sales SET table_id=?,table_code=?,table_label=?,customer_id=?,customer_name=?,note=?,
-      subtotal_minor=COALESCE(?,subtotal_minor),tax_minor=COALESCE(?,tax_minor),total_minor=COALESCE(?,total_minor),
+        `UPDATE sales SET table_id=?,table_code=?,table_label=?,guest_cover=?,customer_id=?,customer_name=?,note=?,
+      ${amountColumns.map((column) => `${column}=COALESCE(?,${column})`).join(",")},
       revision=revision+1,updated_at=?,updated_by=? WHERE id=?`,
         table.id,
         table.code,
         table.label,
+        cover,
         customer.id,
         customer.name,
         note,
-        amounts?.subtotal ?? null,
-        amounts?.tax ?? null,
-        amounts?.total ?? null,
+        ...amountColumns.map((column) => amounts?.[column] ?? null),
         now,
         actor,
         sale
@@ -4478,9 +4724,9 @@ async function saveSale(env, deps, context, command, id2) {
       sql(
         db,
         `INSERT INTO sales (id,business_id,branch_id,profile_id,working_day_id,status,business_date,
-      currency,secondary_exchange_rate,tax_mode,tax_rate_bps,subtotal_minor,tax_minor,total_minor,table_id,table_code,
-      table_label,customer_id,customer_name,receipt_json,note,created_at,created_by,updated_at,updated_by)
-      VALUES (?,?,?,?,?,'open',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      currency,secondary_exchange_rate,tax_mode,tax_rate_bps,tax_rule_json,${amountColumns.join(",")},table_id,table_code,
+      table_label,guest_cover,customer_id,customer_name,receipt_json,note,created_at,created_by,updated_at,updated_by)
+      VALUES (?,?,?,?,?,'open',?,?,?,?,?,?,${amountInserts},?,?,?,?,?,?,?,?,?,?,?,?)`,
         sale,
         identity.business_id,
         profile.branch_id,
@@ -4491,12 +4737,12 @@ async function saveSale(env, deps, context, command, id2) {
         String(identity.secondary_exchange_rate),
         taxMode,
         taxRate,
-        amounts.subtotal,
-        amounts.tax,
-        amounts.total,
+        taxRule ? JSON.stringify(taxRule) : null,
+        ...amountColumns.map((column) => amounts[column]),
         table.id,
         table.code,
         table.label,
+        cover,
         customer.id,
         customer.name,
         receipt,
@@ -4517,8 +4763,8 @@ async function saveSale(env, deps, context, command, id2) {
     writes.push(
       sql(
         db,
-        `INSERT INTO sale_products (sale_id,${lineColumns.replaceAll(/\s+/g, ",")},modifiers_json)
-      SELECT ?,${lineColumns.split(/\s+/).map((column) => `json_extract(value,'$.${column}')`).join(",")},
+        `INSERT INTO sale_products (sale_id,${savedLineColumns.replaceAll(/\s+/g, ",")},modifiers_json)
+      SELECT ?,${savedLineColumns.split(/\s+/).map((column) => `json_extract(value,'$.${column}')`).join(",")},
         json_extract(value,'$.modifiers') FROM json_each(?)`,
         sale,
         serialized
@@ -4534,7 +4780,7 @@ function salePayments(input, types, sale) {
     const id2 = recordId(entry.payment_type_id, "payment_type_id");
     const currency = currencyOf(entry.currency);
     const type = types.find(
-      (type2) => type2.id === id2 && type2.currencies.includes(currency)
+      (type2) => type2.id === id2 && type2.currency === currency
     );
     if (!type)
       invalid2("Use a payment type and currency accepted by this profile");
@@ -4648,6 +4894,9 @@ async function importStoreSale(context, command, types) {
     "exclusive"
   ]);
   const taxRate = integer2(body.tax_rate_bps, "tax_rate_bps", 0, 1e4);
+  const taxRule = body.tax_rule == null ? null : readTaxRules([body.tax_rule])[0];
+  if (taxRule && taxMode !== taxRule.tax_mode)
+    invalid2("The saved tax rule must match tax_mode");
   const operating = await operatingContext(context);
   if (body.expected_context === void 0)
     invalid2("The saved sale needs its operating context");
@@ -4658,8 +4907,11 @@ async function importStoreSale(context, command, types) {
     const quantity = integer2(line.quantity, "quantity", 1, 999);
     const unit = integer2(line.unit_price_minor, "unit_price_minor", 0);
     if (unit * quantity > MAX_AMOUNT) invalid2("The line exceeds the POS limit");
-    const amounts2 = saleLineTotals(unit * quantity, taxMode, taxRate);
-    if (amounts2.subtotal_minor !== line.subtotal_minor || amounts2.tax_minor !== line.tax_minor || amounts2.total_minor !== line.total_minor) {
+    const edits = saleLineEdits(line);
+    const amounts2 = saleLineTotals(unit * quantity, taxMode, taxRate, taxRule, edits.discount_minor);
+    if (amounts2.subtotal_minor !== line.subtotal_minor || amounts2.tax_minor !== line.tax_minor || amounts2.total_minor !== line.total_minor || ["tax_1_amount", "tax_2_amount", "tax_3_amount"].some(
+      (column) => line[column] !== void 0 && amounts2[column] !== line[column]
+    ) || line.total_tax_amount !== void 0 && amounts2.tax_minor !== line.total_tax_amount || line.total_amount !== void 0 && amounts2.total_minor !== line.total_amount) {
       invalid2("The saved line amounts do not match the saved price and tax");
     }
     const modifiers2 = list(line.modifiers ?? [], "modifiers", 120).map(
@@ -4682,6 +4934,8 @@ async function importStoreSale(context, command, types) {
     if (new Set(modifiers2.map((modifier) => modifier.id)).size !== modifiers2.length) {
       invalid2("Use distinct modifiers for each line");
     }
+    const editedUnit = edits.is_free ? 0 : edits.base_price_override_minor == null ? unit : edits.base_price_override_minor + modifiers2.reduce((sum, option) => sum + option.price_minor, 0);
+    if (editedUnit !== unit) invalid2("The saved unit price does not match the line edits");
     return {
       id: newId("posl"),
       line_number: index + 1,
@@ -4693,27 +4947,20 @@ async function importStoreSale(context, command, types) {
       price_list_id: line.price_list_id === "" ? "" : recordId(line.price_list_id, "price_list_id"),
       quantity,
       unit_price_minor: unit,
+      ...edits,
       ...amounts2,
-      modifiers: modifiers2,
-      note: optionalText(line.note, "line note")
+      modifiers: modifiers2
     };
   });
   if (!lines.length) invalid2("A bill needs at least one line");
-  const amounts = lines.reduce(
-    (sum, line) => ({
-      subtotal: sum.subtotal + line.subtotal_minor,
-      tax: sum.tax + line.tax_minor,
-      total: sum.total + line.total_minor
-    }),
-    { subtotal: 0, tax: 0, total: 0 }
-  );
-  if (amounts.total > MAX_AMOUNT || amounts.total !== body.total_minor) {
+  const amounts = sumAmounts(lines);
+  if (amounts.total_minor > MAX_AMOUNT || amounts.total_minor !== body.total_minor) {
     invalid2("The saved total must match the lines");
   }
   const entries = salePayments(body.payments, types, {
     currency,
     secondary_exchange_rate: rate,
-    total_minor: amounts.total
+    total_minor: amounts.total_minor
   });
   const tableMode = choice(body.table_mode, "table_mode", [
     "disabled",
@@ -4724,6 +4971,7 @@ async function importStoreSale(context, command, types) {
   if (tableMode === "required" && !table || tableMode === "disabled" && table) {
     invalid2("The table does not match the saved profile mode");
   }
+  const cover = inputGuestCover(body.guest_cover, table);
   const customer = recordId(body.customer_id, "customer_id");
   const receipt = object2(body.receipt);
   const template = object2(receipt.template);
@@ -4762,10 +5010,10 @@ async function importStoreSale(context, command, types) {
       sql(
         db,
         `INSERT INTO sales (id,business_id,branch_id,profile_id,working_day_id,shift_id,status,business_date,
-        currency,secondary_exchange_rate,tax_mode,tax_rate_bps,subtotal_minor,tax_minor,total_minor,
-        table_id,table_code,table_label,customer_id,customer_name,receipt_json,
+        currency,secondary_exchange_rate,tax_mode,tax_rate_bps,tax_rule_json,${amountColumns.join(",")},
+        table_id,table_code,table_label,guest_cover,customer_id,customer_name,receipt_json,
         created_at,created_by,updated_at,updated_by,settled_at,settled_by)
-        VALUES (?,?,?,?,?,?,'paid',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        VALUES (?,?,?,?,?,?,'paid',?,?,?,?,?,?,${amountInserts},?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         id2,
         identity.business_id,
         profile.branch_id,
@@ -4777,12 +5025,12 @@ async function importStoreSale(context, command, types) {
         rate,
         taxMode,
         taxRate,
-        amounts.subtotal,
-        amounts.tax,
-        amounts.total,
+        taxRule ? JSON.stringify(taxRule) : null,
+        ...amountColumns.map((column) => amounts[column]),
         table,
         optionalText(body.table_code, "table code", 250),
         optionalText(body.table_label, "table label", 250),
+        cover,
         customer,
         string(body.customer_name, "customer name", 250),
         JSON.stringify(savedReceipt),
@@ -4795,8 +5043,8 @@ async function importStoreSale(context, command, types) {
       ),
       sql(
         db,
-        `INSERT INTO sale_products (sale_id,${lineColumns.replaceAll(/\s+/g, ",")},modifiers_json)
-      SELECT ?,${lineColumns.split(/\s+/).map((column) => `json_extract(value,'$.${column}')`).join(",")},
+        `INSERT INTO sale_products (sale_id,${savedLineColumns.replaceAll(/\s+/g, ",")},modifiers_json)
+      SELECT ?,${savedLineColumns.split(/\s+/).map((column) => `json_extract(value,'$.${column}')`).join(",")},
         json_extract(value,'$.modifiers') FROM json_each(?)`,
         id2,
         JSON.stringify(lines)
@@ -4808,6 +5056,12 @@ async function importStoreSale(context, command, types) {
   );
 }
 __name(importStoreSale, "importStoreSale");
+function inputGuestCover(value, tableId) {
+  if (value == null) return null;
+  if (tableId == null) invalid2("A guest count requires a table");
+  return integer2(value, "guest_cover", 1, 1e3);
+}
+__name(inputGuestCover, "inputGuestCover");
 async function reverse(context, command, original) {
   const { db, identity, now } = context;
   requireManager(identity.role);
@@ -4843,11 +5097,11 @@ async function reverse(context, command, original) {
       sql(
         db,
         `INSERT INTO sales(id,business_id,branch_id,profile_id,working_day_id,shift_id,reverses_sale_id,status,
-      business_date,currency,secondary_exchange_rate,tax_mode,tax_rate_bps,subtotal_minor,tax_minor,total_minor,
-      table_id,table_code,table_label,customer_id,customer_name,receipt_json,note,reason,created_at,created_by,
+      business_date,currency,secondary_exchange_rate,tax_mode,tax_rate_bps,tax_rule_json,${amountColumns.join(",")},
+      table_id,table_code,table_label,guest_cover,customer_id,customer_name,receipt_json,note,reason,created_at,created_by,
       updated_at,updated_by,settled_at,settled_by)
       SELECT ?,business_id,branch_id,profile_id,?,?,id,'paid',?,currency,secondary_exchange_rate,tax_mode,tax_rate_bps,
-        -subtotal_minor,-tax_minor,-total_minor,table_id,table_code,table_label,customer_id,customer_name,receipt_json,
+        tax_rule_json,${amountReversal},table_id,table_code,table_label,guest_cover,customer_id,customer_name,receipt_json,
         note,?,?,?,?,?,?,? FROM sales WHERE id=?`,
         sale,
         day?.id ?? null,
@@ -4865,9 +5119,9 @@ async function reverse(context, command, original) {
       sql(
         db,
         `INSERT INTO sale_products(id,sale_id,line_number,product_id,product_code,product_name,portion_id,portion_name,
-      price_list_id,modifiers_json,quantity,unit_price_minor,subtotal_minor,tax_minor,total_minor,note)
+      price_list_id,modifiers_json,quantity,unit_price_minor,${amountColumns.join(",")},note,base_price_override_minor,is_free)
       SELECT 'posl_'||lower(hex(randomblob(16))),?,line_number,product_id,product_code,product_name,portion_id,portion_name,
-        price_list_id,modifiers_json,-quantity,unit_price_minor,-subtotal_minor,-tax_minor,-total_minor,note
+        price_list_id,modifiers_json,-quantity,unit_price_minor,${amountReversal},note,base_price_override_minor,is_free
       FROM sale_products WHERE sale_id=?`,
         sale,
         original.id
@@ -5015,6 +5269,91 @@ async function setStaffUsername(context, request, userId) {
 }
 __name(setStaffUsername, "setStaffUsername");
 
+// worker/posApiReceiptTemplates.ts
+function readTemplate(value) {
+  const row = object2(value);
+  const type = choice(row.type, "receipt template type", posReceiptTypes);
+  if (!Array.isArray(row.fields)) invalid2("Receipt template fields must be an array");
+  const fields = row.fields.map(
+    (field) => choice(field, "receipt template field", posReceiptFields[type])
+  );
+  if (new Set(fields).size !== fields.length) invalid2("Receipt template fields must be unique");
+  const limits = posReceiptLimits;
+  const base = {
+    id: recordId(row.id, "receipt template ID"),
+    name: string(row.name, "receipt template name"),
+    language: choice(row.language, "receipt language", posReceiptLanguages),
+    paper_width_mm: integer2(row.paper_width_mm, "paper width", limits.width.min, limits.width.max),
+    print_copies: integer2(row.print_copies, "print copies", limits.copies.min, limits.copies.max),
+    title: optionalText(row.title, "receipt title", 120) ?? "",
+    footer: optionalText(row.footer, "receipt footer", 500) ?? "",
+    text_size: choice(row.text_size, "receipt text size", posReceiptTextSizes),
+    heading_alignment: choice(row.heading_alignment, "receipt heading alignment", posReceiptAlignments),
+    fields
+  };
+  if (type !== "qr_label") {
+    if (row.qr !== void 0) invalid2("QR label settings require a QR label template");
+    return { ...base, type };
+  }
+  const qr = object2(row.qr);
+  const labelHeight = integer2(
+    qr.label_height_mm,
+    "label height",
+    limits.labelHeight.min,
+    limits.labelHeight.max
+  );
+  const size = integer2(qr.size_mm, "QR size", limits.qrSize.min, limits.qrSize.max);
+  if (size > Math.min(base.paper_width_mm, labelHeight))
+    invalid2("The QR code must fit the label width and height");
+  const target = choice(qr.target, "QR target", posQrTargets);
+  const customUrl = optionalText(qr.custom_url, "custom QR URL", 1e3) ?? "";
+  if (target === "custom_url") {
+    let url;
+    try {
+      url = new URL(customUrl);
+    } catch {
+      invalid2("Enter an absolute HTTP or HTTPS URL for the QR label");
+    }
+    if (!/^https?:\/\//i.test(customUrl) || !["http:", "https:"].includes(url.protocol))
+      invalid2("Enter an absolute HTTP or HTTPS URL for the QR label");
+  }
+  return {
+    ...base,
+    type,
+    qr: {
+      label_height_mm: labelHeight,
+      size_mm: size,
+      target,
+      custom_url: customUrl,
+      caption: optionalText(qr.caption, "QR caption", 120) ?? ""
+    }
+  };
+}
+__name(readTemplate, "readTemplate");
+function readReceiptSettings(input, saved) {
+  let templates = saved?.receipt_templates ?? [];
+  if (input.receipt_templates !== void 0) {
+    if (!Array.isArray(input.receipt_templates)) invalid2("receipt_templates must be an array");
+    templates = input.receipt_templates.map(readTemplate);
+  }
+  const byId = new Map(templates.map((template) => [template.id, template]));
+  if (byId.size !== templates.length) invalid2("Receipt template IDs must be unique within the profile");
+  const requested = input.default_receipt_templates === void 0 ? {} : object2(input.default_receipt_templates);
+  for (const key of Object.keys(requested))
+    choice(key, "receipt default type", posReceiptTypes);
+  const defaults = { ...emptyPosReceiptDefaults };
+  for (const type of posReceiptTypes) {
+    const value = requested[type];
+    const id2 = value === void 0 ? saved?.default_receipt_templates?.[type] : value === null ? null : recordId(value, "default receipt template ID");
+    const template = id2 ? byId.get(id2) : void 0;
+    if (value != null && template?.type !== type)
+      invalid2("Choose a receipt template of the matching type from this profile");
+    defaults[type] = template?.type === type ? template.id : null;
+  }
+  return { receipt_templates: templates, default_receipt_templates: defaults };
+}
+__name(readReceiptSettings, "readReceiptSettings");
+
 // worker/posApiSetup.ts
 async function findProfile(db, businessId, profileId) {
   return sql(
@@ -5026,13 +5365,23 @@ async function findProfile(db, businessId, profileId) {
   ).first();
 }
 __name(findProfile, "findProfile");
-async function readConfig(db, businessId, branchId, currency, value, walkIn) {
+async function readConfig(db, businessId, branchId, currency, value, walkIn, saved) {
   const input = object2(value);
   const tableMode = choice(input.table_mode ?? "disabled", "table_mode", [
     "disabled",
     "optional",
     "required"
   ]);
+  const promptGuestCover = boolean(input.prompt_guest_cover ?? false, "prompt_guest_cover");
+  const colors = input.table_status_colors == null ? {} : object2(input.table_status_colors);
+  const tableStatusColors = { ...posTableStatusColors };
+  for (const status of posTableStatuses) {
+    const color = colors[status];
+    if (color === void 0) continue;
+    if (typeof color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(color))
+      invalid2(`table_status_colors.${status} must be a six-digit hex color`);
+    tableStatusColors[status] = color.toUpperCase();
+  }
   const tableGroups = input.table_group_ids == null ? null : list(input.table_group_ids, "table_group_ids", 500).map(
     (id2) => recordId(id2, "table group ID")
   );
@@ -5067,21 +5416,28 @@ async function readConfig(db, businessId, branchId, currency, value, walkIn) {
     if (count !== selected.length)
       invalid2("Choose active menus or categories from this business");
   }
+  const defaultMenu = input.default_menu_id == null ? null : recordId(input.default_menu_id, "default_menu_id");
+  if (defaultMenu && (catalogMode !== "menu" || !selected?.includes(defaultMenu) || !await sql(
+    db,
+    "SELECT 1 FROM menus WHERE business_id=? AND id=? AND parent_id IS NULL AND is_active=1 AND deleted_in_admin=0",
+    businessId,
+    defaultMenu
+  ).first())) {
+    invalid2("Choose a selected top-level menu as the default");
+  }
   const types = list(input.payment_types, "payment_types", 20).map((value2) => {
     const type = object2(value2);
-    const currencies = list(type.currencies, "currencies", 2).map(currencyOf);
-    if (!currencies.length || new Set(currencies).size !== currencies.length)
-      invalid2("Each payment type needs distinct currencies");
+    if ("currencies" in type) invalid2("Use a single currency for each payment type");
     return {
       id: recordId(type.id, "payment type ID"),
-      currencies,
+      currency: currencyOf(type.currency),
       ...type.allow_cash_float === void 0 ? {} : { allow_cash_float: boolean(type.allow_cash_float, "allow_cash_float") }
     };
   });
   if (!types.length || new Set(types.map((type) => type.id)).size !== types.length) {
     invalid2("Choose at least one payment type and list each type once");
   }
-  if (!types.some((type) => type.currencies.includes(currency))) {
+  if (!types.some((type) => type.currency === currency)) {
     invalid2("At least one payment type must accept the business currency");
   }
   const defaultType = recordId(
@@ -5101,9 +5457,9 @@ async function readConfig(db, businessId, branchId, currency, value, walkIn) {
   const cashCurrencies = types.flatMap((type) => {
     const stored = paymentTypesById.get(type.id);
     if (!stored) invalid2("Choose payment types from this business");
-    if (stored.currency && type.currencies.some((value2) => value2 !== stored.currency))
+    if (stored.currency && type.currency !== stored.currency)
       invalid2(`This payment type accepts only ${stored.currency}`);
-    return stored.kind === "cash" ? type.currencies : [];
+    return stored.kind === "cash" ? [type.currency] : [];
   });
   if (new Set(cashCurrencies).size !== cashCurrencies.length)
     invalid2("Configure at most one cash payment type per currency");
@@ -5116,14 +5472,15 @@ async function readConfig(db, businessId, branchId, currency, value, walkIn) {
   ).first())
     invalid2("Choose a customer from this business");
   const template = input.receipt_template == null ? {} : object2(input.receipt_template);
-  const taxMode = choice(input.tax_mode ?? "disabled", "tax_mode", [
-    "disabled",
-    "inclusive",
-    "exclusive"
-  ]);
+  const taxMode = choice(input.tax_mode ?? "disabled", "tax_mode", posTaxModes);
   const taxRate = integer2(input.tax_rate_bps ?? 0, "tax_rate_bps", 0, 1e4);
   if (taxMode === "disabled" && taxRate)
     invalid2("A disabled tax rule must have a zero rate");
+  const taxRules = input.tax_rules === void 0 ? saved?.tax_rules ?? [] : readTaxRules(input.tax_rules);
+  const defaultTaxRuleId = input.default_tax_rule_id === void 0 ? saved?.default_tax_rule_id : input.default_tax_rule_id === null ? null : recordId(input.default_tax_rule_id, "default_tax_rule_id");
+  const defaultTaxRule = taxRules.find(({ id: id2 }) => id2 === defaultTaxRuleId);
+  if (input.default_tax_rule_id != null && !defaultTaxRule)
+    invalid2("Choose a default tax rule from this profile");
   const cashierShiftEnabled = boolean(input.cashier_shift_enabled ?? false, "cashier_shift_enabled");
   return {
     working_day_enabled: boolean(
@@ -5133,8 +5490,11 @@ async function readConfig(db, businessId, branchId, currency, value, walkIn) {
     cashier_shift_enabled: cashierShiftEnabled || types.some((type) => type.allow_cash_float === true),
     table_mode: tableMode,
     table_group_ids: tableGroups,
+    prompt_guest_cover: promptGuestCover,
+    table_status_colors: tableStatusColors,
     catalog_mode: catalogMode,
     selected_ids: selected,
+    default_menu_id: defaultMenu,
     payment_types: types,
     default_payment_type_id: defaultType,
     default_customer_id: customerId,
@@ -5144,11 +5504,102 @@ async function readConfig(db, businessId, branchId, currency, value, walkIn) {
       show_tax: boolean(template.show_tax ?? true, "show_tax")
     },
     print_copies: integer2(input.print_copies ?? 1, "print_copies", 1, 10),
+    ...readReceiptSettings(input, saved),
     tax_mode: taxMode,
-    tax_rate_bps: taxRate
+    tax_rate_bps: taxRate,
+    tax_rules: taxRules,
+    default_tax_rule_id: defaultTaxRule?.id ?? null
   };
 }
 __name(readConfig, "readConfig");
+function duplicateCashCurrencies(config, businessId, kind = "payment.kind") {
+  return `SELECT 1 FROM json_each(${config},'$.payment_types') AS entry
+    JOIN pos_payment_types AS payment ON payment.business_id=${businessId}
+      AND payment.id=json_extract(entry.value,'$.id') AND (${kind})='cash'
+    GROUP BY json_extract(entry.value,'$.currency') HAVING count(*)>1`;
+}
+__name(duplicateCashCurrencies, "duplicateCashCurrencies");
+function incompatiblePaymentConfig(config, businessId) {
+  return `EXISTS (
+    SELECT 1 FROM json_each(${config},'$.payment_types') AS entry
+    JOIN pos_payment_types AS payment ON payment.business_id=${businessId}
+      AND payment.id=json_extract(entry.value,'$.id')
+    WHERE payment.currency IS NOT NULL AND json_extract(entry.value,'$.currency')<>payment.currency
+  ) OR EXISTS (${duplicateCashCurrencies(config, businessId)})`;
+}
+__name(incompatiblePaymentConfig, "incompatiblePaymentConfig");
+async function updatePaymentType(db, businessId, id2, name, group, kind, currency, previous) {
+  function withCurrency(column) {
+    return `COALESCE((
+      SELECT json_set(p.${column},'$.payment_types['||entry.key||'].currency',?1)
+      FROM json_each(p.${column},'$.payment_types') AS entry
+      WHERE json_extract(entry.value,'$.id')=?3 AND ?1 IS NOT NULL AND ?1 IS NOT ?6
+        AND json_extract(entry.value,'$.currency')<>?1
+    ), p.${column})`;
+  }
+  __name(withCurrency, "withCurrency");
+  function kindChangedIn(config) {
+    return `?4<>?5 AND EXISTS (
+      SELECT 1 FROM json_each(${config},'$.payment_types') AS entry
+      WHERE json_extract(entry.value,'$.id')=?3
+    )`;
+  }
+  __name(kindChangedIn, "kindChangedIn");
+  const current = withCurrency("config_json");
+  const pending = withCurrency("pending_config_json");
+  const currentChanged = `p.config_json IS NOT ${current} OR (${kindChangedIn("p.config_json")})`;
+  const settingsConflict = `WITH revised AS (
+    SELECT p.id,${current} AS next_config,${pending} AS next_pending,
+      (${currentChanged}) AS current_changed,
+      (p.pending_config_json IS NOT ${pending} OR (${kindChangedIn("p.pending_config_json")})) AS pending_changed
+    FROM pos_profiles AS p WHERE p.business_id=?2
+  ), changed_configs(config) AS (
+    SELECT next_config FROM revised WHERE current_changed
+    UNION ALL
+    SELECT next_pending FROM revised WHERE pending_changed
+  )
+  SELECT CASE
+    WHEN EXISTS (SELECT 1 FROM pos_store_authorities WHERE business_id=?2)
+      THEN 'Release the offline POS register before changing payment settings.'
+    WHEN EXISTS (
+      SELECT 1 FROM pos_profiles JOIN revised ON revised.id=pos_profiles.id
+      WHERE revised.current_changed AND NOT (${idleProfile})
+    )
+      THEN 'Close the affected POS shifts and bills before changing payment settings.'
+    WHEN EXISTS (
+      SELECT 1 FROM changed_configs AS revised JOIN businesses AS business ON business.id=?2
+      WHERE NOT EXISTS (
+        SELECT 1 FROM json_each(revised.config,'$.payment_types') AS entry
+        WHERE json_extract(entry.value,'$.currency')=business.currency
+      )
+    )
+      THEN 'Add a payment type that accepts the business currency to each affected POS profile first.'
+    WHEN EXISTS (
+      SELECT 1 FROM changed_configs AS revised WHERE EXISTS (${duplicateCashCurrencies(
+    "revised.config",
+    "?2",
+    "CASE WHEN payment.id=?3 THEN ?4 ELSE payment.kind END"
+  )})
+    )
+      THEN 'Remove the duplicate cash currency from the affected POS profiles first.'
+  END AS reason`;
+  const bindings = [currency, businessId, id2, kind, previous.kind, previous.currency];
+  const [payment] = await db.batch([
+    sql(db, `UPDATE pos_payment_types SET name=?7,currency=?1,kind=?4,
+      payment_type_group=COALESCE(?8,payment_type_group)
+      WHERE business_id=?2 AND id=?3 AND kind=?5 AND currency IS ?6
+        AND (${settingsConflict}) IS NULL`, ...bindings, name, group),
+    sql(db, `UPDATE pos_profiles AS p SET config_json=${current},pending_config_json=${pending},
+      version=version+CASE WHEN (${currentChanged}) THEN 1 ELSE 0 END
+      WHERE p.business_id=?2 AND changes()=1
+        AND (${currentChanged} OR p.pending_config_json IS NOT ${pending})`, ...bindings)
+  ]);
+  if (!payment.meta.changes) {
+    const reason = await sql(db, settingsConflict, ...bindings).first("reason");
+    conflict(reason ?? "The payment type changed. Refresh and retry.");
+  }
+}
+__name(updatePaymentType, "updatePaymentType");
 async function profileSetup(request, url, db, businessId, id2) {
   if (request.method === "GET" && !id2) {
     const page = await pageOf(
@@ -5192,6 +5643,7 @@ async function profileSetup(request, url, db, businessId, id2) {
   ).first();
   if (!business2) invalid2("Choose an active branch from this business");
   const walkIn = "walkin_" + businessId;
+  const saved = profile && profileView(profile, true);
   const config = body.config === void 0 && profile ? null : JSON.stringify(
     await readConfig(
       db,
@@ -5199,7 +5651,8 @@ async function profileSetup(request, url, db, businessId, id2) {
       branchId,
       business2.currency,
       body.config,
-      walkIn
+      walkIn,
+      saved?.pending_config ?? saved?.config
     )
   );
   const profileId = id2 ?? newId("posp");
@@ -5211,12 +5664,13 @@ async function profileSetup(request, url, db, businessId, id2) {
     businessId
   );
   if (!profile) {
-    await db.batch([
+    const [, result] = await db.batch([
       ensureWalkIn,
       sql(
         db,
         `INSERT INTO pos_profiles
-      (id,business_id,branch_id,name,is_active,config_json) VALUES (?,?,?,?,?,?)`,
+      (id,business_id,branch_id,name,is_active,config_json)
+      SELECT ?1,?2,?3,?4,?5,?6 WHERE NOT (${incompatiblePaymentConfig("?6", "?2")})`,
         profileId,
         businessId,
         branchId,
@@ -5225,6 +5679,7 @@ async function profileSetup(request, url, db, businessId, id2) {
         config
       )
     ]);
+    if (!result.meta.changes) conflict("The payment type changed. Refresh and retry.");
   } else {
     const canDeactivate = `${idleProfile} AND NOT EXISTS (
       SELECT 1 FROM pos_store_authorities a
@@ -5245,7 +5700,8 @@ async function profileSetup(request, url, db, businessId, id2) {
       pending_config_json=CASE WHEN ?3 IS NULL THEN pending_config_json
         WHEN ${idleProfile} THEN NULL ELSE ?3 END,
       version=version+CASE WHEN (?3 IS NOT NULL AND ${idleProfile}) OR is_active<>?2 THEN 1 ELSE 0 END
-      WHERE business_id=?4 AND id=?5 AND (?2=1 OR (${canDeactivate}))`,
+      WHERE business_id=?4 AND id=?5 AND (?2=1 OR (${canDeactivate}))
+        AND NOT (${incompatiblePaymentConfig("?3", "?4")})`,
         name,
         active,
         config,
@@ -5253,8 +5709,10 @@ async function profileSetup(request, url, db, businessId, id2) {
         profileId
       )
     ]);
-    if (!result.meta.changes)
+    if (!result.meta.changes) {
+      if (active) conflict("The payment type changed. Refresh and retry.");
       conflict("Resolve open POS activity before deactivating this profile");
+    }
   }
   return respond(
     profileView(await findProfile(db, businessId, profileId), true),
@@ -5318,7 +5776,7 @@ __name(grants, "grants");
 async function directory(request, url, db, businessId, resource, id2) {
   const customers = resource === "customers";
   const table = customers ? "pos_customers" : "pos_payment_types";
-  const columns = customers ? "id,name,external_reference,is_walk_in" : "id,name,kind,currency";
+  const columns = customers ? "id,name,external_reference,is_walk_in" : "id,name,kind,currency,payment_type_group";
   const select = `SELECT ${columns} FROM ${table} WHERE business_id=?`;
   if (request.method === "GET" && !id2) {
     return respond(
@@ -5364,28 +5822,48 @@ async function directory(request, url, db, businessId, resource, id2) {
         reference2
       ).run();
   } else {
-    if (existing && body.kind !== void 0 && body.kind !== existing.kind)
-      invalid2("A payment type's kind is fixed");
-    if (existing && body.currency !== void 0 && body.currency !== existing.currency)
-      invalid2("A payment type's currency is fixed");
-    if (id2)
+    const previous = existing;
+    const group = body.payment_type_group === void 0 ? null : choice(body.payment_type_group, "payment type group", paymentTypeGroups);
+    const legacyKind = body.kind === void 0 ? null : choice(body.kind, "kind", ["cash", "card", "qr", "other"]);
+    if (group && legacyKind && paymentKindByGroup[group] !== legacyKind)
+      invalid2("The kind does not match the payment type group");
+    if (previous && !group && legacyKind && legacyKind !== previous.kind)
+      invalid2("Use the payment type group to change the kind");
+    const kind = group ? paymentKindByGroup[group] : previous?.kind ?? legacyKind;
+    if (!kind) invalid2("Choose a payment type group");
+    const currency = body.currency === void 0 ? previous?.currency ?? null : currencyOf(body.currency);
+    if (id2 && previous) {
+      if (currency !== previous.currency || kind !== previous.kind) {
+        await updatePaymentType(db, businessId, id2, name, group, kind, currency, previous);
+      } else {
+        const result = await sql(
+          db,
+          `UPDATE pos_payment_types SET name=?1,payment_type_group=COALESCE(?2,payment_type_group)
+          WHERE business_id=?3 AND id=?4 AND (?2 IS NULL OR kind=?5)
+            AND (?6=0 OR currency IS ?7)`,
+          name,
+          group,
+          businessId,
+          id2,
+          previous.kind,
+          Number(body.currency !== void 0),
+          previous.currency
+        ).run();
+        if (!result.meta.changes) conflict("The payment type changed. Refresh and retry.");
+      }
+    } else {
       await sql(
         db,
-        "UPDATE pos_payment_types SET name=? WHERE business_id=? AND id=?",
-        name,
-        businessId,
-        id2
-      ).run();
-    else
-      await sql(
-        db,
-        "INSERT INTO pos_payment_types(id,business_id,name,kind,currency) VALUES (?,?,?,?,?)",
+        `INSERT INTO pos_payment_types(id,business_id,name,kind,currency,payment_type_group)
+        VALUES (?,?,?,?,?,?)`,
         record,
         businessId,
         name,
-        choice(body.kind, "kind", ["cash", "card", "qr", "other"]),
-        body.currency === void 0 ? null : currencyOf(body.currency)
+        kind,
+        currency,
+        group ?? defaultPaymentGroup[kind]
       ).run();
+    }
   }
   return respond(
     await sql(db, select + " AND id=?", businessId, record).first(),
@@ -5404,7 +5882,7 @@ async function profileOptions(db, businessId) {
       SELECT node.id,node.parent_id,
         COALESCE(NULLIF(m.name_en,''),NULLIF(m.name_km,''),NULLIF(m.name_zh,''),m.slug) AS name
       FROM active_nodes node JOIN menus m ON m.id=node.id AND m.business_id=?1 ORDER BY m.sort_order,name,m.id`, businessId).all(),
-    sql(db, `SELECT id,name,kind,currency FROM pos_payment_types WHERE business_id=? ORDER BY name,id`, businessId).all(),
+    sql(db, `SELECT id,name,kind,currency,payment_type_group FROM pos_payment_types WHERE business_id=? ORDER BY name,id`, businessId).all(),
     sql(db, `SELECT id,name FROM pos_customers WHERE business_id=? AND is_walk_in=0 ORDER BY name,id`, businessId).all()
   ]);
   return respond({
@@ -5641,14 +6119,18 @@ async function listStoreRecoveries(context, url) {
 }
 __name(listStoreRecoveries, "listStoreRecoveries");
 async function savedTenderTypes(context, value) {
-  const types = list(value, "payment_types", 20).map((raw) => {
+  const ids = /* @__PURE__ */ new Set();
+  const types = list(value, "payment_types", 20).flatMap((raw) => {
     const row = object2(raw);
-    const currencies = list(row.currencies, "currencies", 2).map(currencyOf);
+    const id2 = recordId(row.id, "payment type ID");
+    if (ids.has(id2)) invalid2("Use distinct payment types");
+    ids.add(id2);
+    const currencies = row.currency === void 0 ? list(row.currencies, "currencies", 2).map(currencyOf) : [currencyOf(row.currency)];
     if (!currencies.length || new Set(currencies).size !== currencies.length) {
       invalid2("Use distinct currencies for a payment type");
     }
-    return {
-      id: recordId(row.id, "payment type ID"),
+    const type = {
+      id: id2,
       name: string(row.name, "payment type name", 120),
       kind: choice(row.kind, "payment kind", [
         "cash",
@@ -5656,21 +6138,19 @@ async function savedTenderTypes(context, value) {
         "qr",
         "other"
       ]),
-      currencies,
       ...row.allow_cash_float === void 0 ? {} : { allow_cash_float: boolean(row.allow_cash_float, "allow_cash_float") }
     };
+    return currencies.map((currency) => ({ ...type, currency }));
   });
-  const drawerCurrencies = types.filter((row) => row.kind === "cash").flatMap((row) => row.currencies);
-  if (!types.length || new Set(types.map((row) => row.id)).size !== types.length || new Set(drawerCurrencies).size !== drawerCurrencies.length) {
+  const drawerCurrencies = types.filter((row) => row.kind === "cash").map((row) => row.currency);
+  if (!types.length || new Set(drawerCurrencies).size !== drawerCurrencies.length) {
     invalid2("Use distinct payment types and one cash drawer per currency");
   }
   const invalidType = await sql(
     context.db,
     `SELECT t.business_id,t.currency
     FROM pos_payment_types t JOIN json_each(?) saved ON t.id=json_extract(saved.value,'$.id')
-    WHERE t.business_id<>? OR (t.currency IS NOT NULL AND EXISTS (
-      SELECT 1 FROM json_each(saved.value,'$.currencies') accepted WHERE accepted.value<>t.currency
-    ))`,
+    WHERE t.business_id<>? OR (t.currency IS NOT NULL AND json_extract(saved.value,'$.currency')<>t.currency)`,
     JSON.stringify(types),
     context.identity.business_id
   ).first();
@@ -6033,9 +6513,18 @@ async function tables(context, url) {
       url,
       "tables",
       `SELECT t.id,t.code,t.label,t.group_id,g.name AS group_name,
-    s.id AS open_sale_id,CASE WHEN s.id IS NULL THEN 'available' ELSE 'occupied' END AS status
+    s.id AS open_sale_id,s.guest_cover,bk.arrival_at AS booking_arrival_at,bk.pax AS booking_pax,
+    CASE WHEN s.id IS NOT NULL THEN 'occupied' WHEN bk.id IS NOT NULL THEN 'booked' ELSE 'available' END AS status
     FROM restaurant_tables t JOIN table_groups g ON g.id=t.group_id AND g.business_id=t.business_id AND g.branch_id=t.branch_id
     LEFT JOIN sales s ON s.business_id=t.business_id AND s.profile_id=?1 AND s.table_id=t.id AND s.status='open'
+    LEFT JOIN bookings bk ON bk.id=(
+      SELECT reservation.id FROM bookings reservation
+      WHERE reservation.business_id=t.business_id AND reservation.branch_id=t.branch_id
+        AND reservation.table_id=t.id AND reservation.status='confirmed'
+        AND reservation.arrival_at > strftime('%Y-%m-%dT%H:%M:%fZ',?5,'-2 hours')
+        AND reservation.arrival_at <= strftime('%Y-%m-%dT%H:%M:%fZ',?5,'+30 minutes')
+      ORDER BY reservation.arrival_at,reservation.id LIMIT 1
+    )
     LEFT JOIN json_each(?4) selected ON selected.value=g.id
     WHERE t.business_id=?2 AND t.branch_id=?3 AND t.is_active=1 AND g.is_active=1
       AND (?4 IS NULL OR selected.key IS NOT NULL)
@@ -6044,12 +6533,25 @@ async function tables(context, url) {
         context.profile.id,
         context.identity.business_id,
         context.profile.branch_id,
-        context.config.table_group_ids ? JSON.stringify(context.config.table_group_ids) : null
+        context.config.table_group_ids ? JSON.stringify(context.config.table_group_ids) : null,
+        context.now
       ]
     )
   );
 }
 __name(tables, "tables");
+function posProfileView(profile) {
+  const settings = profileView(profile);
+  const { print_copies, tax_mode, tax_rate_bps, ...config } = settings.config;
+  return {
+    ...settings,
+    config: {
+      ...config,
+      ...!config.default_tax_rule && tax_mode !== "disabled" && tax_rate_bps > 0 ? { legacy_tax: { tax_mode, tax_rate_bps } } : {}
+    }
+  };
+}
+__name(posProfileView, "posProfileView");
 async function handlePosApi(request, env, deps) {
   try {
     const url = new URL(request.url);
@@ -6092,7 +6594,7 @@ async function handlePosApi(request, env, deps) {
       return respond({
         ...page,
         profiles: page.profiles.map(
-          (profile2) => profileView(profile2)
+          (profile2) => posProfileView(profile2)
         )
       });
     }
@@ -6129,8 +6631,20 @@ async function handlePosApi(request, env, deps) {
         paymentTypes(context),
         storeAuthority(context)
       ]);
+      const settings = posProfileView(profile);
       return respond({
-        profile: profileView(profile),
+        profile: {
+          ...settings,
+          config: {
+            ...settings.config,
+            payment_types: accepted.map((type) => ({
+              id: type.id,
+              payment_type: type.name,
+              currency: type.currency,
+              allow_cash_float: allowsCashFloat(type)
+            }))
+          }
+        },
         operator: {
           id: identity.user_id,
           name: identity.display_name,
@@ -6154,7 +6668,8 @@ async function handlePosApi(request, env, deps) {
           store_operations: true,
           store_recovery: true,
           reversal_context_guard: true,
-          staff_usernames: true
+          staff_usernames: true,
+          cart_line_edits: true
         },
         ...current
       });
@@ -7871,6 +8386,37 @@ async function publicBookings(request, url, env, slug2, execution) {
   );
 }
 __name(publicBookings, "publicBookings");
+async function assignBookingTable(db, businessId, id2, body) {
+  const tableId = body?.tableId;
+  const expected = body?.expectedTableId;
+  const valid = /* @__PURE__ */ __name((value) => value === null || typeof value === "string" && value.length > 0 && value.length <= 250, "valid");
+  if (!valid(tableId) || !valid(expected)) return error2(400, "Invalid booking table");
+  const assigned = await db.prepare(
+    `UPDATE bookings AS bk SET table_id=?1,updated_at=CURRENT_TIMESTAMP
+    WHERE bk.business_id=?2 AND bk.id=?3 AND bk.status='confirmed' AND bk.table_id IS ?4
+      AND EXISTS (
+        SELECT 1 FROM businesses b ${bookingPolicyJoins} WHERE b.id=bk.business_id AND (${bookingEnabled})
+      )
+      AND (?1 IS NULL OR (
+        EXISTS (
+          SELECT 1 FROM restaurant_tables t JOIN table_groups g
+            ON g.id=t.group_id AND g.business_id=t.business_id AND g.branch_id=t.branch_id
+          WHERE t.id=?1 AND t.business_id=bk.business_id AND t.branch_id=bk.branch_id
+            AND t.is_active=1 AND g.is_active=1
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM bookings other
+          WHERE other.business_id=bk.business_id AND other.branch_id=bk.branch_id
+            AND other.table_id=?1 AND other.id<>bk.id AND other.status='confirmed'
+            AND other.arrival_at > strftime('%Y-%m-%dT%H:%M:%fZ',bk.arrival_at,'-2 hours')
+            AND other.arrival_at < strftime('%Y-%m-%dT%H:%M:%fZ',bk.arrival_at,'+2 hours')
+        )
+      ))
+    RETURNING table_id AS tableId`
+  ).bind(tableId, businessId, id2, expected).first();
+  return assigned ? json2(assigned) : error2(409, "The table is unavailable or the booking changed");
+}
+__name(assignBookingTable, "assignBookingTable");
 async function adminBookings(request, url, env, path, businessId, access, execution) {
   if (!access.visible) return error2(403, "Booking access is required");
   if (path === "/api/admin/bookings" && request.method === "GET") {
@@ -7911,24 +8457,36 @@ async function adminBookings(request, url, env, path, businessId, access, execut
       timezone: business2?.timezone || "UTC"
     });
   }
-  const match = /^\/api\/admin\/bookings\/([^/]+)(\/status)?$/.exec(path);
+  const match = /^\/api\/admin\/bookings\/([^/]+)(\/status|\/table)?$/.exec(path);
   if (!match || !bookingId.test(match[1]))
     return error2(404, "Booking not found");
-  const [, id2, statusPath] = match;
-  if (request.method === "GET" && !statusPath) {
+  const [, id2, action] = match;
+  if (request.method === "GET" && !action) {
     const booking = await env.DB.prepare(
       `SELECT ${summaryColumns},bk.guest_phone AS guestPhone,bk.preference,
       bk.preference_text AS preferenceText,bk.note,bk.timezone,bk.terms_language AS termsLanguage,bk.terms_version AS termsVersion,
-      bk.terms_text AS termsText,bk.terms_accepted_at AS termsAcceptedAt,bk.created_at AS createdAt
-      ${bookingsJoin} WHERE bk.business_id=? AND bk.id=?`
+      bk.terms_text AS termsText,bk.terms_accepted_at AS termsAcceptedAt,bk.created_at AS createdAt,
+      bk.table_id AS tableId,rt.label AS tableLabel
+      ${bookingsJoin}
+      LEFT JOIN restaurant_tables rt ON rt.id=bk.table_id AND rt.business_id=bk.business_id AND rt.branch_id=bk.branch_id
+      WHERE bk.business_id=? AND bk.id=?`
     ).bind(businessId, id2).first();
-    return booking ? json2({ booking, canManage: access.canManage }) : error2(404, "Booking not found");
+    if (!booking) return error2(404, "Booking not found");
+    const tableOptions = access.canManage && booking.status === "confirmed" ? (await env.DB.prepare(
+      `SELECT t.id,t.label,g.name AS groupName
+          FROM restaurant_tables t JOIN table_groups g
+            ON g.id=t.group_id AND g.business_id=t.business_id AND g.branch_id=t.branch_id
+          WHERE t.business_id=? AND t.branch_id=? AND t.is_active=1 AND g.is_active=1
+          ORDER BY g.sort_order,g.name,t.sort_order,t.id`
+    ).bind(businessId, booking.branchId).all()).results : [];
+    return json2({ booking, tableOptions, canManage: access.canManage });
   }
-  if (request.method !== "PATCH" || !statusPath)
+  if (request.method !== "PATCH" || !action)
     return error2(405, "Method not allowed");
   if (!access.canManage)
-    return error2(403, "Booking status changes are unavailable");
+    return error2(403, "Booking changes are unavailable");
   const body = await readBody2(request);
+  if (action === "/table") return assignBookingTable(env.DB, businessId, id2, body);
   const current = bookingStatuses.find(
     (status) => status === body?.expectedStatus
   );
@@ -7959,6 +8517,7 @@ __name(adminBookings, "adminBookings");
 // ../../shared/businessReset.ts
 var branchResetOptions = {
   orders: "Orders",
+  sales: "POS sales",
   bookings: "Bookings",
   tables: "Tables",
   tableGroups: "Table groups",
@@ -7966,6 +8525,8 @@ var branchResetOptions = {
   analytics: "Menu analytics"
 };
 var businessResetOptions = {
+  orders: "Orders across all branches",
+  sales: "POS sales across all branches",
   products: "Products",
   menus: "Menus",
   categories: "Categories",
@@ -7991,10 +8552,11 @@ function targetsFor(scope, selections) {
   const selected = /* @__PURE__ */ __name((key) => selections.has(key), "selected");
   const targets = [];
   const add = /* @__PURE__ */ __name((name, where = own) => targets.push({ name, where }), "add");
+  const resetScope = scope === "business" ? own : branchOnly;
   const orders = selected("orders");
   const tables2 = selected("tables") || selected("tableGroups");
   const bookings = selected("bookings");
-  const ordersWhere = orders ? branchOnly : `${branchOnly} AND table_id IN (
+  const ordersWhere = orders ? resetScope : `${branchOnly} AND table_id IN (
     SELECT id FROM restaurant_tables WHERE ${branchOnly})`;
   const orderIds = `${sourceOrders} WHERE ${ordersWhere}`;
   const bookingIds = `${sourceBookings} WHERE ${branchOnly}`;
@@ -8014,6 +8576,17 @@ function targetsFor(scope, selections) {
   if (orders || tables2) {
     add("order_products", `order_id IN (${orderIds})`);
     add("orders", ordersWhere);
+  }
+  if (selected("sales")) {
+    const saleIds = `SELECT id FROM sales WHERE ${resetScope}`;
+    add("pos_commands", `${own} AND EXISTS (
+      SELECT 1 FROM sales WHERE ${resetScope} AND sales.profile_id=pos_commands.profile_id
+        AND sales.id=json_extract(pos_commands.response_json,'$.id')
+        AND json_type(pos_commands.response_json,'$.lines')='array'
+    )`);
+    add("sale_products", `sale_id IN (${saleIds})`);
+    add("sale_payments", `sale_id IN (${saleIds})`);
+    add("sales", resetScope);
   }
   if (bookings) add("bookings", branchOnly);
   if (tables2) add("restaurant_tables", branchOnly);
@@ -8098,9 +8671,10 @@ async function snapshotSignature(secret, metadata, snapshots, signature) {
   return Array.from(new Uint8Array(signed), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 __name(snapshotSignature, "snapshotSignature");
-var menuOrderReference = `EXISTS (
+var menuOrderReference = /* @__PURE__ */ __name((resettingBusinessOrders) => `EXISTS (
   SELECT 1 FROM orders WHERE menu_id IN (SELECT id FROM menus WHERE ${own})
-)`;
+  ${resettingBusinessOrders ? "AND business_id<>?1" : ""}
+)`, "menuOrderReference");
 function tenantChecks(targets) {
   const checks = [];
   for (const { name, where } of targets) {
@@ -8139,11 +8713,13 @@ async function resetBusinessData(env, actor, businessId, action, input) {
   if (deleting && (!proof || Number(proof[1]) <= Date.now())) return stale();
   const selected = new Set(selection);
   const menus = selected.has("menus");
+  const remainingMenuOrders = menuOrderReference(scope === "business" && selected.has("orders"));
   const targets = targetsFor(scope, selected);
+  const sales = targets.find(({ name }) => name === "sales");
   if (sendDeletedWebhooks && !targets.some(({ name }) => name === "orders" || name === "bookings"))
     return fail(400, "Select a reset that removes orders or bookings to send Deleted webhooks.");
   const ownership = tenantChecks(targets);
-  const blockers = menus && await db.prepare(`SELECT ${menuOrderReference} AS inUse`).bind(businessId).first("inUse") ? ["Saved orders still reference these menus. Reset those orders in their branches before removing the menus."] : [];
+  const blockers = menus && await db.prepare(`SELECT ${remainingMenuOrders} AS inUse`).bind(businessId).first("inUse") ? ["Saved orders outside this reset still reference these menus."] : [];
   if (ownership.length) {
     const sql2 = `SELECT (${ownership.join(" AND ")}) AS valid`;
     if (!await db.prepare(sql2).bind(...scopeBindings(sql2, businessId, branchId)).first("valid"))
@@ -8194,7 +8770,7 @@ async function resetBusinessData(env, actor, businessId, action, input) {
   const audit = db.prepare(`INSERT INTO super_admin_audit_log (id,actor_email,action,business_id,details_json)
     SELECT ?3,?4,'business.data_reset',?1,?5
     WHERE EXISTS (SELECT 1 FROM branches WHERE business_id=?1 AND id=?2 AND name=?6 COLLATE BINARY)
-    ${menus ? `AND NOT ${menuOrderReference}` : ""}
+    ${menus ? `AND NOT ${remainingMenuOrders}` : ""}
     AND ${checks.join(" AND ")}`).bind(
     businessId,
     branchId,
@@ -8215,7 +8791,15 @@ async function resetBusinessData(env, actor, businessId, action, input) {
     const [logged] = await db.batch([
       audit,
       ...sendDeletedWebhooks ? targets.flatMap(({ name, where }) => name === "orders" || name === "bookings" ? [captureWebhook(db, name, "deleted", `(${where}) AND ${guarded}`, [businessId, branchId, auditId])] : []) : [],
-      ...snapshots.map(({ name, where }) => db.prepare(`DELETE FROM ${name} WHERE (${where}) AND ${guarded}`).bind(businessId, branchId, auditId)),
+      ...sales ? [db.prepare(`UPDATE cashier_shifts SET activity_revision=activity_revision+1
+        WHERE business_id=?1 AND closed_at IS NULL AND id IN (
+          SELECT shift_id FROM sales WHERE ${sales.where}
+        ) AND ${guarded}`).bind(businessId, branchId, auditId)] : [],
+      ...snapshots.map(({ name, where }) => {
+        const statement = name === "pos_commands" ? `UPDATE pos_commands SET response_status=410,
+              response_json='{"code":"SALE_RESET","error":"This POS sale was cleared by an administrator."}'` : `DELETE FROM ${name}`;
+        return db.prepare(`${statement} WHERE (${where}) AND ${guarded}`).bind(businessId, branchId, auditId);
+      }),
       db.prepare(`UPDATE businesses SET menu_cache_version=menu_cache_version+1,updated_at=CURRENT_TIMESTAMP
         WHERE id=?1 AND ?2 IS NOT NULL AND ${guarded}`).bind(businessId, branchId, auditId)
     ]);
@@ -9236,14 +9820,14 @@ function normalizeSearchTerm(value) {
   return String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().toLocaleLowerCase().slice(0, 80);
 }
 __name(normalizeSearchTerm, "normalizeSearchTerm");
-function reportDate(value) {
+function parseLocalDate(value) {
   if (!LOCAL_DATE_PATTERN.test(value)) return null;
   const parsed = /* @__PURE__ */ new Date(`${value}T00:00:00.000Z`);
   return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value ? null : parsed;
 }
-__name(reportDate, "reportDate");
+__name(parseLocalDate, "parseLocalDate");
 function shiftDate(value, days) {
-  const parsed = reportDate(value);
+  const parsed = parseLocalDate(value);
   if (!parsed) return "";
   parsed.setUTCDate(parsed.getUTCDate() + days);
   return parsed.toISOString().slice(0, 10);
@@ -12002,6 +12586,24 @@ async function handle(request, env, execution) {
     if (!saved.meta.changes) return json3({ error: existingId ? "Choose a parent outside this submenu" : "This menu slug is already in use" }, 409);
     return json3({ id: menuId }, existingId ? 200 : 201);
   }
+  if (request.method === "GET" && path === "/api/admin/orders/filters/options") {
+    if (!canViewBusinessActivity)
+      return json3({ error: "Owner or manager access is required" }, 403);
+    const [branches, tables2] = await Promise.all([
+      listBranches(env.DB, auth.businessId),
+      env.DB.prepare(
+        `SELECT t.id, t.branch_id AS branchId, t.code, t.label, g.name AS groupName
+         FROM restaurant_tables t
+         JOIN table_groups g ON g.id=t.group_id AND g.business_id=t.business_id
+         WHERE t.business_id=?
+         ORDER BY g.sort_order, t.sort_order, t.code, t.id`
+      ).bind(auth.businessId).all()
+    ]);
+    return json3({
+      branches: branches.results.map(({ id: id2, name }) => ({ id: id2, name })),
+      tables: tables2.results
+    });
+  }
   const adminOrderMatch = path.match(
     /^\/api\/admin\/orders(?:\/([a-zA-Z0-9_-]+))?$/
   );
@@ -12010,18 +12612,18 @@ async function handle(request, env, execution) {
       return json3({ error: "Owner or manager access is required" }, 403);
     const orderId = adminOrderMatch[1];
     if (request.method === "PATCH") {
-      const { status } = await readJson(request).catch(() => null) ?? {};
-      if (!isOrderStatusUpdate(status))
+      const { status: status2 } = await readJson(request).catch(() => null) ?? {};
+      if (!isOrderStatusUpdate(status2))
         return json3({ error: "Invalid order status" }, 400);
       const order = await updateOrderStatus(
         env.DB,
         auth.businessId,
         orderId,
-        status
+        status2
       );
       if (!order) return json3({ error: "Order not found" }, 404);
       if (order.changed) scheduleBranchWebhooks(env, execution, auth.businessId);
-      if (order.status !== status)
+      if (order.status !== status2)
         return json3(
           {
             code: "order_status_conflict",
@@ -12075,10 +12677,40 @@ async function handle(request, env, execution) {
     if (!Number.isSafeInteger(page) || page < 1 || page > 1e6)
       return json3({ error: "Invalid page number" }, 400);
     const pageSize = 25;
+    const status = url.searchParams.get("status") || "";
+    if (status && !isOrderStatus(status))
+      return json3({ error: "Invalid order status filter" }, 400);
     const branchId = url.searchParams.get("branchId") || "";
+    const tableId = url.searchParams.get("tableId") || "";
+    const from = url.searchParams.get("from") || "";
+    const to = url.searchParams.get("to") || "";
+    if (from && !parseLocalDate(from) || to && !parseLocalDate(to) || from && to && from > to)
+      return json3({ error: "Invalid order date range" }, 400);
+    const filters = [];
+    const bindings = [auth.businessId];
+    if (branchId) {
+      filters.push(" AND o.branch_id=?");
+      bindings.push(branchId);
+    }
+    if (status) {
+      filters.push(" AND o.status=?");
+      bindings.push(status);
+    }
+    if (tableId) {
+      filters.push(" AND o.table_id=?");
+      bindings.push(tableId);
+    }
+    if (from) {
+      filters.push(" AND o.posting_date>=?");
+      bindings.push(from);
+    }
+    if (to) {
+      filters.push(" AND o.posting_date<=?");
+      bindings.push(to);
+    }
     const { results } = await env.DB.prepare(
-      `${summarySql()} AND (?='' OR o.branch_id=?) ORDER BY o.posting_date DESC, o.rowid DESC LIMIT ? OFFSET ?`
-    ).bind(auth.businessId, branchId, branchId, pageSize + 1, (page - 1) * pageSize).all();
+      `${summarySql()}${filters.join("")} ORDER BY o.posting_date DESC, o.rowid DESC LIMIT ? OFFSET ?`
+    ).bind(...bindings, pageSize + 1, (page - 1) * pageSize).all();
     return json3({
       orders: results.slice(0, pageSize),
       hasMore: results.length > pageSize
@@ -12090,8 +12722,8 @@ async function handle(request, env, execution) {
     const today = localDateKey(/* @__PURE__ */ new Date(), auth.timezone || "UTC");
     const from = url.searchParams.get("from") || shiftDate(today, -29);
     const to = url.searchParams.get("to") || today;
-    const fromDate = reportDate(from);
-    const toDate = reportDate(to);
+    const fromDate = parseLocalDate(from);
+    const toDate = parseLocalDate(to);
     if (!fromDate || !toDate || fromDate > toDate)
       return json3({ error: "Invalid report date range" }, 400);
     const duration = Math.floor((toDate.getTime() - fromDate.getTime()) / 864e5) + 1;

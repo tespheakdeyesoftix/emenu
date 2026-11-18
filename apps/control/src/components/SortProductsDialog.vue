@@ -12,56 +12,48 @@
     </p>
     <label>
       <span class="label">ប្រភេទ</span>
-      <select v-model="selectedCategoryId" class="input">
-        <option
-          v-for="item in orderedCategories"
-          :key="item.id"
-          :value="item.id"
-        >
-          {{ categoryLabel(item) }}
-        </option>
-      </select>
+      <Select
+        size="lg"
+        variant="outline"
+        v-model="selectedCategoryId"
+        :options="[...orderedCategories.map(item => ({ label: categoryLabel(item), value: item.id }))]"
+      />
     </label>
 
-    <draggable
+    <SortableProductList
       v-model="items"
-      item-key="id"
-      handle=".drag-handle"
-      :animation="180"
-      ghost-class="opacity-30"
+      label="រៀបលំដាប់មុខម្ហូប"
+      :disabled="saving"
+      row-class="!flex min-w-0 items-center gap-3 rounded-5 border border-outline-gray-1 bg-surface-gray-1 p-3"
       class="mt-5 space-y-2"
     >
-      <template #item="{ element, index }">
-        <div
-          class="flex items-center gap-3 rounded-2xl border border-black/[.08] bg-cream p-3"
-        >
-          <button
-            type="button"
-            class="drag-handle grid size-10 shrink-0 cursor-grab place-items-center rounded-xl bg-white active:cursor-grabbing"
-            :aria-label="`អូស ${displayName(element)}`"
-          >
-            <GripVertical :size="19" />
-          </button>
-          <span
-            class="grid size-7 shrink-0 place-items-center rounded-full bg-ink text-xs font-bold text-white"
-          >
-            {{ index + 1 }}
-          </span>
-          <MenuProductThumbnail
-            :src="element.imageUrl || element.images?.[0]?.url || ''"
-            class="size-12 rounded-xl"
-          />
-          <div class="min-w-0 flex-1">
-            <strong class="block truncate text-sm">{{
-              displayName(element)
-            }}</strong>
-            <small v-if="element.code" class="block truncate text-black/40">{{
-              element.code
-            }}</small>
-          </div>
+      <template #item="{ product, index }">
+        <Icon name="lucide-grip-vertical" class="size-5 shrink-0 cursor-grab touch-none text-ink-gray-6" data-sort-handle />
+        <Badge :label="index + 1" />
+        <MenuProductThumbnail
+          :src="product.imageUrl || product.images?.[0]?.url || ''"
+          class="size-12 rounded-xl"
+        />
+        <div class="min-w-0 flex-1">
+          <strong class="block truncate text-sm">{{ displayName(product) }}</strong>
+          <small v-if="product.code" class="block truncate text-ink-gray-6">{{ product.code }}</small>
         </div>
+        <Button
+          variant="ghost"
+          icon="lucide-arrow-up"
+          :aria-label="t('menus.moveUp', { name: displayName(product) })"
+          :disabled="saving || index === 0"
+          @click="move(index, -1)"
+        />
+        <Button
+          variant="ghost"
+          icon="lucide-arrow-down"
+          :aria-label="t('menus.moveDown', { name: displayName(product) })"
+          :disabled="saving || index === items.length - 1"
+          @click="move(index, 1)"
+        />
       </template>
-    </draggable>
+    </SortableProductList>
 
     <p
       v-if="!items.length"
@@ -69,29 +61,29 @@
     >
       ប្រភេទនេះមិនមានមុខម្ហូបសម្រាប់រៀបលំដាប់ទេ។
     </p>
-    <p v-if="error" class="mb-0 mt-4 text-xs font-bold text-red-600">
-      {{ error }}
-    </p>
+    <Alert v-if="error" theme="red" :title="error" class="mb-0 mt-4" />
     <template #footer>
-      <button
-        class="btn-primary w-full"
+      <Button variant="solid" size="lg"
+        class="w-full"
         :disabled="saving || !selectedCategoryId || !items.length"
         @click="save"
       >
-        <Save :size="16" />{{
+        <template #prefix><Save :size="16" /></template>{{
           saving ? "កំពុងរក្សាទុក…" : "រក្សាទុកលំដាប់មុខម្ហូប"
         }}
-      </button>
+      </Button>
     </template>
   </ModalPanel>
 </template>
 
 <script setup lang="ts">
+import { Alert, Badge, Button, Icon, Select } from "frappe-ui";
 import { computed, ref, watch } from "vue";
-import draggable from "vuedraggable";
-import { GripVertical, Save } from "lucide-vue-next";
+import { useI18n } from "vue-i18n";
+import { Save } from "lucide-vue-next";
 import MenuProductThumbnail from "./MenuProductThumbnail.vue";
 import ModalPanel from "./ModalPanel.vue";
+import SortableProductList from "./SortableProductList.vue";
 import type { Category, Product, SortOrderItem } from "../stores/admin";
 
 const props = defineProps<{
@@ -106,6 +98,7 @@ const emit = defineEmits<{
   save: [categoryId: string, items: SortOrderItem[]];
 }>();
 
+const { t } = useI18n();
 const selectedCategoryId = ref("");
 const items = ref<Product[]>([]);
 const orderedCategories = computed(() =>
@@ -133,6 +126,11 @@ function resetItems() {
         Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0) ||
         displayName(a).localeCompare(displayName(b)),
     );
+}
+
+function move(index: number, offset: number) {
+  const [product] = items.value.splice(index, 1);
+  items.value.splice(index + offset, 0, product);
 }
 
 function save() {

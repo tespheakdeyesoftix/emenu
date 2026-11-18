@@ -1,6 +1,7 @@
+import { emptyPosReceiptDefaults } from "../../../shared/posReceipts";
 import type { Env } from "./index";
 import { planLimitError, posPlanEnabled } from "./subscriptionPlans";
-import type { PaymentKind, PosCurrency, ProfileConfig } from "../../../shared/posProfile";
+import { posTableStatusColors, type PaymentKind, type PaymentTypeGroup, type PosCurrency, type ProfileConfig, type ProfileConfigView } from "../../../shared/posProfile";
 
 export type { PaymentKind, PosCurrency, ProfileConfig };
 
@@ -14,7 +15,8 @@ export type PaymentType = {
   id: string;
   name: string;
   kind: PaymentKind;
-  currencies: PosCurrency[];
+  payment_type_group?: PaymentTypeGroup | null;
+  currency: PosCurrency;
   allow_cash_float?: boolean;
 };
 
@@ -57,11 +59,14 @@ export type PosContext = {
   config: ProfileConfig;
   now: string;
   localDate: string;
+  localDateStart?: string | null;
   storeImport?: {
     epoch: string;
     sequence: number;
     resourceId: string;
     shiftPaymentTypes?: PaymentType[];
+    baseCurrency?: PosCurrency;
+    exchangeRate?: string;
     recovery?: { approvedBy: string; approvedAt: string; reason: string };
   };
 };
@@ -73,6 +78,7 @@ export type PosDependencies = {
     env: Env,
   ) => Promise<{ id: string; passwordSalt: string } | null>;
   localDate: (date: Date, timezone: string) => string;
+  startOfLocalDate: (date: string, timezone: string) => string | null;
   subscription: (identity: PosIdentity) => { readOnly: boolean };
   pricing: (
     env: Env,
@@ -330,16 +336,37 @@ export const storeOperatorActive = `EXISTS (
 export const profileColumns = `p.id,p.branch_id,b.name AS branch_name,p.name,
   p.is_active,p.version,p.config_json,p.pending_config_json`;
 
+function readProfileConfig(json: string): ProfileConfigView {
+  const config = JSON.parse(json) as ProfileConfig;
+  const taxRules = (config.tax_rules ?? []).map((rule, index) => ({
+    ...rule,
+    id: rule.id ?? "legacy_tax_rule_" + (index + 1),
+    tax_mode: rule.tax_mode ?? "disabled",
+  } satisfies ProfileConfig["tax_rules"][number]));
+  const defaultTaxRule = taxRules.find(({ id }) => id === config.default_tax_rule_id) ?? null;
+  return {
+    ...config,
+    default_menu_id: config.default_menu_id ?? null,
+    prompt_guest_cover: config.prompt_guest_cover ?? false,
+    table_status_colors: { ...posTableStatusColors, ...config.table_status_colors },
+    receipt_templates: config.receipt_templates ?? [],
+    default_receipt_templates: { ...emptyPosReceiptDefaults, ...config.default_receipt_templates },
+    tax_rules: taxRules,
+    default_tax_rule_id: defaultTaxRule?.id ?? null,
+    default_tax_rule: defaultTaxRule,
+  };
+}
+
 export function profileView(profile: PosProfile, admin = false) {
   const { config_json, pending_config_json, is_active, ...fields } = profile;
   return {
     ...fields,
     is_active: Boolean(is_active),
-    config: JSON.parse(config_json) as ProfileConfig,
+    config: readProfileConfig(config_json),
     ...(admin
       ? {
           pending_config: pending_config_json
-            ? (JSON.parse(pending_config_json) as ProfileConfig)
+            ? readProfileConfig(pending_config_json)
             : null,
         }
       : {}),
@@ -351,28 +378,22 @@ export async function paymentTypes(
 ): Promise<PaymentType[]> {
   const { results } = await sql(
     context.db,
-    `SELECT t.id,t.name,t.kind,t.currency
+    `SELECT t.id,t.name,t.kind,t.currency,t.payment_type_group
     FROM pos_payment_types t WHERE t.business_id=? AND t.id IN (SELECT json_extract(value,'$.id') FROM json_each(?))`,
     context.identity.business_id,
     JSON.stringify(context.config.payment_types),
-  ).all<Omit<PaymentType, "currencies"> & { currency: PosCurrency | null }>();
+  ).all<Omit<PaymentType, "currency"> & { currency: PosCurrency | null }>();
   const types = new Map(results.map((row) => [row.id, row]));
   return context.config.payment_types.flatMap((entry) => {
     const stored = types.get(entry.id);
     if (!stored) return [];
-    const { currency, ...type } = stored;
-    const currencies = currency
-      ? entry.currencies.filter((value) => value === currency)
-      : entry.currencies;
-    return currencies.length
-      ? [{
-          ...type,
-          currencies,
-          allow_cash_float:
-            entry.allow_cash_float ??
-            (context.config.cashier_shift_enabled && type.kind === "cash"),
-        }]
-      : [];
+    if (stored.currency && stored.currency !== entry.currency) return [];
+    return [{
+      ...stored,
+      currency: entry.currency,
+      allow_cash_float: entry.allow_cash_float ??
+        (context.config.cashier_shift_enabled && stored.kind === "cash"),
+    }];
   });
 }
 

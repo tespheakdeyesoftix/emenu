@@ -35,6 +35,8 @@ export type BookingSummary = BookingReceipt & {
   status: BookingStatus;
 };
 export type BookingDetail = BookingSummary & {
+  tableId: string | null;
+  tableLabel: string | null;
   guestPhone: string;
   preference: string;
   preferenceText: string;

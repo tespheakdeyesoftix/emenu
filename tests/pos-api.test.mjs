@@ -28,6 +28,7 @@ let db;
 let admin;
 let discovery;
 let cash;
+let cashKHR;
 let qr;
 let main;
 
@@ -114,8 +115,9 @@ const adminWrite = async (path, method, body, expected = 201, token = admin) =>
 const profileConfig = (overrides) => ({
   table_mode: "optional",
   payment_types: [
-    { id: cash, currencies: ["USD", "KHR"] },
-    { id: qr, currencies: ["USD"] },
+    { id: cash, currency: "USD" },
+    { id: cashKHR, currency: "KHR" },
+    { id: qr, currency: "USD" },
   ],
   default_payment_type_id: cash,
   ...overrides,
@@ -141,8 +143,30 @@ const coffee = (quantity = 1, overrides = {}) => ({
   quantity,
   ...overrides,
 });
+const compoundTax = {
+  id: "compound",
+  tax_name: "Compound tax",
+  tax_mode: "exclusive",
+  tax_1_name: "Tax 1",
+  tax_1_rate: 10,
+  calculate_tax_1_after_discount: true,
+  tax_2_name: "Tax 2",
+  tax_2_rate: 5,
+  calculate_tax_2_after_adding_tax_1: true,
+  calculate_tax_2_after_discount: false,
+  tax_3_name: "Tax 3",
+  tax_3_rate: 2,
+  calculate_tax_3_after_adding_tax_1: true,
+  calculate_tax_3_after_adding_tax_2: true,
+  calculate_tax_3_after_discount: true,
+};
+const discountedLine = {
+  subtotal_minor: 1004, discount_minor: 104,
+  tax_1_amount: 90, tax_2_amount: 55, tax_3_amount: 21,
+  tax_minor: 166, total_tax_amount: 166, total_minor: 1066, total_amount: 1066,
+};
 const cashPayment = (amount, currency = "USD", overrides = {}) => ({
-  payment_type_id: cash,
+  payment_type_id: currency === "KHR" ? cashKHR : cash,
   currency,
   amount_minor: amount,
   ...overrides,
@@ -191,6 +215,8 @@ before(async () => {
             ALLOWED_ORIGINS: "https://admin.test",
             POS_ALLOWED_ORIGINS: "https://pos.test",
             AUTH_PEPPER: pepper,
+            PUBLIC_ASSET_BASE: "https://assets.test",
+            PUBLIC_MEDIA_BASE: "https://media.test",
           },
         },
       ],
@@ -229,6 +255,16 @@ before(async () => {
       await prepare("UPDATE businesses SET disabled_control_pages_json=? WHERE id='cafe'",
         JSON.stringify(["catalog", "posProfiles"])).run();
     }
+    if (name === "0076_pos_profile_payment_currency.sql") {
+      const active = { payment_types: [{ id: "legacy-cash", currencies: ["KHR", "USD"], allow_cash_float: true }] };
+      const pending = { payment_types: [{ id: "legacy-cash", currencies: ["KHR"] }] };
+      await prepare(`INSERT INTO pos_profiles(id,business_id,branch_id,name,config_json,pending_config_json)
+        SELECT 'payment-migration','cafe',id,'Legacy profile',?,? FROM branches WHERE business_id='cafe' AND is_default=1`,
+        JSON.stringify(active), JSON.stringify(pending)).run();
+    }
+    if (name === "0080_pos_customers.sql") {
+      await prepare("INSERT INTO pos_customers(id,business_id,name) VALUES ('legacy-customer','cafe','Legacy Customer')").run();
+    }
     const statements = splitSql(
       await readFile(resolve(migrations, name), "utf8"),
     );
@@ -242,6 +278,14 @@ before(async () => {
   const migrated = await prepare("SELECT disabled_control_pages_json FROM businesses WHERE id='cafe'").first("disabled_control_pages_json");
   assert.deepEqual(JSON.parse(migrated), ["catalog", "posProfiles", "sellingOverview", "posPaymentTypes"]);
   // These fixtures explicitly enable the sidebar pages for the POS API tests.
+  const paymentMigration = await prepare("SELECT config_json,pending_config_json FROM pos_profiles WHERE id='payment-migration'").first();
+  assert.deepEqual(JSON.parse(paymentMigration.config_json).payment_types, [
+    { id: "legacy-cash", currency: "USD", allow_cash_float: true },
+  ]);
+  assert.deepEqual(JSON.parse(paymentMigration.pending_config_json).payment_types, [
+    { id: "legacy-cash", currency: "KHR" },
+  ]);
+  await prepare("DELETE FROM pos_profiles WHERE id='payment-migration'").run();
   await prepare("UPDATE businesses SET disabled_control_pages_json='[]' WHERE id IN ('cafe','other')").run();
   assert.deepEqual((await read(legacyToken, "/profiles")).profiles, []);
   await account("username-manager", "cafe", "manager");
@@ -307,6 +351,7 @@ before(async () => {
   cash = (
     await adminWrite("/payment-types", "POST", { name: "Cash", kind: "cash" })
   ).id;
+  cashKHR = (await adminWrite("/payment-types", "POST", { name: "KHR drawer", kind: "cash", currency: "KHR" })).id;
   qr = (await adminWrite("/payment-types", "POST", { name: "QR", kind: "qr" }))
     .id;
 });
@@ -357,7 +402,7 @@ test("POS subscription limits apply across branches and use the paid sale date",
     assert.deepEqual(await checkout(first, 200, checkoutKey), paid);
     assert.deepEqual(
       (await status(await request("/api/admin/workspace-access", admin), 200)).accessibleControlPages,
-      ["sellingOverview", "posProfiles", "posPaymentTypes", "salesList"],
+      ["sellingOverview", "posProfiles", "posPaymentTypes", "posCustomers", "salesList"],
     );
     const choices = await adminWrite("/profile-options", "GET", undefined, 200);
     assert.ok(choices.branches.some((branch) => branch.id === main));
@@ -777,7 +822,7 @@ test("two profiles share an overnight day, carry bills between shifts and reconc
         row.expected_minor,
       ]),
     ),
-    { [cash + "USD"]: 1250, [cash + "KHR"]: 23080, [qr + "USD"]: 100 },
+    { [cash + "USD"]: 1250, [cashKHR + "KHR"]: 23080, [qr + "USD"]: 100 },
   );
 
   const reversal = await write(token, `/sales/${sale.id}/reverse`, {
@@ -802,8 +847,449 @@ test("two profiles share an overnight day, carry bills between shifts and reconc
   );
   assert.ok(closed.closing_counts.every((row) => row.variance_minor === 0));
   assert.deepEqual(await read(token, `/cashier-shifts/${shift.id}`), closed);
-  assert.equal((await read(token, "/context")).profile.config.print_copies, 2);
+  const activeProfile = await adminWrite("/profiles/" + a.id, "GET", undefined, 200);
+  assert.equal(activeProfile.config.print_copies, 2);
   await write(token, `/working-days/${day.id}/close`, {}, 200);
+});
+
+test("POS profile receipt templates round-trip with defaults for each type", async () => {
+  const receipt = {
+    id: "sale-en",
+    name: "Receipt EN",
+    type: "receipt",
+    language: "en",
+    paper_width_mm: 80,
+    print_copies: 2,
+    title: "Closing receipt",
+    footer: "Thank you",
+    text_size: "normal",
+    heading_alignment: "center",
+    fields: ["order_number", "unit_prices", "tax", "payments"],
+  };
+  const khmer = { ...receipt, id: "sale-km", name: "Receipt KH", language: "km" };
+  const kitchen = {
+    ...receipt, id: "kitchen", name: "Kitchen Order", type: "kitchen_receipt",
+    fields: ["order_number", "station", "modifiers", "item_notes"],
+  };
+  const label = {
+    ...receipt, id: "qr-label", name: "QR Sticker", type: "qr_label", paper_width_mm: 58,
+    fields: ["table", "show_link"],
+    qr: { label_height_mm: 50, size_mm: 28, target: "custom_url", custom_url: "https://example.test/menu", caption: "Open the menu" },
+  };
+  const templates = [receipt, khmer, kitchen, label];
+  const defaults = { receipt: receipt.id, kitchen_receipt: kitchen.id, qr_label: label.id };
+  const profile = await newProfile("Multiple print templates", {
+    receipt_templates: templates,
+    default_receipt_templates: defaults,
+  });
+  const token = await start(profile);
+  const context = async () => (await read(token, "/context")).profile.config;
+  assert.deepEqual((await context()).receipt_templates, templates);
+  assert.deepEqual((await context()).default_receipt_templates, defaults);
+  const discover = await read(discovery, "/profiles?page_size=100");
+  const discoveredProfile = discover.profiles.find(({ id }) => id === profile.id);
+  assert.ok(discoveredProfile);
+  for (const config of [await context(), discoveredProfile.config]) {
+    for (const field of ["print_copies", "tax_mode", "tax_rate_bps"]) {
+      assert.ok(!Object.hasOwn(config, field), field);
+    }
+    assert.equal(config.receipt_templates[0].print_copies, 2);
+  }
+  assert.equal(profile.config.print_copies, 1);
+  const path = "/profiles/" + profile.id;
+  const patch = (settings, status = 200) => adminWrite(path, "PATCH", {
+    config: profileConfig(settings),
+  }, status);
+  await patch({ default_receipt_templates: { kitchen_receipt: receipt.id } }, 400);
+  await patch({ default_receipt_templates: { receipt: "another-profile-template" } }, 400);
+  await patch({ receipt_templates: [receipt, { ...khmer, id: receipt.id }] }, 400);
+  await patch({ receipt_templates: [{ ...kitchen, fields: ["payments"] }] }, 400);
+  await patch({ receipt_templates: [{ ...label, qr: { ...label.qr, custom_url: "javascript:alert(1)" } }] }, 400);
+  await patch({ receipt_templates: [{ ...label, qr: { ...label.qr, size_mm: 51 } }] }, 400);
+  await patch({ print_copies: 3 });
+  assert.deepEqual((await context()).receipt_templates, templates);
+  assert.deepEqual((await context()).default_receipt_templates, defaults);
+
+  const bill = await write(token, "/sales", { lines: [coffee()] });
+  assert.equal(bill.receipt.copies, 3);
+  const updatedDefaults = { ...defaults, receipt: khmer.id };
+  const queued = await patch({ default_receipt_templates: { receipt: khmer.id } });
+  assert.deepEqual(queued.pending_config.default_receipt_templates, updatedDefaults);
+  assert.deepEqual((await context()).default_receipt_templates, defaults);
+  await write(token, "/sales/" + bill.id + "/cancel", { revision: bill.revision, reason: "Test" }, 200);
+  assert.deepEqual((await context()).default_receipt_templates, updatedDefaults);
+  const removed = await patch({ receipt_templates: [receipt, kitchen, label] });
+  assert.deepEqual(removed.config.default_receipt_templates, { ...defaults, receipt: null });
+
+  await prepare(
+    "UPDATE pos_profiles SET config_json=json_remove(config_json,'$.receipt_templates','$.default_receipt_templates') WHERE id=?",
+    profile.id,
+  ).run();
+  assert.deepEqual((await context()).receipt_templates, []);
+  assert.deepEqual((await context()).default_receipt_templates, { receipt: null, kitchen_receipt: null, qr_label: null });
+});
+
+test("POS catalog exposes uploaded and external menu/category photos", async () => {
+  const menuProfile = await newProfile("Menu photos", {
+    catalog_mode: "menu", selected_ids: ["main-menu", "food-menu"],
+  });
+  const categoryProfile = await newProfile("Category photos", {
+    catalog_mode: "category", selected_ids: ["drinks"],
+  });
+  await db.batch([
+    prepare("INSERT INTO media(id,business_id,object_key,filename,content_type,size_bytes) VALUES ('catalog-menu-photo','cafe','cafe/menu photos/coffee.webp','coffee.webp','image/webp',100)"),
+    prepare("UPDATE menus SET image_url='https://external.test/main.jpg' WHERE id='main-menu'"),
+    prepare("UPDATE menus SET image_media_id='catalog-menu-photo',image_url='https://old.test/coffee.jpg' WHERE id='coffee-menu'"),
+    prepare("UPDATE categories SET image_media_id='catalog-menu-photo' WHERE id='drinks'"),
+  ]);
+  try {
+    const menuToken = await start(menuProfile);
+    const menus = (await read(menuToken, "/catalog")).nodes;
+    assert.equal(menus.find(row => row.id === "main-menu").image_url, "https://external.test/main.jpg");
+    assert.equal(menus.find(row => row.id === "coffee-menu").image_url, "https://media.test/cafe/menu%20photos/coffee.webp");
+    assert.equal(menus.find(row => row.id === "food-menu").image_url, null);
+    const scoped = await read(menuToken, "/catalog?menu_id=coffee-menu");
+    assert.equal(scoped.nodes[0].image_url, "https://media.test/cafe/menu%20photos/coffee.webp");
+    assert.equal("image_object_key" in scoped.nodes[0], false);
+    const categories = (await read(await start(categoryProfile), "/catalog")).nodes;
+    assert.equal(categories.find(row => row.id === "drinks").image_url, "https://media.test/cafe/menu%20photos/coffee.webp");
+    assert.equal(categories.find(row => row.id === "coffee-category").image_url, null);
+  } finally {
+    await db.batch([
+      prepare("UPDATE menus SET image_url=NULL,image_media_id=NULL WHERE id IN ('main-menu','coffee-menu')"),
+      prepare("UPDATE categories SET image_url=NULL,image_media_id=NULL WHERE id='drinks'"),
+      prepare("DELETE FROM media WHERE id='catalog-menu-photo'"),
+    ]);
+  }
+});
+
+test("POS catalog scopes products and nodes to a menu or submenu", async () => {
+  const profile = await newProfile("Menu catalog filter", {
+    catalog_mode: "menu", selected_ids: ["main-menu"],
+  });
+  const token = await start(profile);
+  const catalog = (query = "", expected = 200) => read(token, "/catalog" + query, expected);
+  await db.batch([
+    prepare("INSERT INTO menus(id,business_id,parent_id,slug,name_en) VALUES ('nested-test','cafe','coffee-menu','nested-test','Nested'),('empty-test','cafe','main-menu','empty-test','Empty')"),
+    prepare("INSERT INTO menu_products(business_id,menu_id,product_id) VALUES ('cafe','main-menu','coffee'),('cafe','nested-test','food-product')"),
+  ]);
+  try {
+    const root = await catalog("?menu_id=main-menu");
+    assert.deepEqual(root.products.map(row => row.id).sort(), ["coffee", "food-product"]);
+    assert.deepEqual(root.products.find(row => row.id === "coffee").menu_ids.toSorted(), ["coffee-menu", "main-menu"]);
+    assert.deepEqual(
+      Object.fromEntries(root.nodes.map(row => [row.id, row.parent_id])),
+      { "main-menu": null, "coffee-menu": "main-menu", "nested-test": "coffee-menu", "empty-test": "main-menu" },
+    );
+    const submenu = await catalog("?menu_id=coffee-menu");
+    assert.deepEqual(
+      Object.fromEntries(submenu.nodes.map(row => [row.id, row.parent_id])),
+      { "coffee-menu": null, "nested-test": "coffee-menu" },
+    );
+    assert.deepEqual(
+      Object.fromEntries(submenu.products.map(row => [row.id, row.menu_ids])),
+      { coffee: ["coffee-menu"], "food-product": ["nested-test"] },
+    );
+    const first = await catalog("?menu_id=coffee-menu&page=1&page_size=1");
+    const second = await catalog("?menu_id=coffee-menu&page=2&page_size=1");
+    assert.equal(first.has_more, true);
+    assert.equal(second.has_more, false);
+    assert.deepEqual(first.nodes, second.nodes);
+    assert.deepEqual([...first.products, ...second.products].map(row => row.id).sort(), ["coffee", "food-product"]);
+    assert.deepEqual((await catalog("?menu_id=empty-test")).products, []);
+    assert.deepEqual(await catalog(), root);
+    await catalog("?menu_id=food-menu", 404);
+    await catalog("?menu_id=missing-menu", 404);
+    await catalog("?menu_id=", 400);
+    const categoryProfile = await newProfile("Category without menu filter", { catalog_mode: "category" });
+    await read(await start(categoryProfile), "/catalog?menu_id=main-menu", 400);
+  } finally {
+    await db.batch([
+      prepare("DELETE FROM menu_products WHERE business_id='cafe' AND menu_id IN ('main-menu','nested-test') AND product_id IN ('coffee','food-product')"),
+      prepare("DELETE FROM menus WHERE id IN ('nested-test','empty-test')"),
+    ]);
+  }
+});
+
+test("a POS default menu must be a selected top-level menu", async () => {
+  const config = { catalog_mode: "menu", selected_ids: ["main-menu", "food-menu"] };
+  const profile = await newProfile("Default menu", { ...config, default_menu_id: "main-menu" });
+  const token = await start(profile);
+  assert.equal(profile.config.default_menu_id, "main-menu");
+  assert.equal((await read(token, "/context")).profile.config.default_menu_id, "main-menu");
+
+  const patch = (overrides, expected) => adminWrite("/profiles/" + profile.id, "PATCH", {
+    config: profileConfig({ ...config, ...overrides }),
+  }, expected);
+  await patch({ selected_ids: ["food-menu"], default_menu_id: "main-menu" }, 400);
+  await patch({ selected_ids: ["coffee-menu"], default_menu_id: "coffee-menu" }, 400);
+  await patch({ selected_ids: null, default_menu_id: "main-menu" }, 400);
+  await patch({ catalog_mode: "category", selected_ids: null, default_menu_id: "main-menu" }, 400);
+
+  const bill = await write(token, "/sales", { lines: [coffee()] });
+  const pending = await patch({
+    default_menu_id: "food-menu",
+    receipt_template: { title: "Pending receipt", footer: "", show_tax: false },
+  }, 200);
+  assert.equal(pending.config.default_menu_id, "main-menu");
+  assert.equal(pending.pending_config.default_menu_id, "food-menu");
+  const current = (await read(token, "/context")).profile.config;
+  assert.equal(current.default_menu_id, "food-menu");
+  assert.notEqual(current.receipt_template.title, "Pending receipt");
+  await write(token, "/sales/" + bill.id + "/cancel", { revision: bill.revision, reason: "Test" }, 200);
+  assert.equal((await read(token, "/context")).profile.config.default_menu_id, "food-menu");
+
+  await patch({ selected_ids: ["main-menu"], default_menu_id: null }, 200);
+  const narrowBill = await write(token, "/sales", { lines: [coffee()] });
+  await patch({ selected_ids: ["food-menu"], default_menu_id: "food-menu" }, 200);
+
+  const menuConfig = (await read(token, "/context")).profile.config;
+  assert.deepEqual(menuConfig.selected_ids, ["main-menu", "food-menu"]);
+  assert.equal(menuConfig.default_menu_id, "food-menu");
+  const food = await read(token, "/catalog?menu_id=food-menu");
+  assert.deepEqual(food.products.map(({ id }) => id), ["food-product"]);
+  const updated = await write(token, "/sales/" + narrowBill.id, {
+    revision: narrowBill.revision,
+    lines: [coffee(), { product_id: "food-product", quantity: 1 }],
+  }, 200, randomUUID(), "PATCH");
+  assert.deepEqual(updated.lines.map(({ product_id }) => product_id), ["coffee", "food-product"]);
+
+  await write(token, "/sales/" + narrowBill.id + "/cancel", {
+    revision: updated.revision, reason: "Test",
+  }, 200);
+  const promoted = (await read(token, "/context")).profile.config;
+  assert.deepEqual(promoted.selected_ids, ["food-menu"]);
+  assert.equal(promoted.default_menu_id, "food-menu");
+  await read(token, "/catalog?menu_id=main-menu", 404);
+
+  await prepare("UPDATE pos_profiles SET config_json=json_remove(config_json,'$.default_menu_id') WHERE id=?", profile.id).run();
+  assert.equal((await read(token, "/context")).profile.config.default_menu_id, null);
+});
+
+
+test("POS sales store discounted tax levels, aggregate lines and reverse the saved amounts", async () => {
+  const inclusive = { ...compoundTax, id: "inclusive", tax_mode: "inclusive" };
+  const profile = await newProfile("Rule pricing", {
+    working_day_enabled: false, cashier_shift_enabled: false,
+    tax_rules: [compoundTax, inclusive], default_tax_rule_id: compoundTax.id,
+  });
+  const token = await start(profile);
+  await write(token, "/sales", { lines: [coffee(1, { discount_minor: 252 })] }, 400);
+  const draft = await write(token, "/sales", { lines: [coffee(4), coffee()] });
+  const updated = await write(token, `/sales/${draft.id}`, {
+    revision: draft.revision,
+    lines: [coffee(4, { discount_minor: 104 }), coffee()],
+  }, 200, randomUUID(), "PATCH");
+  const amounts = (row) => Object.fromEntries(Object.keys(discountedLine).map(key => [key, row[key]]));
+  assert.deepEqual(amounts(updated.lines[0]), discountedLine);
+  assert.deepEqual(amounts(updated), {
+    subtotal_minor: 1255, discount_minor: 104,
+    tax_1_amount: 115, tax_2_amount: 69, tax_3_amount: 27,
+    tax_minor: 211, total_tax_amount: 211, total_minor: 1362, total_amount: 1362,
+  });
+  const paid = await write(token, `/sales/${draft.id}/checkout`, {
+    revision: updated.revision, expected_total_minor: 1362, payments: [cashPayment(1362)],
+  }, 200);
+  assert.deepEqual(amounts(paid), amounts(updated));
+  assert.deepEqual(paid.tax_rule, compoundTax);
+  const reversed = await write(token, `/sales/${draft.id}/reverse`, { reason: "Full refund" });
+  assert.deepEqual(amounts(reversed), Object.fromEntries(Object.entries(amounts(paid)).map(([key, value]) => [key, -value])));
+  assert.deepEqual(amounts(reversed.lines[0]), Object.fromEntries(Object.entries(discountedLine).map(([key, value]) => [key, -value])));
+  assert.deepEqual(reversed.tax_rule, compoundTax);
+
+  await adminWrite(`/profiles/${profile.id}`, "PATCH", {
+    config: profileConfig({ default_tax_rule_id: inclusive.id }),
+  }, 200);
+  const inclusiveBill = await write(token, "/sales", { lines: [coffee(4)] });
+  assert.deepEqual(amounts(inclusiveBill.lines[0]), {
+    subtotal_minor: 852, discount_minor: 0,
+    tax_1_amount: 85, tax_2_amount: 47, tax_3_amount: 20,
+    tax_minor: 152, total_tax_amount: 152, total_minor: 1004, total_amount: 1004,
+  });
+  await write(token, `/sales/${inclusiveBill.id}/cancel`, {
+    revision: inclusiveBill.revision, reason: "Test complete",
+  }, 200);
+});
+
+test("line edits reprice the base with modifiers and settle complimentary items", async () => {
+  const profile = await newProfile("Edited items", {
+    working_day_enabled: false, cashier_shift_enabled: false,
+  });
+  const token = await start(profile);
+  assert.equal((await read(token, "/context")).capabilities.cart_line_edits, true);
+  const edited = coffee(2, {
+    base_price_override_minor: 400, modifier_ids: ["less"],
+    discount_minor: 20, note: "Patio order",
+  });
+  await write(token, "/sales", { lines: [{ ...edited, base_price_override_minor: -1 }] }, 400);
+  await write(token, "/sales", { lines: [{ ...edited, is_free: true }] }, 400);
+  const draft = await write(token, "/sales", { lines: [edited] });
+  assert.equal(draft.lines[0].unit_price_minor, 395);
+  assert.equal(draft.lines[0].base_price_override_minor, 400);
+  assert.equal(draft.lines[0].note, "Patio order");
+  assert.equal(draft.total_minor, 770);
+  const free = await write(token, `/sales/${draft.id}`, {
+    revision: draft.revision, lines: [{ ...edited, is_free: true, discount_minor: 0 }],
+  }, 200, randomUUID(), "PATCH");
+  assert.equal(free.lines[0].is_free, true);
+  assert.equal(free.lines[0].modifiers.length, 1);
+  assert.equal(free.total_minor, 0);
+  const settled = await write(token, `/sales/${draft.id}/checkout`, {
+    revision: free.revision, expected_total_minor: 0, payments: [],
+  }, 200);
+  assert.equal(settled.status, "paid");
+  const reversed = await write(token, `/sales/${draft.id}/reverse`, { reason: "Test reversal" });
+  assert.equal(reversed.lines[0].is_free, true);
+  assert.equal(reversed.lines[0].base_price_override_minor, 400);
+  assert.equal(reversed.lines[0].note, "Patio order");
+});
+
+test("POS profiles save multiple three-level tax rules and reject rates outside 0 to 100", async () => {
+  const cambodia = {
+    id: "cambodia-tax",
+    tax_name: "Cambodia Tax",
+    tax_mode: "exclusive",
+    tax_1_name: "Special Tax",
+    tax_1_rate: 7,
+    calculate_tax_1_after_discount: true,
+    tax_2_name: "Service Charge",
+    tax_2_rate: 5,
+    calculate_tax_2_after_adding_tax_1: true,
+    calculate_tax_2_after_discount: true,
+    tax_3_name: "VAT",
+    tax_3_rate: 10,
+    calculate_tax_3_after_adding_tax_1: true,
+    calculate_tax_3_after_adding_tax_2: true,
+    calculate_tax_3_after_discount: true,
+  };
+  const vatOnly = {
+    ...cambodia,
+    id: "vat-only",
+    tax_name: "VAT Only",
+    tax_mode: "inclusive",
+    tax_1_name: "",
+    tax_1_rate: 0,
+    tax_2_name: "0",
+    tax_2_rate: 0,
+    calculate_tax_3_after_discount: false,
+  };
+  const noTax = { ...vatOnly, id: "no-tax", tax_name: "No Tax", tax_mode: "disabled", tax_3_rate: 0 };
+  const rules = [cambodia, vatOnly, noTax];
+  const profile = await newProfile("Three-level tax rules", {
+    tax_rules: rules, default_tax_rule_id: vatOnly.id,
+  });
+  const token = await start(profile);
+  const profilePath = "/profiles/" + profile.id;
+  const context = async () => (await read(token, "/context")).profile.config;
+  assert.deepEqual(profile.config.tax_rules, rules);
+  assert.equal(profile.config.default_tax_rule_id, vatOnly.id);
+  assert.deepEqual(profile.config.default_tax_rule, vatOnly);
+  assert.deepEqual((await context()).default_tax_rule, vatOnly);
+  assert.ok(!Object.hasOwn(await context(), "tax_mode"));
+  assert.equal((await context()).default_tax_rule.tax_mode, "inclusive");
+  assert.equal(profile.config.tax_mode, "disabled");
+  assert.deepEqual((await context()).tax_rules, rules);
+
+  const patch = (fields, expected = 200) => adminWrite(profilePath, "PATCH", {
+    config: profileConfig(fields),
+  }, expected);
+  for (const rate of ["tax_1_rate", "tax_2_rate", "tax_3_rate"]) {
+    const denied = await patch({ tax_rules: [{ ...cambodia, [rate]: 100.01 }] }, 400);
+    assert.match(denied.error, /must be between 0 and 100/);
+  }
+  await patch({ tax_rules: [{ ...cambodia, tax_1_rate: -1 }] }, 400);
+  await patch({ tax_rules: [{ ...cambodia, tax_2_rate: "5" }] }, 400);
+  await patch({ tax_rules: [{ ...cambodia, calculate_tax_2_after_discount: "true" }] }, 400);
+  assert.deepEqual((await context()).tax_rules, rules);
+  await patch({ default_tax_rule_id: "another-profile-rule" }, 400);
+  await patch({ tax_rules: [{ ...cambodia, tax_mode: "invalid" }] }, 400);
+  await patch({ tax_rules: [cambodia, { ...vatOnly, id: cambodia.id }] }, 400);
+  await patch({ print_copies: 2 });
+  assert.deepEqual((await context()).tax_rules, rules);
+  assert.deepEqual((await context()).default_tax_rule, vatOnly);
+
+  const bill = await write(token, "/sales", { lines: [coffee()] });
+  const changedRule = { ...cambodia, tax_name: "Cambodia updated", tax_1_rate: 7.25, tax_3_rate: 100 };
+  const updatedRules = [changedRule, vatOnly];
+  const updated = await patch({ tax_rules: updatedRules, default_tax_rule_id: cambodia.id });
+  assert.deepEqual(updated.pending_config.tax_rules, updatedRules);
+  assert.deepEqual(updated.pending_config.default_tax_rule, changedRule);
+  assert.deepEqual((await context()).tax_rules, rules);
+  assert.deepEqual((await context()).default_tax_rule, vatOnly);
+  await patch({ print_copies: 2 });
+  await write(token, "/sales/" + bill.id + "/cancel", { revision: bill.revision, reason: "Test" }, 200);
+  assert.deepEqual((await context()).tax_rules, updatedRules);
+  assert.deepEqual((await context()).default_tax_rule, changedRule);
+  const renamed = { ...changedRule, tax_name: "Cambodia final", tax_mode: "inclusive" };
+  await patch({ tax_rules: [renamed, vatOnly] });
+  assert.deepEqual((await context()).default_tax_rule, renamed);
+  await patch({ tax_rules: [vatOnly] });
+  assert.equal((await context()).default_tax_rule_id, null);
+  assert.equal((await context()).default_tax_rule, null);
+  await patch({ default_tax_rule_id: vatOnly.id });
+  await patch({ default_tax_rule_id: null });
+  assert.deepEqual((await context()).tax_rules, [vatOnly]);
+  assert.equal((await context()).default_tax_rule, null);
+  const { id, tax_mode, ...legacy } = noTax;
+  const acceptedLegacy = await patch({ tax_rules: [legacy] });
+  assert.match(acceptedLegacy.config.tax_rules[0].id, /^tax_/);
+  assert.equal(acceptedLegacy.config.tax_rules[0].tax_mode, "disabled");
+  await prepare("UPDATE pos_profiles SET config_json=json_set(config_json,'$.tax_rules',json(?)) WHERE id=?", JSON.stringify([legacy]), profile.id).run();
+  const legacyRule = (await context()).tax_rules[0];
+  assert.equal(legacyRule.tax_mode, "disabled");
+  assert.equal((await context()).tax_rules[0].id, legacyRule.id);
+  await patch({ default_tax_rule_id: legacyRule.id });
+  assert.deepEqual((await context()).default_tax_rule, legacyRule);
+  await patch({ tax_rules: [] });
+  assert.deepEqual((await context()).tax_rules, []);
+
+  await prepare("UPDATE pos_profiles SET config_json=json_remove(config_json,'$.tax_rules') WHERE id=?", profile.id).run();
+  assert.deepEqual((await context()).tax_rules, []);
+});
+
+test("active sales history pages current shift activity and carries open bills forward", async () => {
+  const profile = await newProfile("Sales history", {
+    working_day_enabled: false,
+    cashier_shift_enabled: true,
+    table_mode: "disabled",
+  });
+  const token = await start(profile);
+  const history = (query = "") => read(token, "/sales?history=active" + query);
+  assert.equal((await history()).history_scope, null);
+  await read(token, "/sales?history=active&status=open", 400);
+
+  const first = await write(token, "/cashier-shifts", {});
+  const paidDraft = await write(token, "/sales", { lines: [coffee(2)] });
+  await write(token, `/sales/${paidDraft.id}/checkout`, {
+    revision: paidDraft.revision,
+    expected_total_minor: paidDraft.total_minor,
+    payments: [cashPayment(paidDraft.total_minor)],
+  }, 200);
+  const carryover = await write(token, "/sales", { lines: [coffee(3)] });
+  const previousVoid = await write(token, "/sales", { lines: [coffee()] });
+  await write(token, `/sales/${previousVoid.id}/cancel`,
+    { revision: previousVoid.revision, reason: "First shift" }, 200);
+  assert.equal((await history()).sales.length, 3);
+  await closeShift(token, first, await reconciliation(token, first));
+  assert.deepEqual((await history()).sales, []);
+
+  const second = await write(token, "/cashier-shifts", {});
+  const discarded = await write(token, "/sales", { lines: [coffee()] });
+  await write(token, `/sales/${discarded.id}/cancel`,
+    { revision: discarded.revision, reason: "Second shift" }, 200);
+  const firstPage = await history("&page_size=1");
+  const lastPage = await history("&page_size=1&page=2");
+  assert.equal(firstPage.history_scope.id, second.id);
+  assert.equal(firstPage.history_scope.profile_id, profile.id);
+  assert.equal(firstPage.has_more, true);
+  assert.equal(lastPage.has_more, false);
+  const rows = [...firstPage.sales, ...lastPage.sales];
+  assert.deepEqual(
+    rows.map(({ id, status, item_quantity }) => [id, status, item_quantity]),
+    [[discarded.id, "cancelled", 1], [carryover.id, "open", 3]],
+  );
+  assert.equal((await read(token, `/sales?shift_id=${first.id}`)).sales[0].id, paidDraft.id);
+  await closeShift(token, second, await reconciliation(token, second));
 });
 
 test("shift-only, day-only and independent profiles, menu descendants and inclusive rounding", async () => {
@@ -822,6 +1308,9 @@ test("shift-only, day-only and independent profiles, menu descendants and inclus
       tax_rate_bps: 1000,
     });
     const token = await start(profile);
+    assert.deepEqual((await read(token, "/context")).profile.config.legacy_tax, {
+      tax_mode: "inclusive", tax_rate_bps: 1000,
+    });
     assert.deepEqual(
       (await read(token, "/catalog")).products.map((row) => row.id),
       ["coffee"],
@@ -873,6 +1362,9 @@ test("shift-only, day-only and independent profiles, menu descendants and inclus
     );
     assert.equal(paid.shift_id, shift?.id ?? null);
     assert.equal(paid.working_day_id, day?.id ?? null);
+    const history = await read(token, "/sales?history=active");
+    assert.equal(history.history_scope.kind, shift ? "shift" : day ? "working_day" : "business_date");
+    assert.equal(history.sales[0].id, paid.id);
     if (shift)
       await closeShift(token, shift, await reconciliation(token, shift));
     if (day) await write(token, `/working-days/${day.id}/close`, {}, 200);
@@ -1159,16 +1651,18 @@ test("a designated device owns a branch and advances its operating journal exact
     ...event, sequence: 2, kind: "checkout", resource_id: saleId,
     occurred_at: "2026-01-14T17:20:00.000Z",
     payload: {
-      currency: "USD", exchange_rate: "4000", tax_mode: "disabled", tax_rate_bps: 0,
+      currency: "USD", exchange_rate: "4000", tax_mode: "exclusive", tax_rate_bps: 0,
+      tax_rule: compoundTax,
       table_mode: "optional", customer_id: "walkin_cafe", customer_name: "Walk-in",
       expected_context: { business_date: opened.business_date, working_day_id: opened.id, shift_id: null },
       lines: [{
         product_id: "coffee", product_name: "Coffee", price_list_id: "",
-        quantity: 1, unit_price_minor: 251, subtotal_minor: 251, tax_minor: 0, total_minor: 251,
+        quantity: 4, unit_price_minor: 251, base_price_override_minor: 251,
+        note: "Offline line note", ...discountedLine,
       }],
-      total_minor: 251,
+      total_minor: discountedLine.total_minor,
       payment_types: (await read(host, "/context")).payment_types,
-      payments: [cashPayment(251)],
+      payments: [cashPayment(discountedLine.total_minor)],
       receipt: { business_name: "Cafe", template: { show_tax: false }, copies: 1 },
     },
   };
@@ -1206,6 +1700,13 @@ test("a designated device owns a branch and advances its operating journal exact
   ]);
   assert.deepEqual(saved[0], saved[1]);
   assert.equal(saved[0].payments.length, 1);
+  assert.equal(saved[0].lines[0].base_price_override_minor, 251);
+  assert.equal(saved[0].lines[0].note, "Offline line note");
+  assert.deepEqual(saved[0].tax_rule, compoundTax);
+  for (const [field, amount] of Object.entries(discountedLine)) {
+    assert.equal(saved[0][field], amount);
+    assert.equal(saved[0].lines[0][field], amount);
+  }
   assert.equal((await read(host, "/store-authority")).authority.last_sequence, 2);
   const refund = {
     ...event,
@@ -1394,15 +1895,19 @@ test(
     assert.equal(sales.sales.length, 2);
     assert.equal(sales.sales.find(row => row.id === result.server_sale_id).total_minor, result.amount_minor);
     const receipt = await read(token, `/sales/${result.server_sale_id}`);
+    assert.equal(receipt.guest_cover, 4);
     assert.equal(receipt.business_date, result.business_date);
     assert.equal(receipt.settled_at, result.checkout_at);
     assert.equal(receipt.shift_id, result.last_shift_id);
     assert.equal(receipt.settled_by, "cashier");
     assert.equal(receipt.lines[0].unit_price_minor, 251);
+    assert.equal(receipt.lines[0].base_price_override_minor, 251);
+    assert.equal(receipt.lines[0].note, "Offline table order");
     assert.deepEqual(receipt.payments.map((entry) => entry.currency), ["USD", "KHR", "KHR"]);
     assert.equal(receipt.reversed_by_sale_id, result.reversal_id);
     const reversal = await read(token, `/sales/${result.reversal_id}`);
     assert.equal(reversal.reverses_sale_id, result.server_sale_id);
+    assert.equal(reversal.guest_cover, 4);
     assert.equal(reversal.working_day_id, result.reversal_day_id);
     assert.equal(reversal.shift_id, result.reversal_shift_id);
     assert.equal(reversal.settled_by, "owner");
@@ -1411,7 +1916,7 @@ test(
     assert.deepEqual(reversal.payments.map(row => row.reverses_payment_id), receipt.payments.map(row => row.id));
     const refund = await read(token, `/cashier-shifts/${result.reversal_shift_id}`);
     assert.equal(refund.closing_counts.find(row => row.payment_type_id === cash && row.currency === "USD").expected_minor, 375);
-    assert.equal(refund.closing_counts.find(row => row.payment_type_id === cash && row.currency === "KHR").expected_minor, 4960);
+    assert.equal(refund.closing_counts.find(row => row.payment_type_id === cashKHR && row.currency === "KHR").expected_minor, 4960);
     assert.ok(refund.closing_counts.every(row => row.variance_minor === 0));
     const first = await read(token, `/cashier-shifts/${result.first_shift_id}`);
     assert.equal(first.closing_counts.find(row => row.currency === "KHR").expected_minor, 4000);
@@ -1531,11 +2036,14 @@ test("KHR sales keep table and product snapshots and reconcile a reversal under 
       otherAdmin,
     )
   ).id;
+  const usdCash = (await adminWrite("/payment-types", "POST", {
+    name: "USD drawer", kind: "cash", currency: "USD",
+  }, 201, otherAdmin)).id;
   const config = (id) => ({
     cashier_shift_enabled: true,
     table_mode: "required",
     default_payment_type_id: id,
-    payment_types: [{ id, currencies: ["USD", "KHR"] }],
+    payment_types: [{ id, currency: "KHR" }, { id: usdCash, currency: "USD" }],
   });
   const profile = await adminWrite(
     "/profiles",
@@ -1561,7 +2069,7 @@ test("KHR sales keep table and product snapshots and reconcile a reversal under 
       revision: 1,
       expected_total_minor: 1001,
       payments: [
-        { payment_type_id: oldCash, currency: "USD", amount_minor: 25 },
+        { payment_type_id: usdCash, currency: "USD", amount_minor: 25 },
         { payment_type_id: oldCash, currency: "KHR", amount_minor: 1 },
       ],
     },
@@ -1584,7 +2092,7 @@ test("KHR sales keep table and product snapshots and reconcile a reversal under 
   assert.equal(stored.lines[0].product_name, "Other");
   const next = await write(token, "/cashier-shifts", {
     opening_cash: [
-      { payment_type_id: newCash, currency: "USD", amount_minor: 100 },
+      { payment_type_id: usdCash, currency: "USD", amount_minor: 100 },
       { payment_type_id: newCash, currency: "KHR", amount_minor: 1000 },
     ],
   });
@@ -1593,17 +2101,36 @@ test("KHR sales keep table and product snapshots and reconcile a reversal under 
   });
   const counts = await reconciliation(token, next);
   assert.deepEqual(
-    counts.counts.map((row) => [
+    [...counts.counts].sort((a, b) => a.currency.localeCompare(b.currency)).map((row) => [
       row.payment_type_id,
       row.currency,
       row.expected_minor,
     ]),
     [
       [newCash, "KHR", 999],
-      [newCash, "USD", 75],
+      [usdCash, "USD", 75],
     ],
   );
   await closeShift(token, next, counts);
+});
+
+test("a required table setting becomes active when the cashier closes the shift", async () => {
+  const settings = { table_mode: "optional", cashier_shift_enabled: true };
+  const profile = await newProfile("Table mode after shift", settings);
+  const token = await start(profile);
+  const shift = await write(token, "/cashier-shifts", {});
+  const queued = await adminWrite(`/profiles/${profile.id}`, "PATCH", {
+    config: profileConfig({ ...settings, table_mode: "required" }),
+  }, 200);
+
+  assert.equal(queued.config.table_mode, "optional");
+  assert.equal(queued.pending_config.table_mode, "required");
+  assert.equal((await read(token, "/context")).profile.config.table_mode, "optional");
+
+  await closeShift(token, shift, await reconciliation(token, shift));
+  const afterSignIn = await read(await start(profile), "/context");
+  assert.equal(afterSignIn.profile.config.table_mode, "required");
+  assert.ok(afterSignIn.profile.version > queued.version);
 });
 
 test("POS profiles restrict table groups to their branch and apply the saved group order", async () => {
@@ -1659,12 +2186,41 @@ test("payment types keep their selected currency in profiles and at checkout", a
   assert.equal(cashRiel.currency, "KHR");
   assert.equal((await adminWrite(`/payment-types/${cash}`, "GET", undefined, 200)).currency, null);
   await adminWrite("/payment-types", "POST", { name: "Cash EUR", kind: "cash", currency: "EUR" }, 400);
-  await adminWrite(`/payment-types/${cashUsd.id}`, "PATCH", { currency: "KHR" }, 400);
+  await adminWrite(`/payment-types/${cashUsd.id}`, "PATCH", { currency: "EUR" }, 400);
+  assert.equal((await adminWrite(`/payment-types/${cashUsd.id}`, "PATCH", { currency: "KHR" }, 200)).currency, "KHR");
+  assert.equal((await adminWrite(`/payment-types/${cashUsd.id}`, "PATCH", { currency: "USD" }, 200)).currency, "USD");
   assert.equal((await adminWrite(`/payment-types/${cashUsd.id}`, "PATCH", { name: "USD cash" }, 200)).currency, "USD");
 
+  const legacy = await adminWrite("/payment-types", "POST", { name: "Legacy cash", kind: "cash" });
+  const legacyProfile = await newProfile("Legacy cash currency", {
+    payment_types: [{ id: legacy.id, currency: "USD", allow_cash_float: true }],
+    default_payment_type_id: legacy.id,
+  });
+  const path = "/payment-types/" + legacy.id;
+  const selectRiel = await adminWrite(path, "PATCH", { currency: "KHR" }, 409);
+  assert.match(selectRiel.error, /business currency/);
+  assert.equal((await adminWrite(path, "GET", undefined, 200)).currency, null);
+
+  const legacyToken = await start(legacyProfile);
+  const openShift = await write(legacyToken, "/cashier-shifts", {});
+  const busy = await adminWrite(path, "PATCH", { currency: "KHR" }, 409);
+  assert.match(busy.error, /affected POS shifts and bills/);
+  await closeShift(legacyToken, openShift, await reconciliation(legacyToken, openShift));
+
+  assert.equal((await adminWrite(path, "PATCH", { currency: "USD" }, 200)).currency, "USD");
+  const updated = await adminWrite("/profiles/" + legacyProfile.id, "GET", undefined, 200);
+  assert.equal(updated.version, legacyProfile.version);
+  assert.deepEqual(updated.config.payment_types, [
+    { id: legacy.id, currency: "USD", allow_cash_float: true },
+  ]);
+  const refreshed = await read(legacyToken, "/context");
+  assert.deepEqual(refreshed.payment_types.map(({ id, currency }) => ({ id, currency })), [
+    { id: legacy.id, currency: "USD" },
+  ]);
+
   const paymentTypes = [
-    { id: cashUsd.id, currencies: ["USD"] },
-    { id: cashRiel.id, currencies: ["KHR"] },
+    { id: cashUsd.id, currency: "USD" },
+    { id: cashRiel.id, currency: "KHR" },
   ];
   await adminWrite("/profiles", "POST", {
     name: "Invalid payment currency",
@@ -1682,7 +2238,17 @@ test("payment types keep their selected currency in profiles and at checkout", a
   assert.ok(choices.payment_types.some(({ id, currency }) => id === cashRiel.id && currency === "KHR"));
   const token = await start(profile);
   const context = await read(token, "/context");
-  assert.deepEqual(context.payment_types.map(({ id, currencies }) => ({ id, currencies })), paymentTypes);
+  assert.deepEqual(context.payment_types.map(({ id, currency }) => ({ id, currency })), paymentTypes);
+  assert.ok(context.payment_types.every(type => !Object.hasOwn(type, "currencies")));
+  const reorderedTypes = [...paymentTypes].reverse();
+  const reordered = await adminWrite("/profiles/" + profile.id, "PATCH", {
+    config: profileConfig({ payment_types: reorderedTypes, default_payment_type_id: cashUsd.id }),
+  }, 200);
+  assert.deepEqual(reordered.config.payment_types, reorderedTypes);
+  const refreshedContext = await read(token, "/context");
+  assert.deepEqual(refreshedContext.profile.config.payment_types.map(({ id }) => id), [cashRiel.id, cashUsd.id]);
+  assert.deepEqual(refreshedContext.payment_types.map(({ id }) => id), [cashRiel.id, cashUsd.id]);
+  assert.equal(refreshedContext.profile.config.default_payment_type_id, cashUsd.id);
   const bill = await write(token, "/sales", { lines: [coffee()] });
   const checkout = (payment, expected) => write(token, `/sales/${bill.id}/checkout`, {
     revision: bill.revision,
@@ -1694,15 +2260,77 @@ test("payment types keep their selected currency in profiles and at checkout", a
   assert.equal(paid.payments[0].currency, "USD");
 });
 
+test("payment type groups round-trip without changing historical tender kinds", async () => {
+  const paymentGroups = [
+    ["Cash", "cash"],
+    ["Credit Card", "card"],
+    ["Bank", "other"],
+    ["QR Payment", "qr"],
+    ["Other", "other"],
+  ];
+  const types = [];
+  for (const [group, kind] of paymentGroups) {
+    const result = await adminWrite("/payment-types", "POST", {
+      name: "Group test " + group,
+      payment_type_group: group,
+      currency: "USD",
+    });
+    assert.equal(result.payment_type_group, group);
+    assert.equal(result.kind, kind);
+    types.push(result);
+  }
+  const [drawer, , bank] = types;
+  const existing = await adminWrite("/payment-types/" + cash, "GET", undefined, 200);
+  assert.equal(existing.payment_type_group, "Cash");
+  await adminWrite("/payment-types/" + bank.id, "PATCH", { payment_type_group: "Check" }, 400);
+
+  const profile = await newProfile("Editable payment groups", {
+    cashier_shift_enabled: true,
+    payment_types: [{ id: drawer.id, currency: "USD" }, { id: bank.id, currency: "USD" }],
+    default_payment_type_id: drawer.id,
+  });
+  const token = await start(profile);
+  const path = "/payment-types/" + bank.id;
+  assert.equal((await read(token, "/context")).payment_types.find(({ id }) => id === bank.id).payment_type_group, "Bank");
+  const duplicateCash = await adminWrite(path, "PATCH", { payment_type_group: "Cash" }, 409);
+  assert.match(duplicateCash.error, /duplicate cash currency/);
+
+  const shift = await write(token, "/cashier-shifts", {});
+  const reclassified = await adminWrite(path, "PATCH", { payment_type_group: "Other" }, 200);
+  assert.equal(reclassified.payment_type_group, "Other");
+  assert.equal(reclassified.kind, "other");
+  const busy = await adminWrite(path, "PATCH", { payment_type_group: "QR Payment" }, 409);
+  assert.match(busy.error, /affected POS shifts and bills/);
+  await closeShift(token, shift, await reconciliation(token, shift));
+
+  const edited = await adminWrite(path, "PATCH", { payment_type_group: "QR Payment" }, 200);
+  assert.equal(edited.kind, "qr");
+  assert.equal(edited.payment_type_group, "QR Payment");
+  const reloaded = await adminWrite("/profiles/" + profile.id, "GET", undefined, 200);
+  assert.equal(reloaded.version, profile.version + 1);
+  const historical = await prepare("SELECT payment_types_json FROM cashier_shifts WHERE id=?", shift.id)
+    .first("payment_types_json");
+  const savedBank = JSON.parse(historical).find((entry) => entry.id === bank.id);
+  assert.equal(savedBank.kind, "other");
+  assert.equal(savedBank.payment_type_group, "Bank");
+});
+
 test("cash float permissions apply per payment type for the lifetime of a shift", async () => {
   const paymentTypes = [
-    { id: cash, currencies: ["USD", "KHR"], allow_cash_float: false },
-    { id: qr, currencies: ["USD"], allow_cash_float: true },
+    { id: cash, currency: "USD", allow_cash_float: false },
+    { id: cashKHR, currency: "KHR", allow_cash_float: false },
+    { id: qr, currency: "USD", allow_cash_float: true },
   ];
   const profile = await newProfile("Payment type cash floats", { payment_types: paymentTypes });
   assert.equal(profile.config.cashier_shift_enabled, true);
   assert.deepEqual(profile.config.payment_types, paymentTypes);
   const token = await start(profile);
+  const startup = await read(token, "/context");
+  assert.deepEqual(startup.profile.config.payment_types, [
+    { id: cash, payment_type: "Cash", currency: "USD", allow_cash_float: false },
+    { id: cashKHR, payment_type: "KHR drawer", currency: "KHR", allow_cash_float: false },
+    { id: qr, payment_type: "QR", currency: "USD", allow_cash_float: true },
+  ]);
   const tender = (amount, id = qr) => cashPayment(amount, "USD", { payment_type_id: id });
   await write(token, "/cashier-shifts", { opening_cash: [tender(100, cash)] }, 400);
   const shift = await write(token, "/cashier-shifts", { opening_cash: [tender(100)] });
@@ -1731,4 +2359,355 @@ test("cash float permissions apply per payment type for the lifetime of a shift"
   await closeShift(token, shift, await reconciliation(token, shift));
   await write(token, "/cashier-shifts", { opening_cash: [tender(100)] }, 400);
   await write(token, "/cashier-shifts", { opening_cash: [tender(100, cash)] });
+});
+
+test("shift management keeps the count blind and preserves the previous close after reopening", async () => {
+  const config = { working_day_enabled: true, cashier_shift_enabled: true };
+  const profile = await newProfile("Shift review front till", config);
+  const another = await newProfile("Shift review patio", config);
+  await adminWrite(`/profiles/${profile.id}/grants`, "PUT", { user_ids: ["cashier"] }, 200);
+  const manager = await start(profile);
+  const cashier = await start(profile, await login("cashier"));
+  const patio = await start(another);
+  const day = await write(manager, "/working-days", {});
+  const shift = await write(cashier, "/cashier-shifts", {
+    opening_cash: [{ payment_type_id: cash, currency: "USD", amount_minor: 1000 }],
+  });
+  const patioShift = await write(patio, "/cashier-shifts", {});
+  const shiftPath = `/cashier-shifts/${shift.id}`;
+  const dayPath = `/working-days/${day.id}`;
+  const readiness = await read(manager, dayPath + "/summary");
+  assert.equal(readiness.register_count, 2);
+  assert.ok(readiness.shifts.some((row) => row.id === patioShift.id && row.profile_name === "Shift review patio"));
+  await read(cashier, dayPath + "/summary", 403);
+  await read(cashier, `/cashier-shifts/${patioShift.id}/summary?scope=branch`, 404);
+  const blind = await reconciliation(cashier, shift);
+  assert.ok(blind.counts.length > 0);
+  assert.ok(blind.counts.every((row) => !("expected_minor" in row)));
+  const counts = blind.counts.map(({ payment_type_id, currency }) => ({
+    payment_type_id, currency, declared_minor: payment_type_id === cash ? 700 : 0,
+  }));
+  const input = { activity_revision: blind.activity_revision, counts };
+  const review = await write(cashier, shiftPath + "/reconciliation", input, 200);
+  assert.equal(review.counts.find((row) => row.payment_type_id === cash).variance_minor, -300);
+  assert.equal((await read(cashier, shiftPath + "/summary")).drawer_counts.length, 0);
+  assert.equal((await read(manager, shiftPath + "/summary")).drawer_counts
+    .find((row) => row.payment_type_id === cash).expected_minor, 1000);
+  const key = randomUUID();
+  const movement = { ...cashPayment(100), kind: "cash_in", reason: "add_change", reason_code: "add_change" };
+  const saved = await write(cashier, shiftPath + "/cash-floats", movement, 201, key);
+  assert.equal((await read(cashier, "/commands/" + key)).result.id, saved.id);
+  assert.equal((await write(cashier, shiftPath + "/cash-floats", movement, 201, key)).id, saved.id);
+  assert.equal((await write(cashier, shiftPath + "/reconciliation", input, 409)).code, "RECONCILIATION_CHANGED");
+  const preview = await reconciliation(cashier, shift);
+  const updated = { ...input, activity_revision: preview.activity_revision };
+  const closed = await write(cashier, shiftPath + "/close", updated, 200);
+  assert.equal(closed.closing_counts.find((row) => row.payment_type_id === cash).variance_minor, -400);
+  assert.equal((await read(cashier, shiftPath + "/summary")).closing_counts.length, counts.length);
+  await write(cashier, shiftPath + "/reopen", { reason: "Count again" }, 403);
+  const reopened = await write(manager, shiftPath + "/reopen", { reason: "Count again" }, 200);
+  assert.equal(reopened.closed_at, null);
+  assert.equal(reopened.closing_counts.length, 0);
+  assert.equal(reopened.activity_revision, updated.activity_revision + 1);
+  const audit = await adminWrite("/shift-audit", "GET", undefined, 200);
+  const audited = audit.events.find((row) => row.action === "close_shift" && row.reference === shift.id);
+  assert.equal(JSON.parse(audited.counts_json).find((row) => row.payment_type_id === cash).variance_minor, -400);
+  await closeShift(manager, shift, await reconciliation(manager, shift));
+  await closeShift(patio, patioShift, await reconciliation(patio, patioShift));
+  const history = await read(patio, `/cashier-shifts?closed=true&scope=branch&profile_id=${profile.id}&business_date=${day.business_date}`);
+  assert.deepEqual(history.cashier_shifts.map((row) => row.id), [shift.id]);
+  await write(manager, dayPath + "/close", {}, 200);
+  await write(manager, shiftPath + "/reopen", { reason: "Day already closed" }, 409);
+});
+
+test("bill posting dates and counter cover follow profile settings", async () => {
+  for (const workingDay of [false, true]) {
+    const profile = await newProfile("Bill date " + workingDay, {
+      table_mode: "disabled", working_day_enabled: workingDay,
+      cashier_shift_enabled: false, prompt_guest_cover: true,
+    });
+    const token = await start(profile);
+    const day = workingDay ? await write(token, "/working-days", {}) : null;
+    const context = await read(token, "/context");
+    assert.equal(context.capabilities.bill_information, true);
+    const posting = "2026-01-15";
+    const expected = { business_date: day?.business_date ?? context.local_date,
+      working_day_id: day?.id ?? null, shift_id: null };
+    await write(token, "/sales", { lines: [coffee()], posting_date: "2026-02-30", expected_context: expected }, 400);
+    const bill = await write(token, "/sales", { lines: [coffee()], guest_cover: 3,
+      posting_date: posting, expected_context: expected });
+    assert.equal(bill.business_date, posting);
+    assert.equal(bill.guest_cover, 3);
+    const updated = await write(token, `/sales/${bill.id}`, { revision: bill.revision,
+      note: "Keep bill information", expected_context: expected }, 200, randomUUID(), "PATCH");
+    assert.equal(updated.business_date, posting);
+    assert.equal(updated.guest_cover, 3);
+    const paid = await write(token, `/sales/${bill.id}/checkout`, { revision: updated.revision,
+      expected_total_minor: updated.total_minor, expected_context: expected,
+      payments: [cashPayment(updated.total_minor)] }, 200);
+    assert.equal(paid.business_date, posting);
+    assert.equal(paid.guest_cover, 3);
+    if (day) await write(token, `/working-days/${day.id}/close`, {}, 200);
+  }
+  const locked = await newProfile("Shift locks posting date", {
+    table_mode: "disabled", working_day_enabled: false, cashier_shift_enabled: true,
+  });
+  const token = await start(locked);
+  const shift = await write(token, "/cashier-shifts", { opening_cash: [cashPayment(0), cashPayment(0, "KHR")] });
+  const context = await read(token, "/context");
+  const rejected = await write(token, "/sales", { lines: [coffee()], posting_date: "2026-01-15",
+    expected_context: { business_date: context.local_date, working_day_id: null, shift_id: shift.id } }, 409);
+  assert.equal(rejected.code, "POSTING_DATE_LOCKED");
+  await closeShift(token, shift, await reconciliation(token, shift));
+});
+
+test("table plan settings, real booking assignments, and guest snapshots reach the POS API", async () => {
+  const name = "Table service";
+  const config = {
+    table_mode: "optional",
+    table_group_ids: ["patio"],
+    prompt_guest_cover: true,
+    table_status_colors: { occupied: "#366f8c", bill_requested: "#a04614" },
+  };
+  await adminWrite("/profiles", "POST", {
+    name,
+    branch_id: main,
+    config: profileConfig({ ...config, table_status_colors: { hold: "blue" } }),
+  }, 400);
+  const profile = await newProfile(name, config);
+  const token = await start(profile);
+  const context = await read(token, "/context");
+  assert.equal(context.profile.config.prompt_guest_cover, true);
+  assert.equal(context.profile.config.table_status_colors.occupied, "#366F8C");
+  assert.equal(context.profile.config.table_status_colors.bill_requested, "#A04614");
+  assert.equal(Object.keys(context.profile.config.table_status_colors).length, 5);
+
+  const booking = "BK-1234567890ABCDEF";
+  const overlapping = "BK-1234567890ABCDE0";
+  const arrival = new Date(Date.now() + 10 * 60_000).toISOString();
+  await db.batch([
+    prepare("INSERT INTO business_booking_settings(business_id,enabled) VALUES ('cafe',1)"),
+    prepare("INSERT INTO subscription_plans(id,code,name,pos_enabled,features_json) VALUES ('pos-reservations','pos-reservations','POS and bookings',1,?)", JSON.stringify(["bookings"])),
+    prepare("INSERT INTO business_subscriptions(id,business_id,plan_id,status) VALUES ('pos-reservations','cafe','pos-reservations','active')"),
+    ...[booking, overlapping].map((id) =>
+      prepare(`INSERT INTO bookings(id,business_id,branch_id,submission_id,request_hash,arrival_date,arrival_time,arrival_at,
+        timezone,pax,guest_name,guest_phone,preference,preference_text,note,status,terms_language,terms_version,terms_text)
+        VALUES (?,'cafe',?,?,'test',?,?,?,'Asia/Phnom_Penh',4,'Guest','012345678','indoor','','','confirmed','en','1','Terms')`,
+        id, main, id, arrival.slice(0, 10), arrival.slice(11, 16), arrival)),
+  ]);
+  const path = (id) => "/api/admin/bookings/" + id;
+  const assignment = (id, tableId, expectedTableId = null) =>
+    request(path(id) + "/table", admin, "PATCH", { tableId, expectedTableId });
+  const detail = await status(await request(path(booking), admin), 200);
+  assert.ok(detail.tableOptions.some(({ id }) => id === "table-a"));
+  assert.ok(!detail.tableOptions.some(({ id }) => id === "table-b"));
+  await status(await assignment(booking, "table-b"), 409);
+  await status(await assignment(booking, "table-a"), 200);
+  await status(await assignment(overlapping, "table-a"), 409);
+  const table = async () => (await read(token, "/tables")).tables.find(({ id }) => id === "table-a");
+  assert.equal((await table()).status, "booked");
+  assert.equal((await table()).booking_pax, 4);
+
+  const counter = await write(token, "/sales", { lines: [coffee()], guest_cover: 4 });
+  assert.equal(counter.guest_cover, 4);
+  await write(token, `/sales/${counter.id}/cancel`, { revision: counter.revision, reason: "Counter cover check" }, 200);
+  await write(token, "/sales", { lines: [coffee()], table_id: "table-a", guest_cover: 0 }, 400);
+  const bill = await write(token, "/sales", { lines: [coffee()], table_id: "table-a", guest_cover: 4 });
+  assert.equal(bill.guest_cover, 4);
+  assert.equal((await table()).status, "occupied");
+  assert.equal((await table()).guest_cover, 4);
+  const moved = await status(await request(prefix + "/sales/" + bill.id, token, "PATCH",
+    { revision: bill.revision, table_id: null }, randomUUID()), 200);
+  assert.equal(moved.guest_cover, null);
+  assert.equal((await table()).status, "booked");
+  await write(token, `/sales/${bill.id}/cancel`, { revision: moved.revision, reason: "Test" }, 200);
+  await status(await assignment(booking, null, "table-a"), 200);
+  assert.equal((await table()).status, "available");
+});
+
+test("Selling customer and group CRUD preserve legacy customers and enforce tenant and profile boundaries", async () => {
+  const get = (path, expected = 200) => adminWrite(path, "GET", undefined, expected);
+  const remove = (path, expected = 200) => adminWrite(path, "DELETE", undefined, expected);
+  const legacy = await get("/customers/legacy-customer");
+  assert.equal(legacy.name, "Legacy Customer");
+  assert.equal(legacy.phone_number, null);
+  assert.equal(legacy.customer_group_id, null);
+  assert.equal(legacy.customer_code, null);
+  assert.equal(legacy.is_membership, 0);
+  assert.ok((await get("/customers")).customers.some((row) => row.id === legacy.id));
+
+  const { id: groupId } = await adminWrite("/customer-groups", "POST", { name: "Regulars" });
+  const groupPath = "/customer-groups/" + groupId;
+  await adminWrite("/customer-groups", "POST", { name: "regulars" }, 409);
+  await prepare("INSERT INTO pos_customer_groups(id,business_id,name) VALUES ('foreign-group','other','Regulars')").run();
+  await get("/customer-groups/foreign-group", 404);
+  await remove("/customer-groups/foreign-group", 404);
+  assert.deepEqual((await get("/customer-groups")).customer_groups, [{ id: groupId, name: "Regulars" }]);
+  await adminWrite("/customers", "POST", { name: "Wrong group", customer_group_id: "foreign-group" }, 400);
+  await adminWrite("/customers", "POST", { name: "Invalid date", dob: "2026-02-30" }, 400);
+  const missingCode = await adminWrite("/customers", "POST", { name: "Missing code", is_membership: true }, 400);
+  assert.equal(missingCode.error, "Customer code is required for membership");
+
+  const fields = {
+    name: "Customer with contact details",
+    customer_code: "M-001",
+    is_membership: true,
+    external_reference: "reference-01",
+    phone_number: "+855 012 345 678",
+    address: "Phnom Penh",
+    customer_group_id: groupId,
+    gender: "Female",
+    dob: "1996-02-29",
+    email: "customer@example.test",
+    photo: "https://example.test/customer.jpg",
+  };
+  const customer = await adminWrite("/customers", "POST", fields);
+  const customerPath = "/customers/" + customer.id;
+  assert.deepEqual(await get(customerPath), {
+    ...fields, id: customer.id, is_walk_in: 0, is_membership: 1,
+    customer_group_name: "Regulars", has_uploaded_photo: 0,
+  });
+  const listCustomers = (query) => get("/customers?" + new URLSearchParams(query));
+  for (const term of ["CONTACT DETAILS", "m-001", "012345678", "+855 (012) 345-678"]) {
+    assert.deepEqual((await listCustomers({ search: term })).customers.map(({ id }) => id), [customer.id]);
+  }
+  assert.deepEqual((await listCustomers({ search: "%" })).customers, []);
+  await get("/customers?sort_by=unsupported", 400);
+  await get("/customers?sort_direction=unsupported", 400);
+
+  await prepare(`INSERT INTO pos_customers(id,business_id,name,customer_code,phone_number) VALUES
+      ('lookup-a','cafe','Lookup Alpha','Z-02','012 123 456'),
+      ('lookup-b','cafe','Lookup Beta','A-01','098 123 456'),
+      ('lookup-c','cafe','Lookup Gamma',NULL,NULL),
+      ('lookup-other','other','Lookup Hidden','Z-99','012 123 456')`).run();
+  try {
+    const order = (query) => listCustomers({ search: "lookup", ...query });
+    assert.deepEqual((await order({ sort_direction: "desc" })).customers.map(({ id }) => id),
+      ["lookup-c", "lookup-b", "lookup-a"]);
+    assert.deepEqual((await order({ sort_by: "phone_number", sort_direction: "asc" })).customers.map(({ id }) => id),
+      ["lookup-a", "lookup-b", "lookup-c"]);
+    const first = await order({ sort_by: "customer_code", sort_direction: "desc", page_size: 1, page: 1 });
+    const second = await order({ sort_by: "customer_code", sort_direction: "desc", page_size: 1, page: 2 });
+    const last = await order({ sort_by: "customer_code", sort_direction: "desc", page_size: 1, page: 3 });
+    assert.deepEqual([first.customers[0].id, second.customers[0].id, last.customers[0].id],
+      ["lookup-a", "lookup-b", "lookup-c"]);
+    assert.deepEqual([first.has_more, second.has_more, last.has_more], [true, true, false]);
+  } finally {
+    await prepare("DELETE FROM pos_customers WHERE id IN ('lookup-a','lookup-b','lookup-c','lookup-other')").run();
+  }
+  const edited = await adminWrite(customerPath, "PATCH", { email: null }, 200);
+  assert.equal(edited.email, null);
+  assert.equal(edited.phone_number, fields.phone_number);
+  await adminWrite(customerPath, "PATCH", { customer_code: null }, 400);
+  assert.equal((await get(customerPath)).customer_code, fields.customer_code);
+  await adminWrite(customerPath, "PATCH", { customer_group_id: "foreign-group" }, 400);
+  await adminWrite(groupPath, "PATCH", { name: "Returning customers" }, 200);
+  assert.equal((await get(customerPath)).customer_group_name, "Returning customers");
+  assert.deepEqual(await remove(groupPath), { success: true });
+  await get(groupPath, 404);
+  assert.equal((await get(customerPath)).customer_group_id, null);
+
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aQS0AAAAASUVORK5CYII=", "base64");
+  const upload = (path, method, customerFields, bytes = png) => {
+    const form = new FormData();
+    form.set("customer", JSON.stringify(customerFields));
+    form.set("photo", new Blob([bytes], { type: "image/png" }), "customer.png");
+    const encoded = new Request("http://localhost" + setup + path, { method, body: form });
+    const headers = { authorization: "Bearer " + admin, "content-type": encoded.headers.get("content-type") };
+    return encoded.arrayBuffer().then((body) => runtime.dispatchFetch(encoded.url, { method, headers, body }));
+  };
+  const created = await status(await upload("/customers", "POST", { name: "Photo customer" }), 201);
+  assert.equal(created.has_uploaded_photo, 1);
+  const createdPhoto = await request(setup + "/customers/" + created.id + "/photo", admin);
+  assert.equal(createdPhoto.status, 200);
+  assert.deepEqual(Buffer.from(await createdPhoto.arrayBuffer()), png);
+  await remove("/customers/" + created.id);
+  assert.equal(await prepare("SELECT count(*) AS count FROM pos_customer_photos WHERE customer_id=?", created.id).first("count"), 0);
+  await status(await upload(customerPath, "PATCH", {}, Buffer.from("not an image")), 400);
+  await status(await upload(customerPath, "PATCH", { customer_code: null }), 400);
+  assert.equal((await get(customerPath)).has_uploaded_photo, 0);
+  const uploaded = await status(await upload(customerPath, "PATCH", {}), 200);
+  assert.equal(uploaded.has_uploaded_photo, 1);
+  assert.equal(uploaded.photo, null);
+  const photoPath = setup + customerPath + "/photo";
+  assert.equal((await request(photoPath, null)).status, 401);
+  const image = await request(photoPath, admin);
+  assert.equal(image.headers.get("content-type"), "image/png");
+  assert.equal(image.headers.get("cache-control"), "private, no-store");
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()), png);
+  await adminWrite(customerPath, "PATCH", { is_membership: false, customer_code: null }, 200);
+  assert.equal((await get(customerPath)).has_uploaded_photo, 1);
+  await adminWrite(customerPath, "PATCH", { photo: null }, 200);
+  assert.equal((await get(customerPath)).has_uploaded_photo, 0);
+  assert.equal((await request(photoPath, admin)).status, 404);
+
+  const profile = await newProfile("Customer defaults", { default_customer_id: customer.id });
+  const token = await start(profile);
+  await remove("/customers/walkin_cafe", 409);
+  await remove(customerPath, 409);
+  const sale = await write(token, "/sales", { customer_id: customer.id, lines: [coffee()] });
+  await adminWrite("/profiles/" + profile.id, "PATCH", { config: profileConfig({ default_customer_id: null }) }, 200);
+  // With an open bill, the new profile configuration is pending.
+  await remove(customerPath, 409);
+  await write(token, "/sales/" + sale.id + "/cancel", { revision: sale.revision, reason: "Directory test" }, 200);
+  assert.deepEqual(await remove(customerPath), { success: true });
+  await get(customerPath, 404);
+  const savedSale = await read(token, "/sales/" + sale.id);
+  assert.equal(savedSale.customer_name, fields.name);
+  assert.equal(savedSale.customer_id, customer.id);
+});
+
+test("POS profile staff can manage customers and safely retry directory writes", async () => {
+  const profile = await newProfile("Register customer directory");
+  await adminWrite(`/profiles/${profile.id}/grants`, "PUT", { user_ids: ["cashier"] }, 200);
+  const token = await start(profile, await login("cashier"));
+  const group = await adminWrite("/customer-groups", "POST", { name: "Register members" });
+  assert.equal((await read(token, "/context")).capabilities.customer_directory, true);
+  assert.equal((await read(token, "/context")).capabilities.customer_photo_upload, true);
+  assert.ok((await read(token, "/customer-groups")).customer_groups.some((row) => row.id === group.id));
+  await read(discovery, "/customers", 403);
+  await write(token, "/customers", { name: "Missing code", is_membership: true }, 400);
+
+  const key = randomUUID();
+  const photo = {
+    content_type: "image/png",
+    image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aQS0AAAAASUVORK5CYII=",
+  };
+  const fields = {
+    name: "New register customer", phone_number: "012345678", customer_code: "REGISTER-123",
+    is_membership: true, customer_group_id: group.id, email: "member@example.test",
+    gender: "Female", dob: "1996-02-29", photo_upload: photo,
+  };
+  const created = await write(token, "/customers", fields, 201, key);
+  const path = `/customers/${created.id}`;
+  assert.deepEqual(await write(token, "/customers", fields, 201, key), created);
+  assert.equal((await write(token, "/customers", { ...fields, name: "Different" }, 409, key)).code, "IDEMPOTENCY_CONFLICT");
+  assert.equal((await read(token, path)).customer_group_name, group.name);
+  assert.equal(created.has_uploaded_photo, 1);
+  assert.equal(created.photo, null);
+  assert.deepEqual(await read(token, path + "/photo"), photo);
+  await read(discovery, path + "/photo", 403);
+  await write(token, path, { photo_upload: { ...photo, image: "invalid" } }, 400, randomUUID(), "PATCH");
+  const updated = await write(token, path, { email: null }, 200, randomUUID(), "PATCH");
+  assert.equal(updated.email, null);
+  assert.equal(updated.customer_code, fields.customer_code);
+  assert.equal(updated.is_membership, 1);
+  assert.equal(updated.has_uploaded_photo, 1);
+  assert.equal(updated.dob, fields.dob);
+  assert.equal(updated.gender, fields.gender);
+  assert.equal((await write(token, path, { photo: null }, 200, randomUUID(), "PATCH")).has_uploaded_photo, 0);
+  await read(token, path + "/photo", 404);
+  assert.ok((await read(token, "/customers?page_size=100")).customers.some((row) => row.id === created.id));
+  await write(token, "/customers/walkin_cafe", {}, 409, randomUUID(), "DELETE");
+
+  await adminWrite(`/profiles/${profile.id}`, "PATCH", { config: profileConfig({ default_customer_id: created.id }) }, 200);
+  await write(token, path, {}, 409, randomUUID(), "DELETE");
+  const sale = await write(token, "/sales", { customer_id: created.id, lines: [coffee()] });
+  await write(token, `/sales/${sale.id}/cancel`, { revision: sale.revision, reason: "Directory test" }, 200);
+  await adminWrite(`/profiles/${profile.id}`, "PATCH", { config: profileConfig({ default_customer_id: null }) }, 200);
+  const deleteKey = randomUUID();
+  assert.deepEqual(await write(token, path, {}, 200, deleteKey, "DELETE"), { success: true });
+  assert.deepEqual(await write(token, path, {}, 200, deleteKey, "DELETE"), { success: true });
+  await read(token, path, 404);
+  assert.equal((await read(token, `/sales/${sale.id}`)).customer_name, fields.name);
 });

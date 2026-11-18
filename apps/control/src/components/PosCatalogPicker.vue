@@ -4,75 +4,62 @@
       {{ t("selling.catalogSelection") }}
     </legend>
     <p class="mb-2 text-sm text-black/60">
-      {{ t("selling.catalogSelectionHelp") }}
+      {{ t(flat ? "selling.menuSelectionHelp" : "selling.catalogSelectionHelp") }}
     </p>
-    <ul class="max-h-64 space-y-0.5 overflow-y-auto overscroll-contain">
-      <li
-        v-for="{ node, depth, inherited, hasChildren } in rows"
-        :key="node.id"
-        class="flex min-h-8 items-center gap-1.5 rounded-lg hover:bg-cream"
-        :style="{ paddingInlineStart: `${Math.min(depth, 10)}rem` }"
+    <p v-if="flat && missingIds.length" class="mb-2 text-sm text-black/60">
+      {{ t("selling.savedSubmenuLimits") }}
+    </p>
+    <div class="max-h-64 overflow-y-auto overscroll-contain">
+      <ul v-if="flat" class="space-y-1">
+        <li v-for="menu in items" :key="menu.id">
+          <Checkbox
+            :label="menu.name"
+            :model-value="selected.has(menu.id)"
+            @update:model-value="toggleSelection(menu.id, Boolean($event))"
+          />
+        </li>
+      </ul>
+      <Tree
+        v-else
+        v-model:expanded="expanded"
+        :nodes="nodes"
+        guides="lines"
+        :aria-label="t('selling.catalogSelection')"
       >
-        <button
-          v-if="hasChildren"
-          type="button"
-          class="grid size-7 shrink-0 place-items-center rounded text-black/65 hover:text-ink"
-          :aria-label="
-            t(
-              collapsed.has(node.id)
-                ? 'selling.expandCatalogNode'
-                : 'selling.collapseCatalogNode',
-              { name: node.name },
-            )
-          "
-          :aria-expanded="!collapsed.has(node.id)"
-          @click="toggleBranch(node.id)"
-        >
-          <ChevronRight
-            v-if="collapsed.has(node.id)"
-            :size="16"
-            aria-hidden="true"
-          />
-          <ChevronDown v-else :size="16" aria-hidden="true" />
-        </button>
-        <span v-else class="w-7 shrink-0" aria-hidden="true" />
-        <label class="flex min-w-0 flex-1 items-center gap-2 py-1 text-sm">
-          <input
-            type="checkbox"
-            class="shrink-0"
-            :checked="inherited || selected.has(node.id)"
-            :disabled="inherited"
-            @change="
-              toggleSelection(
-                node.id,
-                ($event.target as HTMLInputElement).checked,
-              )
-            "
-          />
-          <span class="break-words">{{ node.name }}</span>
-        </label>
-      </li>
-      <li
-        v-for="id in missingIds"
+        <template #item-label="{ node }">
+          <div @click.stop @keydown.space.stop @keydown.enter.stop>
+            <Checkbox
+              :label="node.label"
+              :model-value="
+                Boolean(node.inherited) || selected.has(String(node.key))
+              "
+              :disabled="Boolean(node.inherited)"
+              @update:model-value="
+                toggleSelection(String(node.key), Boolean($event))
+              "
+            />
+          </div>
+        </template>
+      </Tree>
+      <Checkbox
+        v-for="id in flat ? [] : missingIds"
         :key="id"
-        class="px-2 py-1 text-sm text-amber-800"
-      >
-        <label class="flex items-center gap-2">
-          <input type="checkbox" checked @change="toggleSelection(id, false)" />
-          {{ t("selling.unavailableSelection", { id }) }}
-        </label>
-      </li>
-    </ul>
+        :model-value="true"
+        :label="t('selling.unavailableSelection', { id })"
+        class="my-1"
+        @update:model-value="toggleSelection(id, false)"
+      />
+    </div>
   </fieldset>
 </template>
 
 <script setup lang="ts">
+import { Checkbox, Tree, type TreeKey, type TreeNode } from "frappe-ui";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { ChevronDown, ChevronRight } from "lucide-vue-next";
 import type { CatalogOption } from "../types/posProfile";
 
-const props = defineProps<{ items: CatalogOption[] }>();
+const props = defineProps<{ items: CatalogOption[]; flat?: boolean }>();
 const selectedIds = defineModel<string[]>({ required: true });
 const { t } = useI18n();
 const collapsed = ref(new Set<string>());
@@ -90,32 +77,34 @@ const children = computed(() => {
   }
   return byParent;
 });
-const rows = computed(() => {
-  const result: Array<{
-    node: CatalogOption;
-    depth: number;
-    inherited: boolean;
-    hasChildren: boolean;
-  }> = [];
-  function visit(parentId: string | null, depth: number, inherited: boolean) {
-    for (const node of children.value.get(parentId) ?? []) {
-      const hasChildren = children.value.has(node.id);
-      result.push({ node, depth, inherited, hasChildren });
-      if (hasChildren && !collapsed.value.has(node.id))
-        visit(node.id, depth + 1, inherited || selected.value.has(node.id));
-    }
-  }
-  visit(null, 0, false);
-  return result;
+const branchIds = computed(() =>
+  props.items.filter(({ id }) => children.value.has(id)).map(({ id }) => id),
+);
+const expanded = computed<TreeKey[]>({
+  get: () => branchIds.value.filter((id) => !collapsed.value.has(id)),
+  set: (ids) => {
+    collapsed.value = new Set(
+      branchIds.value.filter((id) => !ids.includes(id)),
+    );
+  },
 });
-
-function toggleBranch(id: string) {
-  if (collapsed.value.has(id)) collapsed.value.delete(id);
-  else collapsed.value.add(id);
-}
+const nodes = computed(() => {
+  function build(parentId: string | null, inherited: boolean): TreeNode[] {
+    return (children.value.get(parentId) ?? []).map((item) => ({
+      key: item.id,
+      label: item.name,
+      inherited,
+      children: build(item.id, inherited || selected.value.has(item.id)),
+    }));
+  }
+  return build(null, false);
+});
 
 function toggleSelection(id: string, checked: boolean) {
   const next = new Set(selected.value);
+  if (props.flat) {
+    for (const unavailable of missingIds.value) next.delete(unavailable);
+  }
   function clearBranch(nodeId: string) {
     next.delete(nodeId);
     for (const child of children.value.get(nodeId) ?? []) clearBranch(child.id);

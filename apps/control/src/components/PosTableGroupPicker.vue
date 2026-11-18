@@ -14,67 +14,69 @@
         {{ t("selling.tableGroupsHelp") }}
       </p>
       <div class="mb-2 flex flex-wrap items-center gap-2">
-        <button
+        <Button variant="subtle" size="lg"
           v-if="groups.length"
           type="button"
-          class="btn-soft !px-3 !py-1.5"
+          class="!px-3 !py-1.5"
           @click="selectAll"
         >
           {{ t("selling.selectAllTableGroups") }}
-        </button>
-        <button
+        </Button>
+        <Button variant="subtle" size="lg"
           v-if="selectedIds.length"
           type="button"
-          class="btn-soft !px-3 !py-1.5"
+          class="!px-3 !py-1.5"
           @click="selectedIds = []"
         >
           {{ t("selling.useBranchTableOrder") }}
-        </button>
+        </Button>
       </div>
-      <ul
+      <List divider="none"
         class="max-h-60 divide-y divide-black/10 overflow-y-auto overscroll-contain"
       >
-        <li
+        <ListRow
           v-for="{ id, name, position } in choices"
           :key="id"
-          class="flex min-h-10 items-center justify-between gap-2"
+          class="!flex min-h-10 items-center justify-between gap-2"
         >
           <label class="flex min-w-0 flex-1 items-center gap-2 py-2 text-sm">
-            <input
+            <Checkbox
               type="checkbox"
               class="shrink-0"
-              :checked="position !== -1"
+              :model-value="position !== -1"
               @change="toggle(id)"
             />
             <span class="break-words">{{ name }}</span>
           </label>
           <div v-if="position !== -1" class="flex shrink-0 items-center gap-1">
-            <button
+            <Button variant="ghost"
               type="button"
               class="grid size-8 place-items-center rounded-lg hover:bg-cream disabled:opacity-30"
               :aria-label="t('menus.moveUp', { name })"
               :disabled="position === 0"
               @click="move(position, -1)"
             >
-              <ArrowUp :size="16" aria-hidden="true" />
-            </button>
-            <button
+              <template #icon><ArrowUp :size="16" aria-hidden="true" /></template>
+            </Button>
+            <Button variant="ghost"
               type="button"
               class="grid size-8 place-items-center rounded-lg hover:bg-cream disabled:opacity-30"
               :aria-label="t('menus.moveDown', { name })"
               :disabled="position === selectedIds.length - 1"
               @click="move(position, 1)"
             >
-              <ArrowDown :size="16" aria-hidden="true" />
-            </button>
+              <template #icon><ArrowDown :size="16" aria-hidden="true" /></template>
+            </Button>
           </div>
-        </li>
-      </ul>
+        </ListRow>
+      </List>
     </template>
   </fieldset>
 </template>
 
 <script setup lang="ts">
+import { List, ListRow } from "frappe-ui/list";
+import { Button, Checkbox } from "frappe-ui";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { ArrowDown, ArrowUp } from "lucide-vue-next";

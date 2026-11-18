@@ -1452,6 +1452,102 @@ test("a branch reset backs up dependent rows and rejects missing, stale, or cros
   await expectStatus(await reset("delete", { ...confirm, token: fresh.token }), 409);
 });
 
+test("Reset data backs up and clears orders and POS sales at the selected scope", async (t) => {
+  const { main } = await prepareBookings(t);
+  const scopes = [
+    ["main", "biz_a", main],
+    ["east", "biz_a", "booking_east"],
+    ["foreign", "biz_b", "booking_foreign"],
+  ];
+  await db.prepare("INSERT INTO menus (id,business_id,slug,name_km) VALUES ('reset_menu','biz_a','root','Root')").run();
+  for (const [label, business, branch] of scopes) {
+    await db.batch([
+      db.prepare("INSERT INTO table_groups (id,business_id,branch_id,name) VALUES (?,?,?,?)")
+        .bind("group-" + label, business, branch, label),
+      db.prepare("INSERT INTO restaurant_tables (id,business_id,branch_id,group_id,code,label,public_token) VALUES (?,?,?,?,?,?,?)")
+        .bind("table-" + label, business, branch, "group-" + label, label, label, "scan-" + label),
+      db.prepare(`INSERT INTO orders (id,business_id,branch_id,menu_id,table_id,posting_date,total_quantity,total_amount,currency,submission_id,submission_hash,order_number)
+        VALUES (?,?,?,?,?,'2026-11-18',1,2,'USD',?,'fixture',?)`)
+        .bind("order-" + label, business, branch, label === "east" ? "reset_menu" : null, "table-" + label, label,
+          label === "east" ? "261118-002" : "261118-001"),
+      db.prepare(`INSERT INTO order_products (order_id,line_number,product_id,quantity,price,price_list,total_amount)
+        VALUES (?,1,'coffee',1,2,'Normal Rate',2)`).bind("order-" + label),
+      db.prepare("INSERT INTO pos_profiles (id,business_id,branch_id,name,config_json) VALUES (?,?,?,?,'{}')")
+        .bind("pos-" + label, business, branch, label),
+      db.prepare(`INSERT INTO cashier_shifts (id,business_id,branch_id,profile_id,opened_at,opened_by,payment_types_json)
+        VALUES (?,?,?,?,datetime('now'),'fixture','[]')`).bind("shift-" + label, business, branch, "pos-" + label),
+    ]);
+  }
+
+  async function sale(id, label, business, branch, reverses = null) {
+    const quantity = reverses ? -1 : 1;
+    const amount = 200 * quantity;
+    await db.batch([
+      db.prepare(`INSERT INTO sales (id,business_id,branch_id,profile_id,shift_id,reverses_sale_id,status,business_date,
+        currency,secondary_exchange_rate,tax_mode,tax_rate_bps,subtotal_minor,tax_minor,total_minor,customer_id,customer_name,
+        receipt_json,created_at,created_by,updated_at,updated_by)
+        VALUES (?,?,?,?,?,?,'paid','2026-11-18','USD','4000','disabled',0,?,0,?,'walk-in','Walk in','{}',
+          datetime('now'),'fixture',datetime('now'),'fixture')`)
+        .bind(id, business, branch, "pos-" + label, "shift-" + label, reverses, amount, amount),
+      db.prepare(`INSERT INTO sale_products (id,sale_id,line_number,product_id,product_name,price_list_id,
+        modifiers_json,quantity,unit_price_minor,subtotal_minor,tax_minor,total_minor)
+        VALUES (?,?,1,'coffee','Coffee','normal','[]',?,200,?,0,?)`)
+        .bind("line-" + id, id, quantity, amount, amount),
+      db.prepare(`INSERT INTO sale_payments (id,sale_id,line_number,payment_type_id,payment_type_name,payment_kind,currency,
+        entry_type,amount_minor,reverses_payment_id) VALUES (?,?,1,'cash','Cash','cash','USD',?,?,?)`)
+        .bind("payment-" + id, id, reverses ? "reversal" : "tender", amount, reverses ? "payment-" + reverses : null),
+      db.prepare(`INSERT INTO pos_commands (business_id,profile_id,idempotency_key,request_hash,actor_id,created_at,response_status,response_json,state_valid)
+        VALUES (?,?,?,'fixture','fixture',datetime('now'),201,?,1)`)
+        .bind(business, "pos-" + label, id, JSON.stringify({ id, lines: [], payments: [] })),
+    ]);
+  }
+  for (const [label, business, branch] of scopes) {
+    await sale("sale-" + label, label, business, branch);
+  }
+  await sale("refund-main", "main", "biz_a", main, "sale-main");
+
+  const reset = (action, input) => superRequest("biz_a", input, "POST", "super@example.test", "reset-data/" + action);
+  const snapshot = (input) => reset("backup", input).then(result => expectStatus(result, 200));
+  const command = (input, backup) => ({
+    ...input, token: backup.token, confirmation: backup.branch.name, backupSaved: true,
+  });
+  const files = (backup) => Object.fromEntries(backup.tables.map(({ name, rows }) => [name, rows.length]));
+
+  const branchSales = { branchId: main, scope: "branch", selection: ["sales"] };
+  const backup = await snapshot(branchSales);
+  assert.deepEqual(files(backup), { pos_commands: 2, sale_products: 2, sale_payments: 2, sales: 2 });
+  await db.prepare("UPDATE sale_products SET note='edited' WHERE sale_id='sale-main'").run();
+  await expectStatus(await reset("delete", command(branchSales, backup)), 409);
+  await expectStatus(await reset("delete", command(branchSales, await snapshot(branchSales))), 200);
+  assert.deepEqual((await db.prepare("SELECT id FROM sales ORDER BY id").all()).results, [
+    { id: "sale-east" }, { id: "sale-foreign" },
+  ]);
+  assert.equal(await db.prepare("SELECT count(*) AS n FROM orders").first("n"), 3);
+  assert.equal(await db.prepare("SELECT activity_revision FROM cashier_shifts WHERE id='shift-main'").first("activity_revision"), 2);
+  assert.deepEqual(await db.prepare(`SELECT response_status AS status,json_extract(response_json,'$.code') AS code
+    FROM pos_commands WHERE business_id='biz_a' AND idempotency_key='sale-main'`).first(), { status: 410, code: "SALE_RESET" });
+
+  const wholeBusiness = { branchId: main, scope: "business", selection: ["orders", "sales", "menus"] };
+  const combined = await snapshot(wholeBusiness);
+  assert.equal(combined.blockers.length, 0);
+  assert.deepEqual(files(combined), {
+    telegram_notification_deliveries: 0, telegram_order_deliveries: 0, order_products: 2, orders: 2,
+    pos_commands: 1, sale_products: 1, sale_payments: 1, sales: 1,
+    menu_products: 0, menu_product_exclusions: 0, menus: 1,
+  });
+  await expectStatus(await reset("delete", command(wholeBusiness, combined)), 400);
+  await expectStatus(await reset("delete", { ...command(wholeBusiness, combined), confirmBusinessWide: true }), 200);
+  for (const [table, column, foreign] of [
+    ["orders", "id", "order-foreign"], ["order_products", "order_id", "order-foreign"],
+    ["sales", "id", "sale-foreign"], ["sale_products", "sale_id", "sale-foreign"],
+    ["sale_payments", "sale_id", "sale-foreign"],
+  ]) {
+    const { results } = await db.prepare("SELECT " + column + " AS id FROM " + table).all();
+    assert.deepEqual(results, [{ id: foreign }]);
+  }
+  assert.equal(await db.prepare("SELECT activity_revision FROM cashier_shifts WHERE id='shift-foreign'").first("activity_revision"), 1);
+});
+
 test("a whole-business reset keeps the other catalog and protects menus linked to saved orders", async () => {
   const checkout = await prepareNotificationCheckout();
   const main = await db.prepare("SELECT id FROM branches WHERE business_id='biz_a' AND is_default=1").first("id");

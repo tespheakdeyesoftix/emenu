@@ -1,5 +1,6 @@
 export const branchResetOptions = {
   orders: "Orders",
+  sales: "POS sales",
   bookings: "Bookings",
   tables: "Tables",
   tableGroups: "Table groups",
@@ -8,6 +9,8 @@ export const branchResetOptions = {
 } as const;
 
 export const businessResetOptions = {
+  orders: "Orders across all branches",
+  sales: "POS sales across all branches",
   products: "Products",
   menus: "Menus",
   categories: "Categories",

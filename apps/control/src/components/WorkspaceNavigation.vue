@@ -1,20 +1,19 @@
 <template>
   <aside class="sticky top-0 z-30 hidden h-dvh shrink-0 self-start lg:flex">
-    <button
+    <Button
       v-if="!openGroup && visibleGroups.length"
-      type="button"
-      class="workspace-focus absolute -right-4 top-5 grid size-8 place-items-center rounded-lg border border-black/10 bg-white text-black/55 shadow-sm hover:text-ink"
+      variant="outline"
+      size="md"
+      icon="lucide-panel-left-open"
+      class="absolute -right-4 top-5 z-10"
       :aria-label="t('shell.openSubmenu')"
-      :title="t('shell.openSubmenu')"
+      :tooltip="t('shell.openSubmenu')"
       @click="reopenSubmenu"
-    >
-      <PanelLeftOpen :size="17" aria-hidden="true" />
-    </button>
-    <div
-      class="flex w-[84px] flex-col border-r border-black/[0.08] bg-[#fbfbf8]"
-    >
+    />
+
+    <SidebarRail class="!w-[84px] !px-2 !py-0 border-r border-outline-gray-1">
       <div
-        class="grid h-[72px] shrink-0 place-items-center border-b border-black/[0.07]"
+        class="grid h-[72px] w-full shrink-0 place-items-center border-b border-outline-gray-1"
       >
         <BrandMark
           :title="businessName"
@@ -22,127 +21,135 @@
           compact
         />
       </div>
-
+      <SidebarRailItem
+        v-if="store.canAccessPage('telegramNotifications')"
+        :route="controlPages.telegramNotifications.path"
+        :label="t('nav.telegramNotifications')"
+        icon="lucide-bell"
+        variant="ghost"
+        class="mt-2 !h-9 !w-full"
+      />
       <nav
         :aria-label="t('shell.workspace')"
-        class="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-1.5 py-3"
+        class="min-h-0 w-full flex-1 space-y-1 overflow-y-auto overscroll-contain py-3"
       >
-        <RouterLink
+        <SidebarRailItem
           v-if="store.canAccessPage('overview')"
-          :to="controlPages.overview.path"
-          class="rail-item"
-          exact-active-class="is-current"
+          :route="controlPages.overview.path"
+          :label="t('nav.overview')"
+          variant="ghost"
+          class="!h-12 !w-full flex-col gap-1"
           @click="closeOnPageSelect"
         >
-          <span class="rail-icon"
-            ><LayoutDashboard :size="19" aria-hidden="true"
-          /></span>
-          <span>{{ t("nav.overview") }}</span>
-        </RouterLink>
-
-        <button
+          <LayoutDashboard :size="18" aria-hidden="true" />
+          <span class="max-w-full truncate px-0.5 text-xs-medium">{{
+            t("nav.overview")
+          }}</span>
+        </SidebarRailItem>
+        <SidebarRailItem
           v-for="group in visibleGroups"
           :id="`workspace-group-${group.id}`"
           :key="group.id"
-          type="button"
-          class="rail-item"
-          :class="{
-            'is-current': activeGroupId === group.id,
-            'is-open': openGroupId === group.id,
-          }"
-          :aria-current="activeGroupId === group.id ? 'true' : undefined"
+          :label="t(`nav.groups.${group.id}`)"
+          variant="ghost"
+          :active="activeGroupId === group.id || openGroupId === group.id"
+          class="!h-12 !w-full flex-col gap-1"
           :aria-expanded="openGroupId === group.id"
           :aria-controls="
             openGroupId === group.id ? 'workspace-submenu' : undefined
           "
           @click="toggleGroup(group.id)"
         >
-          <span class="rail-icon"
-            ><component :is="group.icon" :size="19" aria-hidden="true"
-          /></span>
-          <span>{{ t(`nav.groups.${group.id}`) }}</span>
-        </button>
+          <component :is="group.icon" :size="18" aria-hidden="true" />
+          <span class="max-w-full truncate px-0.5 text-xs-medium">{{
+            t(`nav.groups.${group.id}`)
+          }}</span>
+        </SidebarRailItem>
       </nav>
-
       <div
-        class="grid shrink-0 place-items-center border-t border-black/[0.07] py-3"
+        class="flex w-full shrink-0 flex-col items-center gap-1 border-t border-outline-gray-1 py-2"
       >
-        <button
-          type="button"
-          class="workspace-focus grid size-11 place-items-center rounded-xl hover:bg-black/5 disabled:opacity-60"
+        <SidebarRailItem
+          :href="store.loaded ? store.publicMenuUrl || undefined : undefined"
+          :label="t('common.viewMenu')"
+          icon="lucide-external-link"
+          variant="ghost"
+          class="!h-9 !w-full"
+          :disabled="!store.loaded || !store.publicMenuUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+        />
+        <LanguageSwitcher compact />
+        <SidebarRailItem
+          :label="t('shell.openAccountMenu')"
+          :description="`${userName} · ${roleLabel}`"
+          variant="ghost"
+          class="!size-10"
           :disabled="!store.loaded"
-          :aria-label="t('shell.openAccountMenu')"
-          :title="`${userName} · ${roleLabel}`"
           @click="$emit('openAccount')"
         >
-          <span
-            class="grid size-9 place-items-center rounded-full bg-[#ffd8b5] text-xs font-bold"
-            aria-hidden="true"
+          <Avatar size="md" theme="amber"
+            ><span class="text-xs-medium">{{ userInitials }}</span></Avatar
           >
-            {{ userInitials }}
-          </span>
-        </button>
+        </SidebarRailItem>
       </div>
-    </div>
+    </SidebarRail>
 
-    <nav
+    <div
       v-if="openGroup"
       id="workspace-submenu"
       ref="submenu"
-      :aria-label="t(`nav.groups.${openGroup.id}`)"
-      class="flex w-56 flex-col border-r border-black/[0.08] bg-white"
       @keydown.esc.stop="closeGroup"
     >
-      <div
-        class="flex h-[72px] shrink-0 items-center justify-between gap-2 border-b border-black/[0.07] px-4"
+      <Sidebar
+        width="14rem"
+        :collapsible="false"
+        :aria-label="t(`nav.groups.${openGroup.id}`)"
+        class="border-r border-outline-gray-1"
       >
-        <h2 class="text-base font-bold">
-          {{ t(`nav.groups.${openGroup.id}`) }}
-        </h2>
-        <button
-          type="button"
-          class="workspace-focus grid size-9 shrink-0 place-items-center rounded-lg text-black/55 hover:bg-cream hover:text-ink"
-          :aria-label="t('shell.collapseSubmenu')"
-          :title="t('shell.collapseSubmenu')"
-          @click="closeGroup"
+        <div
+          class="flex h-[72px] shrink-0 items-center justify-between gap-2 border-b border-outline-gray-1 px-3"
         >
-          <PanelLeftClose :size="17" aria-hidden="true" />
-        </button>
-      </div>
-      <ul
-        :key="openGroup.id"
-        class="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-3 py-3"
-      >
-        <li v-for="page in openGroup.pages" :key="page">
-          <RouterLink
-            :to="controlPages[page].path"
-            class="workspace-link"
-            :class="{ 'is-current': route.name === page }"
-          >
-            <component
-              :is="pageNavigation[page].icon"
-              :size="17"
-              class="shrink-0"
-              aria-hidden="true"
-            />
-            <span>{{ t(`nav.${page}`) }}</span>
-          </RouterLink>
-        </li>
-      </ul>
-    </nav>
+          <SidebarHeader
+            :title="t(`nav.groups.${openGroup.id}`)"
+            :show-logo="false"
+          />
+          <Button
+            variant="ghost"
+            size="md"
+            icon="lucide-panel-left-close"
+            :aria-label="t('shell.collapseSubmenu')"
+            :tooltip="t('shell.collapseSubmenu')"
+            @click="closeGroup"
+          />
+        </div>
+        <div
+          :key="openGroup.id"
+          class="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-2"
+        >
+          <SidebarItem
+            v-for="page in openGroup.pages"
+            :key="page"
+            :route="controlPages[page].path"
+            :icon="pageNavigation[page].icon"
+            :label="t(`nav.${page}`)"
+            class="!h-9"
+          />
+        </div>
+      </Sidebar>
+    </div>
   </aside>
 
-  <dialog
-    id="workspace-navigation-drawer"
-    ref="drawer"
-    aria-labelledby="workspace-drawer-title"
-    class="fixed inset-y-0 left-0 right-auto m-0 h-dvh max-h-none w-80 max-w-[90vw] overflow-hidden bg-[#fbfbf8] p-0 text-ink shadow-2xl backdrop:bg-ink/45"
-    @click.self="mobileOpen = false"
-    @close="mobileOpen = false"
+  <Dialog
+    v-model:open="mobileOpen"
+    :title="t('shell.workspace')"
+    :show-close-button="false"
+    size="sm"
+    @after-leave="restoreNavigationFocus"
   >
-    <div class="flex h-full flex-col">
+    <template #title="{ close }">
       <div
-        class="flex min-h-[72px] shrink-0 items-center justify-between gap-2 border-b border-black/[0.07] px-4 py-2"
+        class="flex min-h-[72px] items-center gap-2 border-b border-outline-gray-1 px-4 py-2"
       >
         <BrandMark
           :title="businessName"
@@ -150,100 +157,128 @@
           compact
         />
         <div class="min-w-0 flex-1">
-          <h2
-            id="workspace-drawer-title"
-            class="text-xs font-semibold text-black/55"
-          >
+          <p class="text-sm-medium text-ink-gray-5">
             {{ t("shell.workspace") }}
-          </h2>
-          <p class="break-words text-sm font-bold">{{ businessName }}</p>
+          </p>
+          <p class="break-words text-base-semibold text-ink-gray-9">
+            {{ businessName }}
+          </p>
         </div>
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="md"
+          icon="lucide-x"
           autofocus
-          class="workspace-focus grid size-10 shrink-0 place-items-center rounded-lg hover:bg-cream"
           :aria-label="t('shell.closeNavigation')"
-          @click="mobileOpen = false"
-        >
-          <X :size="20" aria-hidden="true" />
-        </button>
+          @click="close"
+        />
       </div>
-
-      <nav
+    </template>
+    <div id="workspace-navigation-drawer" class="flex min-h-0 flex-1 flex-col">
+      <Sidebar
+        width="100%"
+        :collapsible="false"
         :aria-label="t('shell.workspace')"
-        class="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-3"
+        class="!h-auto min-h-0 flex-1 space-y-1 overflow-y-auto p-3"
       >
-        <RouterLink
-          v-if="store.canAccessPage('overview')"
-          :to="controlPages.overview.path"
-          class="workspace-link"
-          exact-active-class="is-current"
+        <SidebarItem
+          v-if="store.canAccessPage('telegramNotifications')"
+          :route="controlPages.telegramNotifications.path"
+          :label="t('nav.telegramNotifications')"
+          icon="lucide-bell"
+          class="!h-10"
           @click="closeOnPageSelect"
-        >
-          <LayoutDashboard :size="18" class="shrink-0" aria-hidden="true" />
-          <span>{{ t("nav.overview") }}</span>
-        </RouterLink>
-
+        />
+        <Divider v-if="store.canAccessPage('telegramNotifications')" flex-item />
+        <SidebarItem
+          v-if="store.canAccessPage('overview')"
+          :route="controlPages.overview.path"
+          :label="t('nav.overview')"
+          :icon="LayoutDashboard"
+          class="!h-10"
+          @click="closeOnPageSelect"
+        />
         <div v-for="group in visibleGroups" :key="group.id">
-          <button
-            type="button"
-            class="workspace-link w-full"
-            :class="{ 'is-current': activeGroupId === group.id }"
+          <SidebarItem
+            :label="t(`nav.groups.${group.id}`)"
+            :icon="group.icon"
+            :active="activeGroupId === group.id"
+            class="!h-10"
             :aria-expanded="mobileGroupId === group.id"
             :aria-controls="`workspace-drawer-group-${group.id}`"
             @click="
               mobileGroupId = mobileGroupId === group.id ? null : group.id
             "
           >
-            <component
-              :is="group.icon"
-              :size="18"
-              class="shrink-0"
-              aria-hidden="true"
-            />
-            <span class="flex-1 font-semibold">{{
-              t(`nav.groups.${group.id}`)
-            }}</span>
-            <ChevronDown
-              :size="16"
-              class="shrink-0 transition-transform motion-reduce:transition-none"
-              :class="{ 'rotate-180': mobileGroupId === group.id }"
-              aria-hidden="true"
-            />
-          </button>
-          <ul
-            v-show="mobileGroupId === group.id"
+            <template #suffix>
+              <ChevronDown
+                :size="15"
+                class="transition-transform"
+                :class="{ 'rotate-180': mobileGroupId === group.id }"
+                aria-hidden="true"
+              />
+            </template>
+          </SidebarItem>
+          <div
+            v-if="mobileGroupId === group.id"
             :id="`workspace-drawer-group-${group.id}`"
-            class="mb-2 ml-5 mt-1 space-y-1 border-l border-black/10 pl-2"
+            class="space-y-1 border-l border-outline-gray-1 pl-2 ml-3"
           >
-            <li v-for="page in group.pages" :key="page">
-              <RouterLink
-                :to="controlPages[page].path"
-                class="workspace-link"
-                :class="{ 'is-current': route.name === page }"
-                @click="closeOnPageSelect"
-              >
-                <component
-                  :is="pageNavigation[page].icon"
-                  :size="16"
-                  class="shrink-0"
-                  aria-hidden="true"
-                />
-                <span>{{ t(`nav.${page}`) }}</span>
-              </RouterLink>
-            </li>
-          </ul>
+            <SidebarItem
+              v-for="page in group.pages"
+              :key="page"
+              :route="controlPages[page].path"
+              :label="t(`nav.${page}`)"
+              :icon="pageNavigation[page].icon"
+              class="!h-10"
+              @click="closeOnPageSelect"
+            />
+          </div>
         </div>
-      </nav>
-
-      <div class="shrink-0 border-t border-black/[0.07] p-3">
-        <LanguageSwitcher />
+      </Sidebar>
+      <div class="shrink-0 space-y-2 border-t border-outline-gray-1 p-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <Button
+            :href="store.loaded ? store.publicMenuUrl || undefined : undefined"
+            :disabled="!store.loaded || !store.publicMenuUrl"
+            :label="t('common.viewMenu')"
+            variant="subtle"
+            icon-left="lucide-external-link"
+            target="_blank"
+            rel="noopener noreferrer"
+          />
+          <LanguageSwitcher />
+        </div>
+        <Button
+          :disabled="!store.loaded"
+          :aria-label="t('shell.openAccountMenu')"
+          variant="outline"
+          size="lg"
+          class="w-full !justify-start"
+          @click="requestMobileAccount"
+        >
+          <template #prefix>
+            <Avatar size="sm" theme="amber">{{ userInitials }}</Avatar>
+          </template>
+          {{ userName }}
+        </Button>
       </div>
     </div>
-  </dialog>
+  </Dialog>
 </template>
 
 <script setup lang="ts">
+import {
+  Avatar,
+  Button,
+  Dialog,
+  Divider,
+  Sidebar,
+  SidebarHeader,
+  SidebarItem,
+  SidebarRail,
+  SidebarRailItem,
+} from "frappe-ui";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
@@ -260,8 +295,6 @@ import {
   ListTree,
   Package,
   Palette,
-  PanelLeftClose,
-  PanelLeftOpen,
   QrCode,
   Receipt,
   Send,
@@ -269,8 +302,8 @@ import {
   SlidersHorizontal,
   Store,
   Tags,
+  Users,
   Utensils,
-  X,
   type LucideIcon,
 } from "lucide-vue-next";
 import {
@@ -283,7 +316,7 @@ import BrandMark from "./BrandMark.vue";
 import LanguageSwitcher from "./LanguageSwitcher.vue";
 
 defineProps<{ userName: string; userInitials: string; roleLabel: string }>();
-defineEmits<{ openAccount: [] }>();
+const emit = defineEmits<{ openAccount: [] }>();
 const mobileOpen = defineModel<boolean>("mobileOpen", { required: true });
 
 const { t } = useI18n();
@@ -311,6 +344,7 @@ const pageNavigation = {
   sellingOverview: { group: "selling", icon: LayoutDashboard },
   posProfiles: { group: "selling", icon: SlidersHorizontal },
   posPaymentTypes: { group: "selling", icon: CreditCard },
+  posCustomers: { group: "selling", icon: Users },
   salesList: { group: "selling", icon: Receipt },
   orders: { group: "service", icon: ClipboardList },
   bookings: { group: "service", icon: CalendarClock },
@@ -358,7 +392,6 @@ const openGroup = computed(() =>
 );
 const submenu = ref<HTMLElement>();
 const mobileGroupId = ref<GroupId | null>(null);
-const drawer = ref<HTMLDialogElement>();
 
 watch(openGroupId, (groupId) => {
   try {
@@ -368,9 +401,13 @@ watch(openGroupId, (groupId) => {
   }
 });
 
-watch(() => route.name, () => {
-  if (openGroupId.value && openGroupId.value !== activeGroupId.value) closeGroup();
-});
+watch(
+  () => route.name,
+  () => {
+    if (openGroupId.value && openGroupId.value !== activeGroupId.value)
+      closeGroup();
+  },
+);
 
 async function toggleGroup(id: GroupId) {
   if (openGroupId.value === id) {
@@ -380,7 +417,7 @@ async function toggleGroup(id: GroupId) {
   openGroupId.value = id;
   await nextTick();
   const link =
-    submenu.value?.querySelector<HTMLAnchorElement>("a.is-current") ??
+    submenu.value?.querySelector<HTMLAnchorElement>("a[aria-current=page]") ??
     submenu.value?.querySelector<HTMLAnchorElement>("a");
   link?.focus();
 }
@@ -412,58 +449,32 @@ function closeOnPageSelect(event: MouseEvent) {
   else closeGroup();
 }
 
-watch(mobileOpen, (open) => {
-  if (open) {
-    mobileGroupId.value = activeGroupId.value;
-    drawer.value?.showModal();
-  } else {
-    drawer.value?.close();
-  }
-});
+watch(
+  mobileOpen,
+  (open) => {
+    if (open) mobileGroupId.value = activeGroupId.value;
+  },
+  { flush: "sync" },
+);
+
+let accountRequested = false;
+function requestMobileAccount() {
+  accountRequested = true;
+  mobileOpen.value = false;
+}
 
 const desktop = window.matchMedia("(min-width: 1024px)");
+function restoreNavigationFocus() {
+  if (!desktop.matches && !mobileOpen.value)
+    document.getElementById("workspace-navigation-trigger")?.focus();
+  if (accountRequested) {
+    accountRequested = false;
+    emit("openAccount");
+  }
+}
 function closeDrawerOnDesktop(event: MediaQueryListEvent) {
   if (event.matches) mobileOpen.value = false;
 }
 onMounted(() => desktop.addEventListener("change", closeDrawerOnDesktop));
 onUnmounted(() => desktop.removeEventListener("change", closeDrawerOnDesktop));
 </script>
-
-<style scoped>
-.workspace-focus,
-.rail-item,
-.workspace-link {
-  @apply focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink;
-}
-
-.rail-item {
-  @apply flex w-full flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-center text-[11px] font-semibold leading-snug text-black/60 transition-colors hover:bg-black/[0.035] hover:text-ink;
-  overflow-wrap: anywhere;
-}
-
-.rail-icon {
-  @apply grid h-8 w-10 shrink-0 place-items-center rounded-xl;
-}
-
-.rail-item.is-open,
-.rail-item.is-current {
-  @apply text-ink;
-}
-
-.rail-item.is-open .rail-icon {
-  @apply bg-[#e7e9e1];
-}
-
-.rail-item.is-current .rail-icon {
-  @apply bg-ink text-mint;
-}
-
-.workspace-link {
-  @apply flex min-h-11 items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm font-medium leading-snug text-black/65 transition-colors hover:bg-black/[0.04] hover:text-ink;
-  overflow-wrap: anywhere;
-}
-
-.workspace-link.is-current {
-  @apply bg-[#e7e9e1] font-bold text-ink;
-}
-</style>

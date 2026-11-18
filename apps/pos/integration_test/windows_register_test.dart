@@ -2,13 +2,15 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:emenu_pos/auths/login_service.dart';
 import 'package:emenu_pos/core/pricing.dart';
 import 'package:emenu_pos/core/register_access.dart';
 import 'package:emenu_pos/core/register_database.dart';
 import 'package:emenu_pos/features/register/register_controller.dart';
-import 'package:emenu_pos/ui/receipt_dialog.dart';
+import 'package:emenu_pos/features/sales/sale/widgets/product_card.dart';
+import 'package:emenu_pos/features/sales/sale/widgets/receipt_dialog.dart';
 import 'package:emenu_pos/ui/register_app.dart';
-import 'package:emenu_pos/ui/sell_view.dart';
+import 'package:emenu_pos/features/sales/sale/widgets/payment_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -108,8 +110,12 @@ void main() {
           controller.installation.value?.profileId,
           env['POS_NATIVE_PROFILE_ID'],
         );
-        expect(find.byType(NavigationRail), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('register-navigation-rail')),
+          findsOneWidget,
+        );
 
+        await scenario.tap(find.byTooltip('Shift'));
         await scenario.press('Open day');
         await scenario.waitFor(
           () =>
@@ -153,7 +159,7 @@ void main() {
           find.widgetWithText(DropdownButtonFormField<String>, 'Counter'),
         );
         await scenario.tap(find.text('Staging Table A1').last);
-        await scenario.tap(find.widgetWithText(OutlinedButton, 'Coffee'));
+        await scenario.tap(find.widgetWithText(ProductCard, 'Coffee'));
         expect(controller.cartTotal, 251);
         await scenario.press('Pay');
         final payment = find.byType(PaymentDialog);
@@ -224,8 +230,8 @@ void main() {
           'sale sync',
         );
 
-        await scenario.tap(find.widgetWithText(TextButton, 'ខ្មែរ'));
-        await scenario.tap(find.text('ការលក់'));
+        await scenario.tap(find.byTooltip('ខ្មែរ'));
+        await scenario.tap(find.byTooltip('ការលក់'));
         await scenario.tap(find.widgetWithText(ListTile, r'$2.51'));
         expect(
           find.descendant(
@@ -241,8 +247,8 @@ void main() {
         );
         await scenario.verifyReceipt();
         await scenario.tap(find.widgetWithText(TextButton, 'បិទ'));
-        await scenario.tap(find.text('លក់'));
-        await scenario.tap(find.widgetWithText(OutlinedButton, 'កាហ្វេ'));
+        await scenario.tap(find.byTooltip('លក់'));
+        await scenario.tap(find.widgetWithText(ProductCard, 'កាហ្វេ'));
         await scenario.tap(find.byTooltip('ចាក់សោ'));
         await scenario.waitFor(
           () => controller.stage.value == RegisterStage.locked,
@@ -308,17 +314,16 @@ void _testSubscriptionQuota(String fixture) {
           () => controller.stage.value == RegisterStage.selectProfile,
           'profile selection',
         );
-        expect(controller.profiles.map((profile) => profile['id']), [
-          business['profileId'],
-        ]);
+        expect(
+          Get.find<LoginService>().profiles.map((profile) => profile['id']),
+          [business['profileId']],
+        );
         await scenario.enrollPin(_ownerPin);
         expect(controller.installation.value?.businessId, business['id']);
         expect(controller.online.value, isTrue);
 
         Future<void> sellOne() async {
-          await scenario.tap(
-            find.widgetWithText(OutlinedButton, 'Quota coffee'),
-          );
+          await scenario.tap(find.widgetWithText(ProductCard, 'Quota coffee'));
           expect(controller.cartTotal, 250);
           await scenario.press('Pay');
           await scenario.tap(
@@ -343,7 +348,7 @@ void _testSubscriptionQuota(String fixture) {
           ),
           'second sale quota rejection',
         );
-        await scenario.tap(find.text('Sales').hitTestable());
+        await scenario.tap(find.byTooltip('Sales'));
         expect(
           find.text('The business has reached its daily POS sales limit'),
           findsOneWidget,
@@ -445,11 +450,17 @@ class _RegisterUi {
           !register.busy.value,
       'profile selection',
     );
+    await press('Save');
+    await waitFor(
+      () => register.stage.value == RegisterStage.ready && !register.busy.value,
+      'password sign-in',
+    );
+    await press('Set PIN');
     await enter('6-digit PIN', pin);
     await enter('Confirm PIN', pin);
     await press('Save');
     await waitFor(
-      () => register.stage.value == RegisterStage.ready && !register.busy.value,
+      () => register.pinConfigured.value && !register.busy.value,
       'PIN enrollment',
     );
   }

@@ -463,6 +463,43 @@ export async function publicBookings(
   );
 }
 
+async function assignBookingTable(
+  db: D1Database,
+  businessId: string,
+  id: string,
+  body: Record<string, unknown> | null,
+) {
+  const tableId = body?.tableId;
+  const expected = body?.expectedTableId;
+  const valid = (value: unknown) =>
+    value === null || (typeof value === "string" && value.length > 0 && value.length <= 250);
+  if (!valid(tableId) || !valid(expected)) return error(400, "Invalid booking table");
+  const assigned = await db.prepare(
+    `UPDATE bookings AS bk SET table_id=?1,updated_at=CURRENT_TIMESTAMP
+    WHERE bk.business_id=?2 AND bk.id=?3 AND bk.status='confirmed' AND bk.table_id IS ?4
+      AND EXISTS (
+        SELECT 1 FROM businesses b ${bookingPolicyJoins} WHERE b.id=bk.business_id AND (${bookingEnabled})
+      )
+      AND (?1 IS NULL OR (
+        EXISTS (
+          SELECT 1 FROM restaurant_tables t JOIN table_groups g
+            ON g.id=t.group_id AND g.business_id=t.business_id AND g.branch_id=t.branch_id
+          WHERE t.id=?1 AND t.business_id=bk.business_id AND t.branch_id=bk.branch_id
+            AND t.is_active=1 AND g.is_active=1
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM bookings other
+          WHERE other.business_id=bk.business_id AND other.branch_id=bk.branch_id
+            AND other.table_id=?1 AND other.id<>bk.id AND other.status='confirmed'
+            AND other.arrival_at > strftime('%Y-%m-%dT%H:%M:%fZ',bk.arrival_at,'-2 hours')
+            AND other.arrival_at < strftime('%Y-%m-%dT%H:%M:%fZ',bk.arrival_at,'+2 hours')
+        )
+      ))
+    RETURNING table_id AS tableId`,
+  ).bind(tableId, businessId, id, expected).first();
+  return assigned ? json(assigned) : error(409, "The table is unavailable or the booking changed");
+}
+
 export async function adminBookings(
   request: Request,
   url: URL,
@@ -526,28 +563,40 @@ export async function adminBookings(
       timezone: business?.timezone || "UTC",
     });
   }
-  const match = /^\/api\/admin\/bookings\/([^/]+)(\/status)?$/.exec(path);
+  const match = /^\/api\/admin\/bookings\/([^/]+)(\/status|\/table)?$/.exec(path);
   if (!match || !bookingId.test(match[1]))
     return error(404, "Booking not found");
-  const [, id, statusPath] = match;
-  if (request.method === "GET" && !statusPath) {
+  const [, id, action] = match;
+  if (request.method === "GET" && !action) {
     const booking = await env.DB.prepare(
       `SELECT ${summaryColumns},bk.guest_phone AS guestPhone,bk.preference,
       bk.preference_text AS preferenceText,bk.note,bk.timezone,bk.terms_language AS termsLanguage,bk.terms_version AS termsVersion,
-      bk.terms_text AS termsText,bk.terms_accepted_at AS termsAcceptedAt,bk.created_at AS createdAt
-      ${bookingsJoin} WHERE bk.business_id=? AND bk.id=?`,
+      bk.terms_text AS termsText,bk.terms_accepted_at AS termsAcceptedAt,bk.created_at AS createdAt,
+      bk.table_id AS tableId,rt.label AS tableLabel
+      ${bookingsJoin}
+      LEFT JOIN restaurant_tables rt ON rt.id=bk.table_id AND rt.business_id=bk.business_id AND rt.branch_id=bk.branch_id
+      WHERE bk.business_id=? AND bk.id=?`,
     )
       .bind(businessId, id)
       .first<BookingDetail>();
-    return booking
-      ? json({ booking, canManage: access.canManage })
-      : error(404, "Booking not found");
+    if (!booking) return error(404, "Booking not found");
+    const tableOptions = access.canManage && booking.status === "confirmed"
+      ? (await env.DB.prepare(
+          `SELECT t.id,t.label,g.name AS groupName
+          FROM restaurant_tables t JOIN table_groups g
+            ON g.id=t.group_id AND g.business_id=t.business_id AND g.branch_id=t.branch_id
+          WHERE t.business_id=? AND t.branch_id=? AND t.is_active=1 AND g.is_active=1
+          ORDER BY g.sort_order,g.name,t.sort_order,t.id`,
+        ).bind(businessId, booking.branchId).all()).results
+      : [];
+    return json({ booking, tableOptions, canManage: access.canManage });
   }
-  if (request.method !== "PATCH" || !statusPath)
+  if (request.method !== "PATCH" || !action)
     return error(405, "Method not allowed");
   if (!access.canManage)
-    return error(403, "Booking status changes are unavailable");
+    return error(403, "Booking changes are unavailable");
   const body = await readBody(request);
+  if (action === "/table") return assignBookingTable(env.DB, businessId, id, body);
   const current = bookingStatuses.find(
     (status) => status === body?.expectedStatus,
   );

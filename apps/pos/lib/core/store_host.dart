@@ -5,9 +5,12 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
+import 'api_endpoint.dart';
 import 'pos_api.dart';
 import 'register_authority.dart';
 import 'register_database.dart';
+import 'register_history_scope.dart';
+import 'register_shift_reports.dart';
 import 'store_transport.dart';
 
 class StoreHost {
@@ -16,6 +19,9 @@ class StoreHost {
     this.certificate, {
     required this.verifyPosSession,
     this.onVerified,
+    this.reloadProfile,
+    this.readServerSaleHistory,
+    this.requestCustomerDirectory,
     this.onError,
   });
 
@@ -23,6 +29,17 @@ class StoreHost {
   final StoreCertificate certificate;
   final Future<Json> Function(String token) verifyPosSession;
   final Future<void> Function(Json context, String token)? onVerified;
+  final Future<void> Function(String operatorId, String profileId)?
+  reloadProfile;
+  final Future<Json> Function(
+    String operatorId,
+    String profileId,
+    int? page,
+    String? saleId,
+  )?
+  readServerSaleHistory;
+  final Future<Json> Function(String operatorId, String profileId, Json input)?
+  requestCustomerDirectory;
   final void Function(Object error)? onError;
 
   RegisterDatabase get _db => authority.database;
@@ -87,10 +104,16 @@ class StoreHost {
       final hash = storeCredentialHash(credential);
       final body = await _readBody(request);
       final result = switch (request.uri.path) {
-        '/store/v1/pair' => await _pair(hash, body),
-        '/store/v1/enroll' => await _enroll(hash, body),
-        '/store/v1/state' => await _state(hash, body['snapshot_version']),
-        '/store/v1/command' => await _command(hash, body),
+        StoreApiEndpoint.pair => await _pair(hash, body),
+        StoreApiEndpoint.enroll => await _enroll(hash, body),
+        StoreApiEndpoint.state => await _state(hash, body),
+        StoreApiEndpoint.salesHistory => await _salesHistory(hash, body),
+        StoreApiEndpoint.customerDirectory => await _customerDirectory(
+          hash,
+          body,
+        ),
+        StoreApiEndpoint.command => await _command(hash, body),
+        StoreApiEndpoint.shiftManagement => await _shiftManagement(hash, body),
         _ => throw _notFound,
       };
       response.write(jsonEncode(result));
@@ -303,7 +326,30 @@ class StoreHost {
     };
   }
 
-  Future<Json> _state(
+  Future<Json> _state(String hash, Json body) async {
+    if (body['reload_menu'] == true) {
+      final staff = await _db.storeStaff(hash);
+      final setup = await _db.installation();
+      if (staff == null || setup == null) throw _unauthorized;
+      final reload = reloadProfile;
+      if (reload == null) {
+        throw const PosApiError(
+          503,
+          'SERVER_UPGRADE_REQUIRED',
+          'Update the store register.',
+        );
+      }
+      // Network I/O must finish outside the state transaction.
+      await reload(staff.grant.operatorId, staff.profileId ?? setup.profileId);
+    }
+    final state = await _cachedState(
+      hash,
+      body['reload_menu'] == true ? null : body['snapshot_version'],
+    );
+    return {...state, if (body['reload_menu'] == true) 'menu_reloaded': true};
+  }
+
+  Future<Json> _cachedState(
     String hash,
     Object? knownVersion,
   ) => _db.transaction(() async {
@@ -317,8 +363,16 @@ class StoreHost {
       throw const PosApiError(409, 'SYNC_REQUIRED', 'Load the store profile.');
     }
     final snapshot = await _db.effectiveSnapshot(cached);
+    final context = jsonObject(snapshot['context']);
+    final shift = context['cashier_shift'] as Json?;
     snapshot['context'] = {
-      ...jsonObject(snapshot['context']),
+      ...context,
+      'store_shift_management': true,
+      if (shift != null)
+        'cashier_shift': cashierShiftMetadata(shift, shiftManager(actor.role)),
+      'store_cart_line_edits': true,
+      'store_bill_information': true,
+      if (requestCustomerDirectory != null) 'store_customer_directory': true,
       'operator': {
         'id': actor.operatorId,
         'name': actor.displayName,
@@ -361,6 +415,55 @@ class StoreHost {
     };
   });
 
+  Future<Json> _salesHistory(String hash, Json body) async {
+    final staff = await _db.storeStaff(hash);
+    final setup = await _db.installation();
+    if (staff == null || setup == null) throw _unauthorized;
+    final profileId = staff.profileId ?? setup.profileId;
+    final page = body['server_page'];
+    final saleId = body['sale_id'];
+    if (page != null || saleId != null) {
+      if ((page != null && (page is! int || page < 1 || saleId != null)) ||
+          (saleId != null &&
+              (saleId is! String ||
+                  !RegExp(r'^[a-zA-Z0-9_-]{1,80}$').hasMatch(saleId)))) {
+        throw const PosApiError(
+          400,
+          'INVALID_INPUT',
+          'Invalid sale history request.',
+        );
+      }
+      final read = readServerSaleHistory;
+      if (read == null) throw _notFound;
+      return read(
+        staff.grant.operatorId,
+        profileId,
+        page as int?,
+        saleId as String?,
+      );
+    }
+
+    return _db.transaction(() async {
+      final snapshot = await _db.readSnapshot(profileId);
+      if (snapshot == null) {
+        throw const PosApiError(
+          409,
+          'SYNC_REQUIRED',
+          'Load the store profile.',
+        );
+      }
+      final context = jsonObject(snapshot['context']);
+      final scope = RegisterHistoryScope.fromContext(
+        context,
+        registerOperatingContext(context, DateTime.now()),
+      );
+      return {
+        'history_scope': scope?.toJson(),
+        if (scope != null) ...((await _db.salesHistory(scope)).toJson()),
+      };
+    });
+  }
+
   Future<Json> _command(String hash, Json body) {
     final action = RegisterAction.values
         .where((value) => value.name == body['action'])
@@ -371,6 +474,37 @@ class StoreHost {
       credentialHash: hash,
       action: action,
       body: jsonObject(body['payload']),
+    );
+  }
+
+  Future<Json> _shiftManagement(String hash, Json body) async {
+    final staff = await _db.storeStaff(hash);
+    final setup = await _db.installation();
+    if (staff == null || setup == null) throw _unauthorized;
+    final profileId = staff.profileId ?? setup.profileId;
+    if (body['kind'] == 'command') {
+      final id = body['id'];
+      final command = id is String ? await _db.savedCommand(id) : null;
+      return {
+        'found':
+            command != null &&
+            command.operatorId == staff.grant.operatorId &&
+            command.profileId == profileId,
+      };
+    }
+    return RegisterShiftReports(_db).read(profileId, staff.grant.role, body);
+  }
+
+  Future<Json> _customerDirectory(String hash, Json body) async {
+    final staff = await _db.storeStaff(hash);
+    final setup = await _db.installation();
+    if (staff == null || setup == null) throw _unauthorized;
+    final request = requestCustomerDirectory;
+    if (request == null) throw _notFound;
+    return request(
+      staff.grant.operatorId,
+      staff.profileId ?? setup.profileId,
+      body,
     );
   }
 

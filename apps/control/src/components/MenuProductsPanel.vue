@@ -21,95 +21,82 @@
           </p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <a
+          <Button variant="subtle" size="lg"
             v-if="previewUrl"
-            class="btn-soft"
             :href="previewUrl"
             target="_blank"
             rel="noopener"
           >
-            <ExternalLink :size="16" aria-hidden="true" />
+            <template #prefix><ExternalLink :size="16" aria-hidden="true" /></template>
             {{ t("menus.preview") }}
-          </a>
-          <button
+          </Button>
+          <Button variant="solid" size="lg"
             v-if="canAssign"
             type="button"
-            class="btn-primary"
             :disabled="saving"
             @click="openSelection('assign')"
           >
-            <Plus :size="16" aria-hidden="true" />
+            <template #prefix><Plus :size="16" aria-hidden="true" /></template>
             {{ t("menus.assignProducts") }}
-          </button>
+          </Button>
           <MenuActionPopover
             v-if="canSort || canStartBulkDelete"
             v-slot="{ close }"
             :label="t('menus.productActions')"
             :disabled="saving || loading"
           >
-            <button v-if="canSort" type="button" @click="close(); $emit('sortProducts', menu)">
-              <ListOrdered :size="16" aria-hidden="true" />
+            <Button variant="ghost" v-if="canSort" type="button" @click="close(); $emit('sortProducts', menu)">
+              <template #prefix><ListOrdered :size="16" aria-hidden="true" /></template>
               {{ t("menus.sortProductOrder") }}
-            </button>
-            <button v-if="canAssign" type="button" @click="close(); openSelection('unassign')">
-              <Unlink :size="16" aria-hidden="true" />
+            </Button>
+            <Button variant="ghost" v-if="canAssign" type="button" @click="close(); openSelection('unassign')">
+              <template #prefix><Unlink :size="16" aria-hidden="true" /></template>
               {{ t("menus.unassignProducts") }}
-            </button>
-            <button
+            </Button>
+            <Button variant="ghost"
               v-if="canStartBulkDelete"
               type="button"
               class="text-red-700"
               :disabled="!!loadError"
               @click="close(); bulkDeleteSelecting = true"
             >
-              <Trash2 :size="16" aria-hidden="true" />
+              <template #prefix><Trash2 :size="16" aria-hidden="true" /></template>
               {{ t("bulkProductDelete.action") }}
-            </button>
+            </Button>
           </MenuActionPopover>
         </div>
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <label class="relative min-w-40 flex-1 sm:max-w-80">
-          <Search
-            class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/35"
-            :size="16"
-            aria-hidden="true"
-          />
-          <input
+          <TextInput size="lg" variant="outline"
             v-model="query"
             type="search"
-            class="input !py-2.5 !pl-9"
             :aria-label="t('menus.searchProducts')"
-            :placeholder="t('menus.searchProducts')"
-          />
+            :placeholder="t('menus.searchProducts')">
+            <template #prefix>
+              <Search :size="16" aria-hidden="true" />
+            </template>
+          </TextInput>
         </label>
-        <select
+        <Select
+          size="lg"
+          variant="outline"
           v-model="categoryId"
-          class="input !w-auto max-w-full !py-2.5 sm:max-w-64"
+          class="!w-auto max-w-full sm:max-w-64"
           :aria-label="t('pages.catalog.categoryFilterLabel')"
-        >
-          <option value="">{{ t("menus.allCategories") }}</option>
-          <option
-            v-for="category in categoryOptions"
-            :key="category.id"
-            :value="category.id"
-          >
-            {{ category.label }}
-          </option>
-        </select>
+          :options="[
+            { label: t('menus.allCategories'), value: '' },
+            ...categoryOptions.map(category => ({ label: category.label, value: category.id })),
+          ]"
+        />
         <div class="ml-auto flex shrink-0 gap-1 rounded-xl bg-cream p-1">
-          <button
-            v-for="{ mode, icon, label } in views"
-            :key="mode"
-            type="button"
-            class="grid size-9 place-items-center rounded-lg transition"
-            :class="viewMode === mode ? 'bg-ink text-white' : 'hover:bg-white'"
-            :aria-label="t(label)"
-            :aria-pressed="viewMode === mode"
-            @click="viewMode = mode"
-          >
-            <component :is="icon" :size="18" aria-hidden="true" />
-          </button>
+          <TabButtons
+            variant="subtle"
+            :model-value="viewMode"
+            :options="views.map(({ mode, icon, label }) => ({ value: mode, icon, label: t(label) }))"
+            :aria-label="t('menus.viewLayout')"
+            @update:model-value="viewMode = $event === 'list' ? 'list' : 'grid'"
+          />
         </div>
       </div>
       <p v-if="!menu.parentId" class="m-0 text-sm text-black/55">
@@ -128,30 +115,10 @@
       />
     </div>
 
-    <p v-if="editError" class="m-0 rounded-xl bg-red-50 p-3 text-sm text-red-700" role="alert">
-      {{ editError }}
-    </p>
-    <p
-      v-if="!dialog && actionError"
-      class="m-0 rounded-xl bg-red-50 p-3 text-sm text-red-700"
-      role="alert"
-    >
-      {{ actionError }}
-    </p>
-    <p
-      v-if="loadError"
-      class="m-0 rounded-xl bg-red-50 p-3 text-sm text-red-700"
-      role="alert"
-    >
-      {{ loadError }}
-    </p>
-    <p
-      v-else-if="loading"
-      class="card p-6 text-center text-sm text-black/55"
-      role="status"
-    >
-      {{ t("common.loading") }}
-    </p>
+    <Alert v-if="editError" theme="red" :title="editError" />
+    <Alert v-if="!dialog && actionError" theme="red" :title="actionError" />
+    <Alert v-if="loadError" theme="red" :title="loadError" />
+    <LoadingText v-else-if="loading" :text="t('common.loading')" role="status" class="card p-6" />
     <p
       v-else-if="!products.length"
       class="card p-6 text-center text-sm text-black/55"
@@ -192,19 +159,19 @@
         <div class="min-w-0 flex-1" :class="viewMode === 'grid' ? 'p-3' : ''">
           <div class="flex min-w-0 items-center gap-2">
             <label v-if="canEditProducts && bulkDeleteSelecting" class="grid size-6 shrink-0 place-items-center">
-              <input
-                v-model="bulkDeleteIds"
-                type="checkbox"
-                :value="product.id"
-                class="size-4 accent-red-600"
+              <Checkbox
+                :model-value="bulkDeleteIds.includes(product.id)"
+                class="shrink-0"
                 :aria-label="t('bulkProductDelete.selectProduct', { name: productName(product) })"
+                @update:model-value="bulkDeleteIds = setIdSelected(bulkDeleteIds, product.id, Boolean($event))"
               />
             </label>
             <h3 class="m-0 min-w-0 text-sm font-bold leading-snug [overflow-wrap:anywhere]">
-              <button
+              <Button
+                variant="ghost" size="sm"
                 v-if="canEditProducts && !bulkDeleteSelecting"
                 type="button"
-                class="block max-w-full text-start hover:underline after:absolute after:inset-0 focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-ink"
+                class="!h-auto max-w-full !justify-start !whitespace-normal !p-0 text-start !font-bold hover:!bg-transparent hover:underline after:absolute after:inset-0 [&>span.truncate]:whitespace-normal"
                 :class="{ 'animate-pulse': loadingProductId === product.id }"
                 :aria-label="t('menus.editNamed', { name: productName(product) })"
                 :aria-busy="loadingProductId === product.id"
@@ -212,7 +179,7 @@
                 @click="openProductEditor(product.id)"
               >
                 {{ productName(product) }}
-              </button>
+              </Button>
               <template v-else>{{ productName(product) }}</template>
             </h3>
           </div>
@@ -237,14 +204,13 @@
             {{ t("menus.unpublishedProduct") }}
           </p>
         </div>
-        <button
+        <Button
           v-if="!bulkDeleteSelecting && !admin.isReadOnly && (product.isAssigned ? menu.parentId : catalogScope)"
           type="button"
-          class="relative z-10 flex shrink-0 items-center justify-center gap-1.5 px-2 py-2 text-xs font-bold text-black/60 hover:bg-cream"
-          :class="[
-            viewMode === 'grid' ? 'border-t border-black/5' : 'min-h-9 min-w-9 rounded-xl border border-black/[.08] bg-cream',
-            product.isAssigned ? 'hover:text-red-700' : 'hover:text-ink',
-          ]"
+          :variant="viewMode === 'grid' ? 'ghost' : 'outline'"
+          :theme="product.isAssigned ? 'red' : 'gray'"
+          class="relative z-10 min-h-9 shrink-0 !px-2 !text-xs"
+          :class="viewMode === 'grid' ? '!rounded-none border-t border-outline-gray-1' : 'min-w-9'"
           :disabled="saving"
           :aria-label="
             t(product.isAssigned ? 'menus.unassignProduct' : 'menus.assignProduct', {
@@ -255,11 +221,11 @@
           :title="t(product.isAssigned ? 'menus.unassign' : canAssign ? 'menus.assignHere' : 'menus.assignMenu')"
           @click="openCardAction(product)"
         >
-          <component :is="product.isAssigned ? Unlink : Plus" :size="16" aria-hidden="true" />
+          <template #prefix><component :is="product.isAssigned ? Unlink : Plus" :size="16" aria-hidden="true" /></template>
           <span :class="viewMode === 'list' ? 'hidden lg:inline' : ''">{{
             t(product.isAssigned ? "menus.unassign" : canAssign ? "menus.assignHere" : "menus.assignMenu")
           }}</span>
-        </button>
+        </Button>
       </article>
     </div>
     <MenuProductPager
@@ -294,22 +260,19 @@
         })
       }}
     </p>
-    <p v-if="actionError" class="mb-0 mt-3 text-sm text-red-700" role="alert">
-      {{ actionError }}
-    </p>
+    <Alert v-if="actionError" theme="red" :title="actionError" class="mb-0 mt-3" />
     <template #footer>
       <div class="flex justify-end gap-2">
-        <button type="button" class="btn-soft" :disabled="saving" @click="closeDialog">
+        <Button variant="subtle" size="lg" type="button" :disabled="saving" @click="closeDialog">
           {{ t("common.cancel") }}
-        </button>
-        <button
+        </Button>
+        <Button variant="solid" size="lg"
           type="button"
-          class="btn-primary"
           :disabled="saving"
           @click="cardProduct && changeAssignments('DELETE', [cardProduct.id])"
         >
           {{ t(saving ? "common.saving" : "menus.unassign") }}
-        </button>
+        </Button>
       </div>
     </template>
   </ModalPanel>
@@ -324,40 +287,33 @@
   >
     <div class="mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,15rem)]">
       <label class="relative block">
-        <Search
-          class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/35"
-          :size="16"
-          aria-hidden="true"
-        />
-        <input
+        <TextInput size="lg" variant="outline"
           v-model="candidateQuery"
           type="search"
-          class="input !pl-9"
           :disabled="assignmentBusy"
           :aria-label="t('menus.searchProducts')"
-          :placeholder="t('menus.searchProducts')"
-        />
+          :placeholder="t('menus.searchProducts')">
+          <template #prefix>
+            <Search :size="16" aria-hidden="true" />
+          </template>
+        </TextInput>
       </label>
-      <select
+      <Select
+        size="lg"
+        variant="outline"
         v-model="candidateCategoryId"
-        class="input"
         :disabled="assignmentBusy"
         :aria-label="t('pages.catalog.categoryFilterLabel')"
-      >
-        <option value="">{{ t("menus.allCategories") }}</option>
-        <option
-          v-for="category in categoryOptions"
-          :key="category.id"
-          :value="category.id"
-        >
-          {{ category.label }}
-        </option>
-      </select>
+        :options="[
+          { label: t('menus.allCategories'), value: '' },
+          ...categoryOptions.map(category => ({ label: category.label, value: category.id })),
+        ]"
+      />
     </div>
     <div class="mb-4 flex flex-wrap gap-2">
-      <button
+      <Button variant="subtle" size="lg"
         type="button"
-        class="btn-soft !py-2"
+        class="!py-2"
         :disabled="
           assignmentBusy ||
           candidatesLoading ||
@@ -367,30 +323,18 @@
         @click="selectAllMatches"
       >
         {{ t(selectingAll ? "common.loading" : "menus.selectAll") }}
-      </button>
-      <button
+      </Button>
+      <Button variant="subtle" size="lg"
         type="button"
-        class="btn-soft !py-2"
+        class="!py-2"
         :disabled="assignmentBusy || !selectedIds.length"
         @click="selectedIds = []"
       >
         {{ t("menus.unselectAll") }}
-      </button>
+      </Button>
     </div>
-    <p
-      v-if="candidateError || actionError"
-      class="text-sm text-red-700"
-      role="alert"
-    >
-      {{ candidateError || actionError }}
-    </p>
-    <p
-      v-if="candidatesLoading"
-      class="py-4 text-sm text-black/55"
-      role="status"
-    >
-      {{ t("common.loading") }}
-    </p>
+    <Alert v-if="candidateError || actionError" theme="red" :title="candidateError || actionError" />
+    <LoadingText v-if="candidatesLoading" :text="t('common.loading')" role="status" class="py-4" />
     <p
       v-else-if="!candidates.length && !candidateError"
       class="py-4 text-sm text-black/55"
@@ -411,12 +355,11 @@
         :key="product.id"
         class="flex cursor-pointer items-center gap-3 rounded-xl border border-black/10 p-2 hover:bg-cream"
       >
-        <input
-          v-model="selectedIds"
-          type="checkbox"
-          :value="product.id"
+        <Checkbox
+          :model-value="selectedIds.includes(product.id)"
           :disabled="assignmentBusy"
-          class="size-4 shrink-0 accent-black"
+          class="shrink-0"
+          @update:model-value="selectedIds = setIdSelected(selectedIds, product.id, Boolean($event))"
         />
         <MenuProductThumbnail
           :src="product.imageUrl"
@@ -442,9 +385,8 @@
         <span class="text-sm font-bold text-black/55" aria-live="polite">{{
           t("menus.selected", { count: selectedIds.length })
         }}</span>
-        <button
+        <Button variant="solid" size="lg"
           type="button"
-          class="btn-primary"
           :disabled="assignmentBusy || !selectedIds.length"
           @click="
             changeAssignments(
@@ -454,7 +396,7 @@
           "
         >
           {{ selectionAction }}
-        </button>
+        </Button>
       </div>
     </template>
   </ModalPanel>
@@ -471,36 +413,32 @@
       <p class="m-0 text-sm text-black/55">{{ t("menus.orderHelp") }}</p>
       <label class="flex items-center gap-2 text-sm font-semibold">
         {{ t("menus.orderLayout") }}
-        <select
-          v-model.number="orderColumns"
-          class="input !w-auto !py-2"
+        <Select
+          size="lg"
+          variant="outline"
+          v-model="orderColumns"
+          class="!w-auto"
           :disabled="saving"
-        >
-          <option :value="1">{{ t("menus.listView") }}</option>
-          <option v-for="count in [2, 3, 4, 5, 6]" :key="count" :value="count">
-            {{ t("menus.gridColumns", { count }) }}
-          </option>
-        </select>
+          :options="[
+            { label: t('menus.listView'), value: 1 },
+            ...([2, 3, 4, 5, 6]).map(count => ({ label: t('menus.gridColumns', { count }), value: count })),
+          ]"
+        />
       </label>
     </div>
-    <p v-if="actionError" class="text-sm text-red-700" role="alert">
-      {{ actionError }}
-    </p>
-    <p v-if="orderLoading" class="py-4 text-sm text-black/55" role="status">
-      {{ t("common.loading") }}
-    </p>
+    <Alert v-if="actionError" theme="red" :title="actionError" />
+    <LoadingText v-if="orderLoading" :text="t('common.loading')" role="status" class="py-4" />
     <p
       v-else-if="!orderProducts.length && !actionError"
       class="py-4 text-sm text-black/55"
     >
       {{ t("menus.noAssignedProducts") }}
     </p>
-    <draggable
+    <SortableProductList
       v-else
       v-model="orderProducts"
-      item-key="id"
-      handle=".menu-sort-handle"
-      :animation="150"
+      :label="t('menus.orderProducts')"
+      :row-class="orderColumns === 1 ? '!flex min-w-0 items-center rounded-5 border border-outline-gray-1 bg-surface-base gap-2 p-2 sm:gap-3' : '!flex min-w-0 items-center rounded-5 border border-outline-gray-1 bg-surface-base gap-1.5 p-1.5'"
       :disabled="saving"
       class="grid grid-cols-[repeat(var(--phone-columns),minmax(0,1fr))] gap-2 sm:grid-cols-[repeat(var(--tablet-columns),minmax(0,1fr))] lg:grid-cols-[repeat(var(--order-columns),minmax(0,1fr))]"
       :style="{
@@ -509,74 +447,71 @@
         '--order-columns': orderColumns,
       }"
     >
-      <template #item="{ element: product, index }">
-        <div
-          class="flex min-w-0 items-center rounded-xl border border-black/10 bg-white"
-          :class="orderColumns === 1 ? 'gap-2 p-2 sm:gap-3' : 'gap-1.5 p-1.5'"
+      <template #item="{ product, index }">
+        <span
+          data-sort-handle
+          class="grid shrink-0 cursor-grab touch-none place-items-center rounded-lg bg-cream"
+          :class="orderColumns === 1 ? 'size-8' : 'size-6'"
+          aria-hidden="true"
         >
-          <span
-            class="menu-sort-handle grid shrink-0 cursor-grab touch-none place-items-center rounded-lg bg-cream"
-            :class="orderColumns === 1 ? 'size-8' : 'size-6'"
-            aria-hidden="true"
+          <GripVertical :size="16" />
+        </span>
+        <MenuProductThumbnail
+          :src="product.imageUrl"
+          class="rounded-lg"
+          :class="orderColumns === 1 ? 'size-10' : 'size-7 sm:size-8'"
+        />
+        <strong
+          class="min-w-0 flex-1 truncate text-sm"
+          :title="productName(product)"
+        >
+          {{ productName(product) }}
+        </strong>
+        <div
+          class="flex shrink-0"
+          :class="orderColumns === 1 ? 'gap-2' : 'flex-col'"
+        >
+          <Button variant="ghost"
+            type="button"
+            class="grid place-items-center rounded-lg hover:bg-cream disabled:opacity-30"
+            :class="orderColumns === 1 ? 'size-8' : 'size-5'"
+            :disabled="saving || index === 0"
+            :aria-label="t('menus.moveUp', { name: productName(product) })"
+            @click="move(index, -1)"
           >
-            <GripVertical :size="16" />
-          </span>
-          <MenuProductThumbnail
-            :src="product.imageUrl"
-            class="rounded-lg"
-            :class="orderColumns === 1 ? 'size-10' : 'size-7 sm:size-8'"
-          />
-          <strong
-            class="min-w-0 flex-1 truncate text-sm"
-            :title="productName(product)"
+            <template #icon><ArrowUp :size="16" aria-hidden="true" /></template>
+          </Button>
+          <Button variant="ghost"
+            type="button"
+            class="grid place-items-center rounded-lg hover:bg-cream disabled:opacity-30"
+            :class="orderColumns === 1 ? 'size-8' : 'size-5'"
+            :disabled="saving || index === orderProducts.length - 1"
+            :aria-label="t('menus.moveDown', { name: productName(product) })"
+            @click="move(index, 1)"
           >
-            {{ productName(product) }}
-          </strong>
-          <div
-            class="flex shrink-0"
-            :class="orderColumns === 1 ? 'gap-2' : 'flex-col'"
-          >
-            <button
-              type="button"
-              class="grid place-items-center rounded-lg hover:bg-cream disabled:opacity-30"
-              :class="orderColumns === 1 ? 'size-8' : 'size-5'"
-              :disabled="saving || index === 0"
-              :aria-label="t('menus.moveUp', { name: productName(product) })"
-              @click="move(index, -1)"
-            >
-              <ArrowUp :size="16" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              class="grid place-items-center rounded-lg hover:bg-cream disabled:opacity-30"
-              :class="orderColumns === 1 ? 'size-8' : 'size-5'"
-              :disabled="saving || index === orderProducts.length - 1"
-              :aria-label="t('menus.moveDown', { name: productName(product) })"
-              @click="move(index, 1)"
-            >
-              <ArrowDown :size="16" aria-hidden="true" />
-            </button>
-          </div>
+            <template #icon><ArrowDown :size="16" aria-hidden="true" /></template>
+          </Button>
         </div>
       </template>
-    </draggable>
+    </SortableProductList>
     <template #footer>
-      <button
+      <Button variant="solid" size="lg"
         type="button"
-        class="btn-primary w-full"
+        class="w-full"
         :disabled="saving || orderLoading || !orderProducts.length"
         @click="saveOrder"
       >
         {{ t("menus.saveOrder") }}
-      </button>
+      </Button>
     </template>
   </ModalPanel>
 </template>
 
 <script setup lang="ts">
+import { setIdSelected } from "../utils/selection";
+import { Alert, LoadingText, Button, Checkbox, TabButtons, Select, TextInput } from "frappe-ui";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import draggable from "vuedraggable";
 import {
   ArrowDown,
   ArrowUp,
@@ -611,6 +546,7 @@ import MenuProductPager from "./MenuProductPager.vue";
 import MenuProductThumbnail from "./MenuProductThumbnail.vue";
 import ModalPanel from "./ModalPanel.vue";
 import ProductMenuPicker from "./ProductMenuPicker.vue";
+import SortableProductList from "./SortableProductList.vue";
 
 const props = defineProps<{
   menu: MenuNode;

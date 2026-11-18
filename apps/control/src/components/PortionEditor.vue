@@ -1,9 +1,9 @@
 <template>
   <div class="space-y-3">
     <div class="flex justify-end">
-      <button type="button" class="btn-soft shrink-0" @click="openNewPortion">
-        <Plus :size="15" />បន្ថែមតម្លៃតាមទំហំ
-      </button>
+      <Button variant="subtle" size="lg" type="button" class="shrink-0" @click="openNewPortion">
+        <template #prefix><Plus :size="15" /></template>បន្ថែមតម្លៃតាមទំហំ
+      </Button>
     </div>
 
     <div
@@ -11,32 +11,33 @@
       :key="portion.id"
       class="flex items-center gap-2 rounded-2xl border border-black/[.08] bg-white p-3"
     >
-      <button
+      <Button
+        variant="ghost" size="lg"
         type="button"
-        class="min-w-0 flex-1 text-left"
+        class="admin-action-card !shrink min-w-0 flex-1 !p-1 text-start"
         @click="openEditPortion(index)"
       >
         <strong class="block truncate text-sm">{{ portion.labelKm }}</strong>
         <span class="mt-1 block text-xs font-bold text-black/40">
           {{ money(portion.priceCents) }} · {{ branchName(portion.branchId) }}
         </span>
-      </button>
-      <button
+      </Button>
+      <Button variant="subtle" size="lg"
         type="button"
-        class="btn-soft shrink-0 !px-3 !py-2"
+        class="shrink-0 !px-3 !py-2"
         aria-label="កែសម្រួលទំហំ"
         @click="openEditPortion(index)"
       >
-        <Pencil :size="14" />កែសម្រួល
-      </button>
-      <button
+        <template #prefix><Pencil :size="14" /></template>កែសម្រួល
+      </Button>
+      <Button variant="ghost"
         type="button"
         class="grid size-9 shrink-0 place-items-center rounded-full text-red-600 hover:bg-red-50"
         aria-label="លុបទំហំ"
         @click="model.splice(index, 1)"
       >
-        <Trash2 :size="15" />
-      </button>
+        <template #icon><Trash2 :size="15" /></template>
+      </Button>
     </div>
 
     <div
@@ -60,77 +61,76 @@
         <div class="grid gap-3 sm:grid-cols-2">
           <label>
             <span class="label">ឈ្មោះ · ខ្មែរ</span>
-            <input
+            <TextInput size="lg" variant="outline"
               v-model.trim="draft.labelKm"
-              class="input"
               lang="km"
               placeholder="ឧ. ចានតូច"
             />
           </label>
           <label v-if="enableEn">
             <span class="label">ឈ្មោះ · អង់គ្លេស (មិនចាំបាច់)</span>
-            <input
+            <TextInput size="lg" variant="outline"
               v-model.trim="draft.labelEn"
-              class="input"
               placeholder="ឧ. ចានតូច"
             />
           </label>
           <label v-if="enableZh">
             <span class="label">ឈ្មោះ · ចិន (មិនចាំបាច់)</span>
-            <input
+            <TextInput size="lg" variant="outline"
               v-model.trim="draft.labelZh"
-              class="input"
               lang="zh"
               placeholder="例如：小份"
             />
           </label>
           <label>
             <span class="label">តម្លៃ</span>
-            <input
+            <TextInput size="lg" variant="outline"
               v-model.number="draft.priceCents"
               type="number"
               min="0"
               :step="currency === 'USD' ? '0.01' : '1'"
-              class="input"
             />
           </label>
           <label>
             <span class="label">{{ t("menus.branch") }}</span>
-            <select v-model="draft.branchId" class="input" :disabled="loadingBranches">
-              <option :value="null">{{ t("menus.allBranches") }}</option>
-              <option v-for="branch in branchOptions" :key="branch.id" :value="branch.id">
-                {{ branch.name }}
-              </option>
-              <option v-if="draft.branchId && !branchOptions.some((branch) => branch.id === draft.branchId)" :value="draft.branchId">
-                {{ draft.branchId }}
-              </option>
-            </select>
+            <Select
+              size="lg"
+              variant="outline"
+              :model-value="draft.branchId ?? ''"
+              @update:model-value="draft.branchId = $event ? String($event) : null"
+              :disabled="loadingBranches"
+              :options="[
+                { label: t('menus.allBranches'), value: '' },
+                ...branchOptions.map(branch => ({ label: branch.name, value: branch.id })),
+                ...(draft.branchId && !branchOptions.some((branch) => branch.id === draft.branchId) ? [{ label: draft.branchId, value: draft.branchId }] : []),
+              ]"
+            />
           </label>
         </div>
 
-        <div v-if="branchLoadFailed" class="flex flex-wrap items-center gap-2 text-sm" role="alert">
-          <span>{{ t("portions.branchLoadFailed") }}</span>
-          <button type="button" class="btn-soft" @click="loadBranches">{{ t("common.tryAgain") }}</button>
-        </div>
-        <p v-if="formError" class="m-0 text-xs font-bold text-red-600">
-          {{ formError }}
-        </p>
+        <Alert v-if="branchLoadFailed" theme="red" :title="t('portions.branchLoadFailed')" class="m-4">
+          <template #actions>
+            <Button variant="subtle" size="lg" type="button" @click="loadBranches">{{ t("common.tryAgain") }}</Button>
+          </template>
+        </Alert>
+        <Alert v-if="formError" theme="red" :title="formError" />
       </form>
 
       <template #footer>
-        <button
+        <Button variant="solid" size="lg"
           type="submit"
           form="portion-editor-form"
-          class="btn-primary w-full"
+          class="w-full"
         >
           {{ editingIndex >= 0 ? "រក្សាទុកទំហំ" : "បន្ថែមទំហំ" }}
-        </button>
+        </Button>
       </template>
     </ModalPanel>
   </div>
 </template>
 
 <script setup lang="ts">
+import { Alert, Button, Select, TextInput } from "frappe-ui";
 import { computed, onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Pencil, Plus, Trash2 } from "lucide-vue-next";

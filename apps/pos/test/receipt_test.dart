@@ -1,8 +1,10 @@
+import 'package:emenu_pos/shared/app_theme.dart';
+
 import 'dart:convert';
 
-import 'package:emenu_pos/core/receipt_document.dart';
+import 'package:emenu_pos/features/sales/sale/receipt_document.dart';
 import 'package:emenu_pos/core/register_database.dart';
-import 'package:emenu_pos/ui/receipt_dialog.dart';
+import 'package:emenu_pos/features/sales/sale/widgets/receipt_dialog.dart';
 import 'package:emenu_pos/ui/translations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -34,6 +36,7 @@ void main() {
     (tester) async {
       await tester.pumpWidget(
         GetMaterialApp(
+          theme: AppTheme.light,
           locale: const Locale('km'),
           translations: PosTranslations(),
           home: Scaffold(

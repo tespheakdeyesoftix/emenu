@@ -9,6 +9,7 @@ export const controlPages = {
   sellingOverview: { path: "/selling", label: "Selling dashboard" },
   posProfiles: { path: "/selling/pos-profiles", label: "POS profile settings" },
   posPaymentTypes: { path: "/selling/payment-types", label: "Payment types" },
+  posCustomers: { path: "/selling/customers", label: "Customers" },
   salesList: { path: "/selling/sales", label: "Sales list" },
   orders: { path: "/orders", label: "Orders" },
   bookings: { path: "/bookings", label: "Bookings" },
@@ -24,7 +25,7 @@ export const controlPageIds = Object.keys(controlPages) as ControlPage[];
 
 // These pages use the plan's POS setting instead of its menu feature list.
 export const sellingControlPages: readonly ControlPage[] = [
-  "sellingOverview", "posProfiles", "posPaymentTypes", "salesList",
+  "sellingOverview", "posProfiles", "posPaymentTypes", "posCustomers", "salesList",
 ];
 
 export const catalogReaderPages: ControlPage[] = [

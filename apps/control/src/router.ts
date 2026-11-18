@@ -24,6 +24,7 @@ const pages = {
   sellingOverview: () => import("./views/SellingOverviewView.vue"),
   posProfiles: () => import("./views/PosProfilesView.vue"),
   posPaymentTypes: () => import("./views/PosPaymentTypesView.vue"),
+  posCustomers: () => import("./views/PosCustomersView.vue"),
   salesList: () => import("./views/SalesListView.vue"),
   orders: () => import("./views/OrdersView.vue"),
   bookings: () => import("./views/BookingsView.vue"),

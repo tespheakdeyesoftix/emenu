@@ -3,11 +3,12 @@ import 'dart:io';
 
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
+import 'package:emenu_pos/core/api_endpoint.dart';
 import 'package:emenu_pos/core/pos_api.dart';
 import 'package:emenu_pos/core/pricing.dart';
 import 'package:emenu_pos/core/register_access.dart';
 import 'package:emenu_pos/core/register_database.dart';
-import 'package:emenu_pos/core/sale_sync.dart';
+import 'package:emenu_pos/features/sales/sale/sale_sync.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -128,6 +129,60 @@ void main() {
   );
 
   test(
+    'compound tax honors each discount switch and extracts inclusive tax',
+    () {
+      final rule = {
+        'tax_mode': 'exclusive',
+        'tax_1_rate': 10,
+        'calculate_tax_1_after_discount': true,
+        'tax_2_rate': 5,
+        'calculate_tax_2_after_adding_tax_1': true,
+        'calculate_tax_2_after_discount': false,
+        'tax_3_rate': 2,
+        'calculate_tax_3_after_adding_tax_1': true,
+        'calculate_tax_3_after_adding_tax_2': true,
+        'calculate_tax_3_after_discount': true,
+      };
+      final discounted = lineTotals(
+        unitPrice: 251,
+        quantity: 4,
+        taxMode: 'disabled',
+        taxRateBps: 0,
+        taxRule: rule,
+        discount: 104,
+      );
+      expect(
+        (
+          discounted.subtotal,
+          discounted.discount,
+          discounted.tax1,
+          discounted.tax2,
+          discounted.tax3,
+          discounted.total,
+        ),
+        (1004, 104, 90, 55, 21, 1066),
+      );
+      final inclusive = lineTotals(
+        unitPrice: 251,
+        quantity: 4,
+        taxMode: 'disabled',
+        taxRateBps: 0,
+        taxRule: {...rule, 'tax_mode': 'inclusive'},
+      );
+      expect(
+        (
+          inclusive.subtotal,
+          inclusive.tax1,
+          inclusive.tax2,
+          inclusive.tax3,
+          inclusive.total,
+        ),
+        (852, 85, 47, 20, 1004),
+      );
+    },
+  );
+
+  test(
     'API tax and mixed currency math use integer amounts and per-line rounding',
     () {
       final inclusive = lineTotals(
@@ -152,6 +207,8 @@ void main() {
       );
       expect(secondaryToPrimary(20000, 'USD', '4000'), 500);
       expect(secondaryToPrimary(150, 'KHR', '2.5e-4'), 6000);
+      expect(primaryToSecondary(500, 'USD', '4000'), 20000);
+      expect(primaryToSecondary(6000, 'KHR', '2.5e-4'), 150);
       final payments = [
         {'payment_type_id': 'cash', 'currency': 'USD', 'amount_minor': 600},
         {
@@ -214,6 +271,8 @@ void main() {
       await initial.customStatement(
         'ALTER TABLE register_operators DROP COLUMN access_revoked',
       );
+      await initial.customStatement('DROP TABLE register_ui_preferences');
+      await initial.customStatement('DROP TABLE IF EXISTS discarded_bills');
       await initial.customStatement('PRAGMA user_version = 1');
       await initial.close();
 
@@ -555,7 +614,7 @@ void main() {
         restarted.withSession(
           api,
           'owner',
-          (token) => api.request('/context', token: token),
+          (token) => api.request(ApiEndpoint.context, token: token),
         ),
         throwsA(
           isA<PosApiError>().having(
@@ -578,6 +637,67 @@ void main() {
         (await database.storeStaff('staff_secondary'))?.profileId,
         'retail',
       );
+    },
+  );
+
+  test(
+    'skipping PIN keeps password sessions usable and supports setting it later',
+    () async {
+      FlutterSecureStorage.setMockInitialValues({});
+      final database = RegisterDatabase(NativeDatabase.memory());
+      final access = RegisterAccess(database);
+      final api = PosApi('https://pos.example.test');
+      addTearDown(database.close);
+      addTearDown(api.close);
+      final snapshot = {'context': context()};
+      Future<void> signIn(String token) => access.enroll(
+        api: api,
+        slug: 'shop',
+        email: 'owner@example.test',
+        session: {
+          'token': token,
+          'expires_at': DateTime.now()
+              .add(const Duration(hours: 1))
+              .toIso8601String(),
+        },
+        snapshot: snapshot,
+      );
+
+      await signIn('password-token');
+      expect(await access.hasSignedIn('owner'), isTrue);
+      expect(await access.hasPin('owner'), isFalse);
+      expect(
+        await access.passwordSessionForOperator('owner'),
+        'password-token',
+      );
+      await expectLater(
+        access.unlock('owner', '123456'),
+        throwsA(
+          isA<PosApiError>().having(
+            (error) => error.code,
+            'code',
+            'SIGN_IN_REQUIRED',
+          ),
+        ),
+      );
+
+      await access.configurePin('owner', '123456');
+      expect((await access.unlock('owner', '123456')).id, 'owner');
+      await signIn('renewed-token');
+      expect((await access.unlock('owner', '123456')).id, 'owner');
+      await access.configurePin('owner', '654321');
+      await expectLater(
+        access.unlock('owner', '123456'),
+        throwsA(
+          isA<PosApiError>().having(
+            (error) => error.code,
+            'code',
+            'INVALID_PIN',
+          ),
+        ),
+      );
+      expect((await access.unlock('owner', '654321')).id, 'owner');
+      expect(await access.passwordSessionForOperator('owner'), 'renewed-token');
     },
   );
 }

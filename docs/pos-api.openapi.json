@@ -604,6 +604,12 @@
         ],
         "parameters": [
           {
+            "name": "menu_id",
+            "in": "query",
+            "description": "For menu-based profiles, return the selected menu or submenu and its descendants. The chosen menu must be inside the active profile catalog.",
+            "schema": { "$ref": "#/components/schemas/Id" }
+          },
+          {
             "$ref": "#/components/parameters/Page"
           },
           {
@@ -1031,7 +1037,8 @@
     "/api/integrations/pos/v1/cashier-shifts/{id}/reconciliation": {
       "get": {
         "tags": ["Working days and shifts"],
-        "summary": "Preview expected amounts or read final counts",
+        "summary": "Read payment rows and the reconciliation revision",
+        "description": "Open-shift expected amounts are returned to managers and owners. Completed shifts include the final reconciliation.",
         "security": [
           {
             "PosBearer": []
@@ -1056,6 +1063,86 @@
           "default": {
             "$ref": "#/components/responses/Error"
           }
+        }
+      },
+      "post": {
+        "tags": ["Working days and shifts"],
+        "summary": "Review declared counts without closing the shift",
+        "security": [{ "PosBearer": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Id" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CloseShift" } } }
+        },
+        "responses": {
+          "200": { "description": "Shift ID, activity revision, and count rows with declared_minor and variance_minor." },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/commands/{id}": {
+      "get": {
+        "tags": ["Working days and shifts"],
+        "summary": "Check whether an operation committed",
+        "security": [{ "PosBearer": [] }],
+        "parameters": [{
+          "name": "id", "in": "path", "required": true,
+          "schema": { "type": "string", "minLength": 8, "maxLength": 128 },
+          "description": "Original idempotency key for the signed-in operator and register."
+        }],
+        "responses": {
+          "200": { "description": "Saved HTTP status and operation result." },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/cashier-shifts/{id}/summary": {
+      "get": {
+        "tags": ["Working days and shifts"],
+        "summary": "Read shift sales, tenders, cash activity, and completed counts",
+        "security": [{ "PosBearer": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/Id" },
+          { "name": "scope", "in": "query", "schema": { "enum": ["branch"] },
+            "description": "Manager access to a completed shift within the current branch." }
+        ],
+        "responses": {
+          "200": { "description": "Shift with sales, payments, cash, movements, tenders, closing_counts, drawer_counts, and can_reopen." },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/working-days/{id}/summary": {
+      "get": {
+        "tags": ["Working days and shifts"],
+        "summary": "Read branch-day totals and closing blockers as a manager",
+        "security": [{ "PosBearer": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Id" }],
+        "responses": {
+          "200": { "description": "Working day with sales, shifts, open_bills, register_count, and discrepancies." },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/cashier-shifts/{id}/reopen": {
+      "post": {
+        "tags": ["Working days and shifts"],
+        "summary": "Reopen the latest eligible shift as a manager",
+        "security": [{ "PosBearer": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/Id" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object", "required": ["reason"],
+            "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 500 } }
+          } } }
+        },
+        "responses": {
+          "200": { "description": "Reopened shift with a new activity revision." },
+          "default": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -1113,6 +1200,12 @@
           }
         ],
         "parameters": [
+          {
+            "name": "history",
+            "in": "query",
+            "description": "Active operating-period history plus open bills. Use without other sales filters.",
+            "schema": {"type": "string", "enum": ["active"]}
+          },
           {
             "$ref": "#/components/parameters/Page"
           },
@@ -2252,6 +2345,7 @@
               "close_day",
               "open_shift",
               "close_shift",
+              "reopen_shift",
               "cash_movement",
               "checkout",
               "reversal"
@@ -2398,6 +2492,7 @@
           "exchange_rate": { "type": "string" },
           "tax_mode": { "enum": ["disabled", "inclusive", "exclusive"] },
           "tax_rate_bps": { "type": "integer", "minimum": 0, "maximum": 10000 },
+          "tax_rule": { "anyOf": [{ "$ref": "#/components/schemas/PosTaxRule" }, { "type": "null" }] },
           "table_mode": { "enum": ["disabled", "optional", "required"] },
           "table_id": { "type": ["string", "null"] },
           "table_code": { "type": ["string", "null"] },
@@ -2432,6 +2527,14 @@
                 },
                 "quantity": { "type": "integer", "minimum": 1, "maximum": 999 },
                 "unit_price_minor": { "$ref": "#/components/schemas/Amount" },
+                "base_price_override_minor": { "anyOf": [{ "$ref": "#/components/schemas/Amount" }, { "type": "null" }] },
+                "is_free": { "type": "boolean" },
+                "discount_minor": { "$ref": "#/components/schemas/Amount" },
+                "tax_1_amount": { "$ref": "#/components/schemas/Amount" },
+                "tax_2_amount": { "$ref": "#/components/schemas/Amount" },
+                "tax_3_amount": { "$ref": "#/components/schemas/Amount" },
+                "total_tax_amount": { "$ref": "#/components/schemas/Amount" },
+                "total_amount": { "$ref": "#/components/schemas/Amount" },
                 "subtotal_minor": { "$ref": "#/components/schemas/Amount" },
                 "tax_minor": { "$ref": "#/components/schemas/Amount" },
                 "total_minor": { "$ref": "#/components/schemas/Amount" },
@@ -2551,7 +2654,7 @@
       },
       "TenderConfig": {
         "type": "object",
-        "required": ["id", "currencies"],
+        "required": ["id", "currency"],
         "properties": {
           "id": {
             "$ref": "#/components/schemas/Id"
@@ -2560,14 +2663,8 @@
             "type": "boolean",
             "description": "Allows opening balances and cash movements for this payment type. Omitted values default to true for cash methods in a shift."
           },
-          "currencies": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Currency"
-            },
-            "maxItems": 2,
-            "minItems": 1,
-            "uniqueItems": true
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
           }
         }
       },
@@ -2583,7 +2680,7 @@
             "$ref": "#/components/schemas/PaymentKind"
           },
           "currency": {
-            "description": "Fixed payment currency. Older clients can omit this to use the POS profile's currencies.",
+            "description": "Fixed payment currency. If omitted, each profile sets one currency for this payment type.",
             "$ref": "#/components/schemas/Currency"
           }
         }
@@ -2611,7 +2708,7 @@
       },
       "AcceptedPaymentType": {
         "type": "object",
-        "required": ["id", "name", "kind", "currencies"],
+        "required": ["id", "name", "kind", "currency"],
         "properties": {
           "id": {
             "$ref": "#/components/schemas/Id"
@@ -2626,11 +2723,8 @@
             "type": "boolean",
             "description": "Whether this payment type accepts opening balances and cash movements in a shift."
           },
-          "currencies": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Currency"
-            }
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
           }
         }
       },
@@ -2708,6 +2802,314 @@
           { "type": "null" }
         ]
       },
+      "PosTaxRuleInput": {
+        "type": "object",
+        "required": [
+          "tax_name",
+          "tax_1_name",
+          "tax_1_rate",
+          "calculate_tax_1_after_discount",
+          "tax_2_name",
+          "tax_2_rate",
+          "calculate_tax_2_after_adding_tax_1",
+          "calculate_tax_2_after_discount",
+          "tax_3_name",
+          "tax_3_rate",
+          "calculate_tax_3_after_adding_tax_1",
+          "calculate_tax_3_after_adding_tax_2",
+          "calculate_tax_3_after_discount"
+        ],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "tax_mode": { "enum": ["disabled", "inclusive", "exclusive"], "default": "disabled" },
+          "tax_name": {"type": "string", "minLength": 1, "maxLength": 120},
+          "tax_1_name": {"type": "string", "maxLength": 120},
+          "tax_1_rate": {"type": "number", "minimum": 0, "maximum": 100},
+          "calculate_tax_1_after_discount": {"type": "boolean"},
+          "tax_2_name": {"type": "string", "maxLength": 120},
+          "tax_2_rate": {"type": "number", "minimum": 0, "maximum": 100},
+          "calculate_tax_2_after_adding_tax_1": {"type": "boolean"},
+          "calculate_tax_2_after_discount": {"type": "boolean"},
+          "tax_3_name": {"type": "string", "maxLength": 120},
+          "tax_3_rate": {"type": "number", "minimum": 0, "maximum": 100},
+          "calculate_tax_3_after_adding_tax_1": {"type": "boolean"},
+          "calculate_tax_3_after_adding_tax_2": {"type": "boolean"},
+          "calculate_tax_3_after_discount": {"type": "boolean"}
+        }
+      },
+      "PosTaxRule": {
+        "allOf": [
+          { "$ref": "#/components/schemas/PosTaxRuleInput" },
+          { "required": ["id", "tax_mode"] }
+        ]
+      },
+      "PosReceiptTemplate": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "type",
+          "language",
+          "paper_width_mm",
+          "print_copies",
+          "text_size",
+          "heading_alignment",
+          "fields"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "type": {
+            "enum": [
+              "receipt",
+              "kitchen_receipt",
+              "qr_label"
+            ]
+          },
+          "language": {
+            "enum": [
+              "en",
+              "km",
+              "bilingual"
+            ]
+          },
+          "paper_width_mm": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 216
+          },
+          "print_copies": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "footer": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "text_size": {
+            "enum": [
+              "small",
+              "normal",
+              "large"
+            ]
+          },
+          "heading_alignment": {
+            "enum": [
+              "left",
+              "center",
+              "right"
+            ]
+          },
+          "fields": {
+            "type": "array",
+            "uniqueItems": true
+          },
+          "qr": {
+            "$ref": "#/components/schemas/PosQrLabelSettings"
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "const": "receipt"
+              },
+              "fields": {
+                "items": {
+                  "enum": [
+                    "logo",
+                    "business_details",
+                    "branch",
+                    "order_number",
+                    "date_time",
+                    "cashier",
+                    "customer",
+                    "table",
+                    "service_type",
+                    "item_codes",
+                    "modifiers",
+                    "item_notes",
+                    "unit_prices",
+                    "discount",
+                    "tax",
+                    "payments",
+                    "change",
+                    "order_notes",
+                    "signature"
+                  ]
+                }
+              }
+            },
+            "not": {
+              "required": [
+                "qr"
+              ]
+            }
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "kitchen_receipt"
+              },
+              "fields": {
+                "items": {
+                  "enum": [
+                    "logo",
+                    "branch",
+                    "order_number",
+                    "date_time",
+                    "cashier",
+                    "table",
+                    "service_type",
+                    "station",
+                    "item_codes",
+                    "modifiers",
+                    "item_notes",
+                    "order_notes",
+                    "highlight_notes"
+                  ]
+                }
+              }
+            },
+            "not": {
+              "required": [
+                "qr"
+              ]
+            }
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "qr_label"
+              },
+              "fields": {
+                "items": {
+                  "enum": [
+                    "logo",
+                    "branch",
+                    "table",
+                    "show_link"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "qr"
+            ]
+          }
+        ]
+      },
+      "PosQrLabelSettings": {
+        "type": "object",
+        "required": [
+          "label_height_mm",
+          "size_mm",
+          "target"
+        ],
+        "properties": {
+          "label_height_mm": {
+            "type": "integer",
+            "minimum": 20,
+            "maximum": 150
+          },
+          "size_mm": {
+            "type": "integer",
+            "minimum": 15,
+            "maximum": 150,
+            "description": "Must fit the label width and height."
+          },
+          "target": {
+            "enum": [
+              "table_menu",
+              "business_menu",
+              "custom_url"
+            ]
+          },
+          "custom_url": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "caption": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        "if": {
+          "properties": {
+            "target": {
+              "const": "custom_url"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "custom_url"
+          ],
+          "properties": {
+            "custom_url": {
+              "format": "uri",
+              "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://"
+            }
+          }
+        }
+      },
+      "PosReceiptDefaults": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kitchen_receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qr_label": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "TableStatusColors": {
+        "type": "object",
+        "properties": {
+          "vacant": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+          "occupied": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+          "bill_requested": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+          "hold": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+          "booked": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+        }
+      },
       "ProfileConfigInput": {
         "type": "object",
         "required": ["payment_types", "default_payment_type_id"],
@@ -2722,6 +3124,8 @@
             "type": "string",
             "enum": ["disabled", "optional", "required"]
           },
+          "prompt_guest_cover": { "type": "boolean", "default": false },
+          "table_status_colors": { "$ref": "#/components/schemas/TableStatusColors" },
           "table_group_ids": { "$ref": "#/components/schemas/ProfileTableGroupIds" },
           "catalog_mode": {
             "type": "string",
@@ -2742,6 +3146,10 @@
                 "type": "null"
               }
             ]
+          },
+          "default_menu_id": {
+            "anyOf": [{ "$ref": "#/components/schemas/Id" }, { "type": "null" }],
+            "description": "Selected top-level menu ID in menu mode, or null."
           },
           "payment_types": {
             "type": "array",
@@ -2772,6 +3180,19 @@
             "minimum": 1,
             "maximum": 10
           },
+          "receipt_templates": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/PosReceiptTemplate" }
+          },
+          "default_receipt_templates": { "$ref": "#/components/schemas/PosReceiptDefaults" },
+          "tax_rules": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/PosTaxRuleInput" }
+          },
+          "default_tax_rule_id": {
+            "anyOf": [{ "$ref": "#/components/schemas/Id" }, { "type": "null" }],
+            "description": "ID of a tax rule on this profile, or null."
+          },
           "tax_mode": {
             "type": "string",
             "enum": ["disabled", "inclusive", "exclusive"]
@@ -2783,7 +3204,7 @@
           }
         }
       },
-      "ProfileConfig": {
+      "ProfileConfigSettings": {
         "type": "object",
         "required": [
           "working_day_enabled",
@@ -2791,15 +3212,26 @@
           "table_mode",
           "catalog_mode",
           "selected_ids",
-          "payment_types",
+          "default_menu_id",
           "default_payment_type_id",
           "default_customer_id",
           "receipt_template",
-          "print_copies",
-          "tax_mode",
-          "tax_rate_bps"
+          "receipt_templates",
+          "default_receipt_templates",
+          "tax_rules",
+          "default_tax_rule_id",
+          "default_tax_rule"
         ],
         "properties": {
+          "legacy_tax": {
+            "type": "object",
+            "description": "Legacy single tax rate for a register profile without a selected rule.",
+            "required": ["tax_mode", "tax_rate_bps"],
+            "properties": {
+              "tax_mode": { "enum": ["inclusive", "exclusive"] },
+              "tax_rate_bps": { "type": "integer", "minimum": 1, "maximum": 10000 }
+            }
+          },
           "working_day_enabled": {
             "type": "boolean"
           },
@@ -2810,6 +3242,8 @@
             "type": "string",
             "enum": ["disabled", "optional", "required"]
           },
+          "prompt_guest_cover": { "type": "boolean", "default": false },
+          "table_status_colors": { "$ref": "#/components/schemas/TableStatusColors" },
           "table_group_ids": { "$ref": "#/components/schemas/ProfileTableGroupIds" },
           "catalog_mode": {
             "type": "string",
@@ -2831,13 +3265,9 @@
               }
             ]
           },
-          "payment_types": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TenderConfig"
-            },
-            "maxItems": 20,
-            "minItems": 1
+          "default_menu_id": {
+            "anyOf": [{ "$ref": "#/components/schemas/Id" }, { "type": "null" }],
+            "description": "Selected top-level menu ID in menu mode, or null."
           },
           "default_payment_type_id": {
             "$ref": "#/components/schemas/Id"
@@ -2862,23 +3292,69 @@
               }
             }
           },
-          "print_copies": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 10
+          "receipt_templates": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/PosReceiptTemplate" }
           },
-          "tax_mode": {
-            "type": "string",
-            "enum": ["disabled", "inclusive", "exclusive"]
+          "default_receipt_templates": {
+            "$ref": "#/components/schemas/PosReceiptDefaults",
+            "required": ["receipt", "kitchen_receipt", "qr_label"]
           },
-          "tax_rate_bps": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 10000
+          "tax_rules": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/PosTaxRule" }
+          },
+          "default_tax_rule_id": {
+            "anyOf": [{ "$ref": "#/components/schemas/Id" }, { "type": "null" }],
+            "description": "ID of a tax rule on this profile, or null."
+          },
+          "default_tax_rule": {
+            "anyOf": [{ "$ref": "#/components/schemas/PosTaxRule" }, { "type": "null" }]
           }
         }
       },
-      "Profile": {
+      "ProfileConfig": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ProfileConfigSettings" },
+          {
+            "required": ["payment_types"],
+            "properties": {
+              "payment_types": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/TenderConfig" },
+                "minItems": 1,
+                "maxItems": 20
+              }
+            }
+          }
+        ]
+      },
+      "ContextProfileConfig": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ProfileConfigSettings" },
+          {
+            "required": ["payment_types"],
+            "properties": {
+              "payment_types": {
+                "type": "array",
+                "description": "Effective settings for each payment type and currency pair.",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "payment_type", "currency", "allow_cash_float"],
+                  "properties": {
+                    "id": { "$ref": "#/components/schemas/Id" },
+                    "payment_type": { "type": "string", "description": "Configured payment type name." },
+                    "currency": { "$ref": "#/components/schemas/Currency" },
+                    "allow_cash_float": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ProfileDetails": {
         "type": "object",
         "required": [
           "id",
@@ -2886,8 +3362,7 @@
           "branch_name",
           "name",
           "is_active",
-          "version",
-          "config"
+          "version"
         ],
         "properties": {
           "id": {
@@ -2908,11 +3383,39 @@
           "version": {
             "type": "integer",
             "minimum": 1
-          },
-          "config": {
-            "$ref": "#/components/schemas/ProfileConfig"
           }
         }
+      },
+      "Profile": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ProfileDetails" },
+          {
+            "required": ["config"],
+            "properties": { "config": { "$ref": "#/components/schemas/ProfileConfig" } }
+          }
+        ]
+      },
+      "ContextProfile": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ProfileDetails" },
+          {
+            "required": ["config"],
+            "properties": { "config": { "$ref": "#/components/schemas/ContextProfileConfig" } }
+          }
+        ]
+      },
+      "AdminProfileConfig": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ProfileConfig" },
+          {
+            "required": ["print_copies", "tax_mode", "tax_rate_bps"],
+            "properties": {
+              "print_copies": { "type": "integer", "minimum": 1, "maximum": 10 },
+              "tax_mode": { "type": "string", "enum": ["disabled", "inclusive", "exclusive"] },
+              "tax_rate_bps": { "type": "integer", "minimum": 0, "maximum": 10000 }
+            }
+          }
+        ]
       },
       "AdminProfile": {
         "type": "object",
@@ -2947,12 +3450,12 @@
             "minimum": 1
           },
           "config": {
-            "$ref": "#/components/schemas/ProfileConfig"
+            "$ref": "#/components/schemas/AdminProfileConfig"
           },
           "pending_config": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/ProfileConfig"
+                "$ref": "#/components/schemas/AdminProfileConfig"
               },
               {
                 "type": "null"
@@ -3306,7 +3809,6 @@
           "payment_type_id",
           "currency",
           "payment_type_name",
-          "expected_minor",
           "payment_kind"
         ],
         "properties": {
@@ -3432,7 +3934,7 @@
         ],
         "properties": {
           "profile": {
-            "$ref": "#/components/schemas/Profile"
+            "$ref": "#/components/schemas/ContextProfile"
           },
           "operator": {
             "type": "object",
@@ -3518,6 +4020,12 @@
               },
               "staff_usernames": {
                 "type": "boolean"
+              },
+              "cart_line_edits": {
+                "type": "boolean"
+              },
+              "shift_management": {
+                "type": "boolean"
               }
             }
           },
@@ -3555,6 +4063,9 @@
           "status"
         ],
         "properties": {
+          "guest_cover": { "type": ["integer", "null"], "minimum": 1, "maximum": 1000 },
+          "booking_arrival_at": { "type": ["string", "null"], "format": "date-time" },
+          "booking_pax": { "type": ["integer", "null"], "minimum": 1 },
           "id": {
             "$ref": "#/components/schemas/Id"
           },
@@ -3582,7 +4093,7 @@
           },
           "status": {
             "type": "string",
-            "enum": ["available", "occupied"]
+            "enum": ["available", "occupied", "booked"]
           }
         }
       },
@@ -3963,6 +4474,9 @@
         "type": "object",
         "required": ["product_id", "quantity"],
         "properties": {
+          "discount_minor": { "$ref": "#/components/schemas/Amount", "description": "Discount from the pretax line subtotal." },
+          "base_price_override_minor": { "$ref": "#/components/schemas/Amount", "description": "Replacement base price before adding modifiers." },
+          "is_free": { "type": "boolean", "description": "Zeroes the line including its modifiers. Requires a zero discount." },
           "product_id": {
             "$ref": "#/components/schemas/Id"
           },
@@ -4017,6 +4531,7 @@
         "type": "object",
         "required": ["lines"],
         "properties": {
+          "guest_cover": { "type": ["integer", "null"], "minimum": 1, "maximum": 1000 },
           "expected_context": {
             "$ref": "#/components/schemas/ExpectedSaleContext"
           },
@@ -4064,6 +4579,7 @@
         "type": "object",
         "required": ["revision"],
         "properties": {
+          "guest_cover": { "type": ["integer", "null"], "minimum": 1, "maximum": 1000 },
           "expected_context": {
             "$ref": "#/components/schemas/ExpectedSaleContext"
           },
@@ -4199,6 +4715,12 @@
       "BillLine": {
         "type": "object",
         "required": [
+          "discount_minor",
+          "tax_1_amount",
+          "tax_2_amount",
+          "tax_3_amount",
+          "total_tax_amount",
+          "total_amount",
           "id",
           "line_number",
           "product_id",
@@ -4216,6 +4738,14 @@
           "modifiers"
         ],
         "properties": {
+          "discount_minor": { "type": "integer" },
+          "base_price_override_minor": { "anyOf": [{ "$ref": "#/components/schemas/Amount" }, { "type": "null" }] },
+          "is_free": { "type": "boolean" },
+          "tax_1_amount": { "type": "integer" },
+          "tax_2_amount": { "type": "integer" },
+          "tax_3_amount": { "type": "integer" },
+          "total_tax_amount": { "type": "integer" },
+          "total_amount": { "type": "integer" },
           "id": {
             "$ref": "#/components/schemas/Id"
           },
@@ -4361,6 +4891,12 @@
       "SaleSummary": {
         "type": "object",
         "required": [
+          "discount_minor",
+          "tax_1_amount",
+          "tax_2_amount",
+          "tax_3_amount",
+          "total_tax_amount",
+          "total_amount",
           "id",
           "branch_id",
           "profile_id",
@@ -4393,6 +4929,13 @@
           "settled_by"
         ],
         "properties": {
+          "item_quantity": {"type": "integer", "description": "Signed item quantity in active history mode."},
+          "discount_minor": { "type": "integer" },
+          "tax_1_amount": { "type": "integer" },
+          "tax_2_amount": { "type": "integer" },
+          "tax_3_amount": { "type": "integer" },
+          "total_tax_amount": { "type": "integer" },
+          "total_amount": { "type": "integer" },
           "id": {
             "$ref": "#/components/schemas/Id"
           },
@@ -4574,6 +5117,13 @@
       "Sale": {
         "type": "object",
         "required": [
+          "discount_minor",
+          "tax_1_amount",
+          "tax_2_amount",
+          "tax_3_amount",
+          "total_tax_amount",
+          "total_amount",
+          "tax_rule",
           "id",
           "branch_id",
           "profile_id",
@@ -4609,6 +5159,14 @@
           "payments"
         ],
         "properties": {
+          "guest_cover": { "type": ["integer", "null"], "minimum": 1, "maximum": 1000 },
+          "discount_minor": { "type": "integer" },
+          "tax_1_amount": { "type": "integer" },
+          "tax_2_amount": { "type": "integer" },
+          "tax_3_amount": { "type": "integer" },
+          "total_tax_amount": { "type": "integer" },
+          "total_amount": { "type": "integer" },
+          "tax_rule": { "anyOf": [{ "$ref": "#/components/schemas/PosTaxRule" }, { "type": "null" }] },
           "id": {
             "$ref": "#/components/schemas/Id"
           },
@@ -5028,6 +5586,17 @@
         "type": "object",
         "required": ["sales", "page", "page_size", "has_more"],
         "properties": {
+          "history_scope": {
+            "type": ["object", "null"],
+            "description": "Present in active history mode. Null when a required shift or day is closed.",
+            "required": ["profile_id", "kind", "id", "opened_at"],
+            "properties": {
+              "profile_id": {"type": "string"},
+              "kind": {"type": "string", "enum": ["shift", "working_day", "business_date"]},
+              "id": {"type": "string"},
+              "opened_at": {"type": "string", "format": "date-time"}
+            }
+          },
           "sales": {
             "type": "array",
             "items": {

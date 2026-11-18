@@ -10,52 +10,48 @@
     <p class="mb-5 mt-0 text-sm leading-6 text-black/50">
       {{ t("pages.catalog.categoryManager.description") }}
     </p>
-    <div
-      v-if="error"
-      role="alert"
-      class="mb-4 rounded-2xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700"
+    <Alert v-if="error" theme="red" :title="error" class="mb-4" />
+    <Tree
+      v-if="nodes.length"
+      class="[&_.frappe-tree-row]:h-auto [&_.frappe-tree-row]:min-h-16"
+      v-model:expanded="expanded"
+      :nodes="nodes"
+      :aria-label="t('pages.catalog.categoryManager.title')"
+      guides="lines"
     >
-      {{ error }}
-    </div>
-    <div v-if="topCategories.length" class="space-y-3">
-      <section
-        v-for="parent in topCategories"
-        :key="parent.id"
-        class="overflow-hidden rounded-2xl border border-black/[.08] bg-white"
+      <template
+        #item="{ node, level, hasChildren, expanded: isExpanded, toggle }"
       >
-        <CategoryManagerRow
-          :category="parent"
-          :count="counts[parent.id] || 0"
-          :enable-en="enableEn"
-          :enable-zh="enableZh"
-          :saving="savingCategoryId === parent.id"
-          @edit="$emit('edit', parent)"
-          @toggle="$emit('toggle', parent, $event)"
-        />
-        <div
-          v-if="childrenFor(parent.id).length"
-          class="border-t border-black/[.07] bg-cream/60 py-1 pl-5"
-        >
-          <div
-            v-for="child in childrenFor(parent.id)"
-            :key="child.id"
-            class="border-l border-black/10 pl-3"
-          >
-            <CategoryManagerRow
-              :category="child"
-              :count="counts[child.id] || 0"
-              :enable-en="enableEn"
-              :enable-zh="enableZh"
-              :saving="savingCategoryId === child.id"
-              :hidden-by-parent="!isActive(parent)"
-              compact
-              @edit="$emit('edit', child)"
-              @toggle="$emit('toggle', child, $event)"
-            />
-          </div>
+        <div class="flex w-full min-w-0 items-center gap-1" @click.stop>
+          <Button
+            v-if="hasChildren"
+            variant="ghost"
+            size="sm"
+            icon="lucide-chevron-right"
+            class="shrink-0 [&>span]:transition-transform"
+            :class="{ '[&>span]:rotate-90': isExpanded }"
+            :aria-label="
+              t('pages.catalog.subcategoriesLabel', { name: node.label })
+            "
+            :aria-expanded="isExpanded"
+            @click="toggle"
+          />
+          <span v-else class="w-7 shrink-0" aria-hidden="true" />
+          <CategoryManagerRow
+            class="min-w-0 flex-1"
+            :category="categoryFromNode(node)"
+            :count="counts[String(node.key)] || 0"
+            :enable-en="enableEn"
+            :enable-zh="enableZh"
+            :saving="savingCategoryId === node.key"
+            :hidden-by-parent="isHiddenByParent(categoryFromNode(node))"
+            :compact="level > 1"
+            @edit="$emit('edit', categoryFromNode(node))"
+            @toggle="$emit('toggle', categoryFromNode(node), $event)"
+          />
         </div>
-      </section>
-    </div>
+      </template>
+    </Tree>
     <div
       v-else
       class="grid min-h-60 place-items-center rounded-3xl border border-dashed border-black/15 bg-cream px-6 text-center"
@@ -75,35 +71,41 @@
     </div>
     <template #footer>
       <div class="grid grid-cols-2 gap-3">
-        <button
+        <Button
+          variant="subtle"
+          size="lg"
           type="button"
-          class="btn-soft min-h-11"
+          class="min-h-11"
           :disabled="Boolean(savingCategoryId) || !categories.length"
           @click="$emit('reorder')"
         >
-          <ArrowUpDown :size="17" />{{
-            t("pages.catalog.categoryManager.reorder")
-          }}
-        </button>
-        <button
+          <template #prefix><ArrowUpDown :size="17" /></template
+          >{{ t("pages.catalog.categoryManager.reorder") }}
+        </Button>
+        <Button
+          variant="solid"
+          size="lg"
           type="button"
-          class="btn-primary min-h-11"
+          class="min-h-11"
           :disabled="Boolean(savingCategoryId)"
           @click="$emit('add')"
         >
-          <Plus :size="17" />{{ t("pages.catalog.categoryManager.add") }}
-        </button>
+          <template #prefix><Plus :size="17" /></template
+          >{{ t("pages.catalog.categoryManager.add") }}
+        </Button>
       </div>
     </template>
   </ModalPanel>
 </template>
 <script setup lang="ts">
-import { computed } from "vue";
+import { Alert, Button, Tree, type TreeKey } from "frappe-ui";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { ArrowUpDown, FolderOpen, Plus } from "lucide-vue-next";
 import ModalPanel from "./ModalPanel.vue";
 import CategoryManagerRow from "./CategoryManagerRow.vue";
 import type { Category } from "../stores/admin";
+import { categoryFromNode, categoryTree } from "../utils/categoryTree";
 
 const props = withDefaults(
   defineProps<{
@@ -135,9 +137,37 @@ const sorted = (categories: Category[]) =>
       Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0) ||
       (a.nameKm || a.name).localeCompare(b.nameKm || b.name),
   );
-const topCategories = computed(() =>
-  sorted(props.categories.filter((item) => !item.parentId)),
+const nodes = computed(() => categoryTree(sorted(props.categories)));
+const categoriesById = computed(
+  () => new Map(props.categories.map((entry) => [entry.id, entry])),
 );
-const childrenFor = (parentId: string) =>
-  sorted(props.categories.filter((item) => item.parentId === parentId));
+const expanded = ref<TreeKey[]>([]);
+
+function isHiddenByParent(category: Category) {
+  const seen = new Set<string>();
+  let ancestorId = category.parentId;
+  while (ancestorId && !seen.has(ancestorId)) {
+    seen.add(ancestorId);
+    const ancestor = categoriesById.value.get(ancestorId);
+    if (!ancestor) return false;
+    if (!isActive(ancestor)) return true;
+    ancestorId = ancestor.parentId;
+  }
+  return false;
+}
+
+watch(
+  () => props.open,
+  (open) => {
+    if (open)
+      expanded.value = [
+        ...new Set(
+          props.categories.flatMap((item) =>
+            item.parentId ? [item.parentId] : [],
+          ),
+        ),
+      ];
+  },
+  { immediate: true },
+);
 </script>

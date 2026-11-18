@@ -3,6 +3,9 @@ import 'package:get/get.dart';
 
 import '../core/pos_api.dart';
 import '../features/register/register_controller.dart';
+import '../shared/forms/app_selection_field.dart';
+import '../shared/forms/app_text_field.dart';
+
 import 'shared_widgets.dart';
 
 class StaffUsernameView extends StatefulWidget {
@@ -74,7 +77,6 @@ class _StaffUsernameViewState extends State<StaffUsernameView> {
             spacing: 12,
             children: [
               RegisterNotice(register.message.value),
-              if (busy) const LinearProgressIndicator(),
               if (staff == null)
                 TextButton(
                   onPressed: busy ? null : _load,
@@ -83,7 +85,7 @@ class _StaffUsernameViewState extends State<StaffUsernameView> {
               else if (staff.isEmpty)
                 Text('no_profile_staff'.tr)
               else ...[
-                DropdownButtonFormField<String>(
+                AppSelectionField<String>(
                   key: ValueKey(selected),
                   initialValue: selected,
                   decoration: InputDecoration(labelText: 'staff'.tr),
@@ -100,7 +102,7 @@ class _StaffUsernameViewState extends State<StaffUsernameView> {
                   ],
                   onChanged: busy ? null : _select,
                 ),
-                TextField(
+                AppTextField(
                   controller: _username,
                   enabled: !busy,
                   autocorrect: false,

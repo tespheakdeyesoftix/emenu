@@ -1,84 +1,63 @@
 <template>
   <div class="space-y-4">
-    <header class="flex flex-wrap items-center justify-between gap-3">
-      <h1 class="display m-0 text-2xl">{{ t("nav.menus") }}</h1>
+    <PageHeader :title="t('nav.menus')">
       <div class="flex flex-wrap justify-end gap-2">
-        <button
-          class="btn-primary"
+        <Button variant="solid" size="lg"
           type="button"
           :disabled="loading || reordering || admin.isReadOnly"
           @click="open()"
         >
-          <Plus :size="16" aria-hidden="true" />{{ t("menus.new") }}
-        </button>
-        <button
+          <template #prefix><Plus :size="16" aria-hidden="true" /></template>{{ t("menus.new") }}
+        </Button>
+        <Button variant="subtle" size="lg"
           v-if="canEditProducts"
           type="button"
-          class="btn-soft"
           :disabled="loading || productEditor?.productOpen"
           aria-haspopup="dialog"
           @click="productEditor?.openNewProduct()"
         >
-          <Plus :size="16" aria-hidden="true" />{{ t("menus.addProduct") }}
-        </button>
+          <template #prefix><Plus :size="16" aria-hidden="true" /></template>{{ t("menus.addProduct") }}
+        </Button>
       </div>
-    </header>
-    <p v-if="error && !editing" class="text-sm text-red-700" role="alert">
-      {{ error }}
-    </p>
+    </PageHeader>
+    <Alert v-if="error && !editing" theme="red" :title="error" />
     <div class="grid items-start gap-5 xl:grid-cols-[300px_minmax(0,1fr)]">
       <aside class="card min-w-0 p-3" :aria-busy="loading || reordering">
         <div class="flex items-center justify-between gap-2 px-2 pb-3 pt-1">
           <h2 class="display m-0 text-lg">{{ t("nav.menus") }}</h2>
-          <span
-            class="rounded-full bg-cream px-2 py-0.5 text-xs font-bold text-black/55"
-            >{{ rows.length }}</span
-          >
+          <Badge>{{ rows.length }}</Badge>
         </div>
-        <details
+        <DisclosureSection
           v-if="selectedMenu"
-          open
-          class="group mb-3 border-b border-black/5 pb-2"
+          :title="t('menus.productFilters')"
+          icon="lucide-list-filter"
+          initially-open
+          class="mb-3 border-b border-outline-gray-1"
         >
-          <summary class="flex cursor-pointer list-none items-center gap-2 rounded-xl px-2 py-2 text-sm font-bold hover:bg-cream [&::-webkit-details-marker]:hidden">
-            <ListFilter :size="16" aria-hidden="true" />
+          <template #label>
             {{ t("menus.productFilters") }}
-            <span v-if="activeQuickFilterLabel" class="min-w-0 truncate text-xs font-normal text-black/60 group-open:hidden">
+            <span v-if="activeQuickFilterLabel" class="text-xs font-normal text-ink-gray-6 group-data-[state=open]:hidden">
               · {{ t(activeQuickFilterLabel) }}
             </span>
-            <ChevronRight :size="16" class="ms-auto shrink-0 group-open:rotate-90" aria-hidden="true" />
-          </summary>
+          </template>
           <div class="mt-1 space-y-1">
-            <button
+            <Button
+              :variant="quickFilter === value ? 'solid' : 'ghost'"
               v-for="{ value, label, count, icon } in productFilters"
               :key="value"
               type="button"
-              class="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-bold transition"
-              :class="
-                quickFilter === value
-                  ? 'bg-ink text-white'
-                  : 'text-black/55 hover:bg-cream'
-              "
+              size="lg"
+              class="w-full !justify-start !px-2 !text-sm"
               :aria-pressed="quickFilter === value"
               @click="quickFilter = value"
             >
               <component :is="icon" v-if="icon" :size="17" aria-hidden="true" />
               {{ t(label) }}
-              <span
-                v-if="productCounts"
-                class="ml-auto rounded-full px-2 py-0.5 text-xs"
-                :class="quickFilter === value ? 'bg-white/10' : 'bg-black/[.06]'"
-              >{{ productCounts[count] }}</span>
-            </button>
+              <Badge v-if="productCounts" :class="quickFilter === value ? 'bg-white/10' : 'bg-black/[.06]'" class="ml-auto rounded-full px-2 py-0.5 text-xs">{{ productCounts[count] }}</Badge>
+            </Button>
           </div>
-        </details>
-        <p
-          v-if="loading && !rows.length"
-          class="m-0 p-2 text-sm text-black/55"
-          role="status"
-        >
-          {{ t("common.loading") }}
-        </p>
+        </DisclosureSection>
+        <LoadingText v-if="loading && !rows.length" :text="t('common.loading')" role="status" class="p-2" />
         <p v-else-if="!rows.length" class="m-0 p-2 text-sm text-black/55">
           {{ t("menus.empty") }}
         </p>
@@ -92,35 +71,15 @@
             :collapsed="collapsedMenus"
             :editable="!admin.isReadOnly"
             :busy="menuControlsBusy"
-            :dragged-submenu-id="draggedSubmenuId"
             @reorder="saveMenuOrder"
-            @drag="draggedSubmenuId = $event"
+            @toggle="toggleMenu"
+
           >
-            <button
-              v-if="parentMenuIds.has(menu.id)"
+
+            <Button
               type="button"
-              class="grid h-8 w-6 shrink-0 place-items-center rounded-lg hover:bg-cream"
-              :aria-expanded="!collapsedMenus.has(menu.id)"
-              :aria-label="
-                t('menus.submenusOf', { name: menuName(menu, locale) })
-              "
-              @click="toggleMenu(menu.id)"
-            >
-              <ChevronRight
-                :size="16"
-                :class="{ 'rotate-90': !collapsedMenus.has(menu.id) }"
-                aria-hidden="true"
-              />
-            </button>
-            <span v-else class="w-6 shrink-0" aria-hidden="true" />
-            <button
-              type="button"
-              class="flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2 py-2 text-start transition"
-              :class="
-                selectedMenuId === menu.id
-                  ? 'bg-ink text-white'
-                  : 'hover:bg-cream'
-              "
+              :variant="selectedMenuId === menu.id ? 'solid' : 'ghost'"
+              class="admin-row-button !h-auto min-w-0 flex-1 !shrink !justify-start !whitespace-normal !px-2 py-2 text-start"
               :aria-pressed="selectedMenuId === menu.id"
               :title="menuName(menu, locale)"
               @click="selectMenu(menu.id)"
@@ -145,7 +104,7 @@
                   ].filter(Boolean).join(" · ") }}
                 </small>
               </span>
-            </button>
+            </Button>
             <MenuActionPopover
               v-if="!admin.isReadOnly"
               v-slot="{ close: closeActions }"
@@ -153,34 +112,34 @@
               :label="t('common.actionsFor', { name: menuName(menu, locale) })"
               :disabled="menuControlsBusy"
             >
-              <button type="button" @click="closeActions(); open(menu)">
-                <Pencil :size="14" aria-hidden="true" />
+              <Button variant="ghost" type="button" @click="closeActions(); open(menu)">
+                <template #prefix><Pencil :size="14" aria-hidden="true" /></template>
                 {{ t("menus.edit") }}
-              </button>
-              <button
+              </Button>
+              <Button variant="ghost"
                 v-if="menu.parentId || parentMenuIds.has(menu.id)"
                 type="button"
                 @click="closeActions(); requestProductMenuAction(menu, 'assign')"
               >
-                <Plus :size="15" aria-hidden="true" />
+                <template #prefix><Plus :size="15" aria-hidden="true" /></template>
                 {{ t("menus.assignProducts") }}
-              </button>
-              <button type="button" @click="closeActions(); open(undefined, menu.id)">
-                <FolderPlus :size="15" aria-hidden="true" />
+              </Button>
+              <Button variant="ghost" type="button" @click="closeActions(); open(undefined, menu.id)">
+                <template #prefix><FolderPlus :size="15" aria-hidden="true" /></template>
                 {{ t("menus.submenu") }}
-              </button>
-              <button type="button" @click="closeActions(); openMenuSort(menu.id)">
-                <ListOrdered :size="16" aria-hidden="true" />
+              </Button>
+              <Button variant="ghost" type="button" @click="closeActions(); openMenuSort(menu.id)">
+                <template #prefix><ListOrdered :size="16" aria-hidden="true" /></template>
                 {{ t("menus.sortOrder") }}
-              </button>
-              <button
+              </Button>
+              <Button variant="ghost"
                 type="button"
                 class="text-red-700"
                 @click="closeActions(); requestMenuDelete(menu)"
               >
-                <Trash2 :size="15" aria-hidden="true" />
+                <template #prefix><Trash2 :size="15" aria-hidden="true" /></template>
                 {{ t("menus.delete") }}
-              </button>
+              </Button>
             </MenuActionPopover>
           </MenuSidebarTree>
         </div>
@@ -225,18 +184,22 @@
       <form id="product-menu-target" @submit.prevent="chooseProductMenu">
         <label>
           <span class="label">{{ t("menus.chooseAssignmentSubmenu") }}</span>
-          <select v-model="targetSubmenuId" class="input" required>
-            <option value="" disabled>{{ t("menus.chooseAssignmentSubmenu") }}</option>
-            <option v-for="{ menu, depth } in submenuTargets" :key="menu.id" :value="menu.id">
-              {{ "  ".repeat(depth - 1) + menuName(menu, locale) }}
-            </option>
-          </select>
+          <Select
+            size="lg"
+            variant="outline"
+            v-model="targetSubmenuId"
+            required
+            :options="[
+              { label: t('menus.chooseAssignmentSubmenu'), value: '', disabled: true },
+              ...submenuTargets.map(({ menu, depth }) => ({ label: '  '.repeat(depth - 1) + menuName(menu, locale), value: menu.id })),
+            ]"
+          />
         </label>
       </form>
       <template #footer>
-        <button type="submit" form="product-menu-target" class="btn-primary" :disabled="!targetSubmenuId">
+        <Button variant="solid" size="lg" type="submit" form="product-menu-target" :disabled="!targetSubmenuId">
           {{ t(submenuPicker?.action === "sort" ? "menus.sortProductOrder" : "menus.chooseAssignmentProducts") }}
-        </button>
+        </Button>
       </template>
     </ModalPanel>
     <ConfirmDialog
@@ -258,85 +221,76 @@
         <p v-if="editingPosMenu" class="m-0 text-sm text-black/60">{{ t("menus.editPosMenu") }}</p>
         <label v-if="!editingPosMenu && (!draft.id || draft.parentId)"
           ><span class="label">{{ t("menus.parent") }}</span>
-          <select
+          <Select
+            size="lg"
+            variant="outline"
             v-model="draft.parentId"
-            class="input"
             :required="Boolean(draft.id && draft.parentId)"
-          >
-            <option v-if="!draft.id" value="">{{ t("menus.root") }}</option>
-            <option
-              v-for="{ menu, depth } in parents"
-              :key="menu.id"
-              :value="menu.id"
-            >
-              {{ "  ".repeat(depth) + menuName(menu, locale) }}
-            </option>
-          </select>
+            :options="[
+              ...(!draft.id ? [{ label: t('menus.root'), value: '' }] : []),
+              ...parents.map(({ menu, depth }) => ({ label: '  '.repeat(depth) + menuName(menu, locale), value: menu.id })),
+            ]"
+          />
         </label>
         <label
           ><span class="label">{{ t("menus.nameKm") }}</span
-          ><input v-model.trim="draft.nameKm" class="input" maxlength="160"
+          ><TextInput size="lg" variant="outline" v-model.trim="draft.nameKm" maxlength="160"
         /></label>
         <label
           ><span class="label">{{ t("menus.nameEn") }}</span
-          ><input v-model.trim="draft.nameEn" class="input" maxlength="160"
+          ><TextInput size="lg" variant="outline" v-model.trim="draft.nameEn" maxlength="160"
         /></label>
         <label
           ><span class="label">{{ t("menus.nameZh") }}</span
-          ><input v-model.trim="draft.nameZh" class="input" maxlength="160"
+          ><TextInput size="lg" variant="outline" v-model.trim="draft.nameZh" maxlength="160"
         /></label>
         <label
           ><span class="label">{{ t("menus.slug") }}</span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model.trim="draft.slug"
-            class="input"
             pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
             maxlength="80"
             :readonly="Boolean(draft.id)"
         /></label>
         <label
           ><span class="label">{{ t("menus.sort") }}</span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model.number="draft.sortOrder"
-            class="input"
             type="number"
             min="0"
             required
         /></label>
         <ImageUploader v-model="photos" :label="t('menus.photo')" />
         <label class="flex items-center gap-2"
-          ><input v-model="draft.isActive" type="checkbox" />{{
+          ><Checkbox v-model="draft.isActive" type="checkbox" />{{
             t("menus.active")
           }}</label
         >
-        <p v-if="error" class="m-0 text-sm text-red-700" role="alert">
-          {{ error }}
-        </p>
+        <Alert v-if="error" theme="red" :title="error" />
       </form>
       <template #footer
-        ><button
-          class="btn-primary"
+        ><Button variant="solid" size="lg"
           type="submit"
           form="menu-node-form"
           :disabled="saving"
         >
           {{ t("menus.save") }}
-        </button></template
+        </Button></template
       >
     </ModalPanel>
   </div>
 </template>
 
 <script setup lang="ts">
+import PageHeader from "../components/PageHeader.vue";
+import { Badge, Alert, LoadingText, Button, Checkbox, Select, TextInput } from "frappe-ui";
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
-  ChevronRight,
   Eye,
   EyeOff,
   FolderPlus,
   ImageOff,
-  ListFilter,
   ListOrdered,
   Pencil,
   Plus,
@@ -351,6 +305,7 @@ import ImageUploader from "../components/ImageUploader.vue";
 import MenuActionPopover from "../components/MenuActionPopover.vue";
 import MenuProductsPanel from "../components/MenuProductsPanel.vue";
 import MenuSidebarTree from "../components/MenuSidebarTree.vue";
+import DisclosureSection from "../components/DisclosureSection.vue";
 import ModalPanel from "../components/ModalPanel.vue";
 import ProductEditorDialog from "../components/ProductEditorDialog.vue";
 import SortMenusDialog from "../components/SortMenusDialog.vue";
@@ -485,7 +440,6 @@ const deleteMessage = computed(() => {
     !menu.parentId && t("menus.deleteRootLinks"),
   ].filter(Boolean).join(" ");
 });
-const draggedSubmenuId = ref<string | null>(null);
 const error = ref("");
 const photos = ref<MediaImage[]>([]);
 const draft = reactive({
@@ -621,7 +575,6 @@ async function saveMenuOrder(
     return;
 
   reordering.value = true;
-  draggedSubmenuId.value = null;
   error.value = "";
   const previousMenus = menus.value;
   const collapsedDestination = move && parentId && collapsedMenus.delete(parentId);

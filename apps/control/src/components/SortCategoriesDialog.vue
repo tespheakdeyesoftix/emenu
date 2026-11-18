@@ -7,142 +7,99 @@
     :close-on-backdrop="false"
     @close="!saving && $emit('close')"
   >
-    <p class="mb-5 mt-0 text-sm text-black/50">
+    <p class="mb-4 mt-0 text-sm text-ink-gray-6">
       អូសប្រភេទតាមលំដាប់ដែលអ្នកចង់ឱ្យភ្ញៀវឃើញ។
       ប្រភេទរងត្រូវបានរៀបក្នុងប្រភេទមេរបស់វា។
     </p>
-
-    <div class="grid gap-5 lg:grid-cols-2">
-      <section>
-        <h3 class="mb-2 mt-0 text-sm font-extrabold">ប្រភេទមេ</h3>
-        <draggable
-          v-model="topItems"
-          item-key="id"
-          handle=".drag-handle"
-          :animation="180"
-          ghost-class="opacity-30"
-          class="space-y-2"
-        >
-          <template #item="{ element, index }">
-            <div
-              class="flex items-center gap-3 rounded-2xl border border-black/[.08] bg-cream p-3"
-            >
-              <button
-                type="button"
-                class="drag-handle grid size-9 shrink-0 cursor-grab place-items-center rounded-xl bg-white active:cursor-grabbing"
-                :aria-label="`អូស ${displayName(element)}`"
-              >
-                <GripVertical :size="18" />
-              </button>
-              <span
-                class="grid size-7 shrink-0 place-items-center rounded-full bg-ink text-xs font-bold text-white"
-              >
-                {{ index + 1 }}
-              </span>
-              <FallbackImage
-                v-if="element.imageUrl"
-                :src="element.imageUrl"
-                alt=""
-                loading="lazy"
-                decoding="async"
-                class="size-10 shrink-0 rounded-xl object-cover"
-              >
-                <template #fallback>
-                  <span class="grid size-10 shrink-0 place-items-center rounded-xl bg-white text-black/35" aria-hidden="true">
-                    <Folder :size="18" />
-                  </span>
-                </template>
-              </FallbackImage>
-              <div class="min-w-0 flex-1">
-                <strong class="block truncate text-sm">{{
-                  displayName(element)
-                }}</strong>
-                <small
-                  v-if="element.nameEn"
-                  class="block truncate text-black/40"
-                  >{{ element.nameEn }}</small
-                >
-              </div>
-            </div>
-          </template>
-        </draggable>
+    <Tree
+      v-model:expanded="expanded"
+      :nodes="nodes"
+      :draggable="!saving"
+      :disabled="saving"
+      :move="canDrop"
+      guides="lines"
+      aria-label="រៀបលំដាប់ប្រភេទ"
+      @drag-end="finishDrag"
+    >
+      <template #item="{ node, hasChildren, expanded: isExpanded, toggle }">
+        <div class="flex w-full min-w-0 items-center gap-1" @click.stop>
+          <Button
+            v-if="hasChildren"
+            variant="ghost"
+            size="sm"
+            icon="lucide-chevron-right"
+            :aria-label="
+              t('pages.catalog.subcategoriesLabel', { name: node.label })
+            "
+            :aria-expanded="isExpanded"
+            :class="{ '[&>span]:rotate-90': isExpanded }"
+            :disabled="saving"
+            @click="toggle"
+          />
+          <span v-else class="w-7 shrink-0" aria-hidden="true" />
+          <GripVertical
+            :size="16"
+            class="shrink-0 text-ink-gray-5"
+            aria-hidden="true"
+          />
+          <span
+            class="min-w-0 flex-1 py-2 text-sm font-medium [overflow-wrap:anywhere]"
+          >
+            {{ node.label }}
+          </span>
+          <Button
+            v-for="step in steps"
+            :key="step.offset"
+            variant="ghost"
+            size="sm"
+            :icon="step.icon"
+            :aria-label="t(step.label, { name: node.label })"
+            :disabled="saving || !canMove(categoryFromNode(node), step.offset)"
+            @click="moveBy(categoryFromNode(node), step.offset)"
+          />
+        </div>
+      </template>
+      <template #empty>
         <p
-          v-if="!topItems.length"
-          class="rounded-2xl bg-cream p-5 text-center text-sm text-black/40"
+          class="rounded-5 bg-surface-gray-2 p-5 text-center text-sm text-ink-gray-6"
         >
           មិនទាន់មានប្រភេទមេទេ។
         </p>
-      </section>
+      </template>
+    </Tree>
 
-      <section class="space-y-4">
-        <div v-for="group in childGroups" :key="group.parent.id">
-          <h3 class="mb-2 mt-0 text-sm font-extrabold">
-            ប្រភេទរងរបស់ {{ displayName(group.parent) }}
-          </h3>
-          <draggable
-            v-model="group.items"
-            item-key="id"
-            handle=".drag-handle"
-            :animation="180"
-            ghost-class="opacity-30"
-            class="space-y-2"
-          >
-            <template #item="{ element, index }">
-              <div
-                class="flex items-center gap-3 rounded-2xl border border-black/[.08] bg-cream p-3"
-              >
-                <button
-                  type="button"
-                  class="drag-handle grid size-9 shrink-0 cursor-grab place-items-center rounded-xl bg-white active:cursor-grabbing"
-                  :aria-label="`អូស ${displayName(element)}`"
-                >
-                  <GripVertical :size="18" />
-                </button>
-                <span
-                  class="grid size-7 shrink-0 place-items-center rounded-full bg-white text-xs font-bold"
-                >
-                  {{ index + 1 }}
-                </span>
-                <strong class="min-w-0 flex-1 truncate text-sm">{{
-                  displayName(element)
-                }}</strong>
-              </div>
-            </template>
-          </draggable>
-        </div>
-        <p
-          v-if="!childGroups.length"
-          class="rounded-2xl bg-cream p-5 text-center text-sm text-black/40"
-        >
-          មិនមានប្រភេទរងសម្រាប់រៀបលំដាប់ទេ។
-        </p>
-      </section>
-    </div>
-
-    <p v-if="error" class="mb-0 mt-4 text-xs font-bold text-red-600">
-      {{ error }}
-    </p>
+    <Alert v-if="error" theme="red" :title="error" class="mb-0 mt-4" />
     <template #footer>
-      <button
-        class="btn-primary w-full"
-        :disabled="saving || !categories.length"
+      <Button
+        variant="solid"
+        size="lg"
+        class="w-full"
+        icon-left="lucide-save"
+        :loading="saving"
+        :disabled="!draft.length"
         @click="save"
       >
-        <Save :size="16" />{{
-          saving ? "កំពុងរក្សាទុក…" : "រក្សាទុកលំដាប់ប្រភេទ"
-        }}
-      </button>
+        រក្សាទុកលំដាប់ប្រភេទ
+      </Button>
     </template>
   </ModalPanel>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
-import draggable from "vuedraggable";
-import { Folder, GripVertical, Save } from "lucide-vue-next";
-import FallbackImage from "../../../../shared/FallbackImage.vue";
-import ModalPanel from "./ModalPanel.vue";
+import {
+  Alert,
+  Button,
+  Tree,
+  type DropInfo,
+  type MoveContext,
+  type TreeKey,
+} from "frappe-ui";
+import { GripVertical } from "lucide-vue-next";
+import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import type { Category, SortOrderItem } from "../stores/admin";
+import { categoryFromNode, categoryTree } from "../utils/categoryTree";
+import ModalPanel from "./ModalPanel.vue";
 
 const props = defineProps<{
   open: boolean;
@@ -155,41 +112,78 @@ const emit = defineEmits<{
   save: [items: SortOrderItem[]];
 }>();
 
-const topItems = ref<Category[]>([]);
-const childGroups = ref<Array<{ parent: Category; items: Category[] }>>([]);
-const sortItems = (items: Category[]) =>
-  [...items].sort(
-    (a, b) =>
-      Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0) ||
-      (a.nameKm || a.name).localeCompare(b.nameKm || b.name),
-  );
-const displayName = (item: Category) => item.nameKm || item.name;
+const { t } = useI18n();
+const draft = ref<Category[]>([]);
+const expanded = ref<TreeKey[]>([]);
+const nodes = computed(() => categoryTree(draft.value));
+const steps = [
+  { offset: -1, icon: "lucide-arrow-up", label: "menus.moveUp" },
+  { offset: 1, icon: "lucide-arrow-down", label: "menus.moveDown" },
+] as const;
 
-function resetLists() {
-  topItems.value = sortItems(props.categories.filter((item) => !item.parentId));
-  childGroups.value = sortItems(props.categories)
-    .map((parent) => ({
-      parent,
-      items: sortItems(
-        props.categories.filter((item) => item.parentId === parent.id),
-      ),
-    }))
-    .filter((group) => group.items.length > 0);
+const parentOf = (item: Category) => item.parentId || null;
+const siblingsOf = (item: Category) =>
+  draft.value.filter((candidate) => parentOf(candidate) === parentOf(item));
+
+function canDrop({ node, target, position }: MoveContext) {
+  return (
+    position !== "inside" &&
+    parentOf(categoryFromNode(node)) === parentOf(categoryFromNode(target))
+  );
+}
+
+function finishDrag(drop: DropInfo | null) {
+  if (drop && drop.from === drop.to && drop.position !== "inside") {
+    moveBy(categoryFromNode(drop.node), drop.newIndex - drop.oldIndex);
+  }
+}
+
+function canMove(item: Category, offset: number) {
+  const siblings = siblingsOf(item);
+  const index = siblings.findIndex(({ id }) => id === item.id);
+  const target = index + offset;
+  return index >= 0 && target >= 0 && target < siblings.length;
+}
+
+function moveBy(item: Category, offset: number) {
+  if (props.saving || !offset || !canMove(item, offset)) return;
+  const siblings = siblingsOf(item);
+  const index = siblings.findIndex(({ id }) => id === item.id);
+  siblings.splice(index, 1);
+  siblings.splice(index + offset, 0, item);
+  let next = 0;
+  draft.value = draft.value.map((candidate) =>
+    parentOf(candidate) === parentOf(item) ? siblings[next++] : candidate,
+  );
 }
 
 function save() {
-  emit("save", [
-    ...topItems.value.map((item, index) => ({ id: item.id, sortOrder: index })),
-    ...childGroups.value.flatMap((group) =>
-      group.items.map((item, index) => ({ id: item.id, sortOrder: index })),
-    ),
-  ]);
+  const positions = new Map<string | null, number>();
+  emit(
+    "save",
+    draft.value.map((item) => {
+      const parent = parentOf(item);
+      const sortOrder = positions.get(parent) ?? 0;
+      positions.set(parent, sortOrder + 1);
+      return { id: item.id, sortOrder };
+    }),
+  );
 }
 
 watch(
   () => props.open,
-  (isOpen) => {
-    if (isOpen) resetLists();
+  (open) => {
+    if (!open) return;
+    draft.value = [...props.categories].sort(
+      (a, b) =>
+        Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0) ||
+        (a.nameKm || a.name).localeCompare(b.nameKm || b.name),
+    );
+    expanded.value = [
+      ...new Set(
+        draft.value.flatMap((item) => (item.parentId ? [item.parentId] : [])),
+      ),
+    ];
   },
   { immediate: true },
 );

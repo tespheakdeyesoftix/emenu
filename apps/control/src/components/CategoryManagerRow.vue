@@ -3,9 +3,10 @@
     class="flex min-h-16 items-center gap-2 p-2"
     :class="compact ? 'bg-transparent' : 'bg-white'"
   >
-    <button
+    <Button
+      variant="ghost"
       type="button"
-      class="flex min-h-12 min-w-0 flex-1 items-center gap-3 rounded-xl px-1 text-left transition hover:bg-black/[.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+      class="admin-row-button !h-auto min-h-12 min-w-0 flex-1 !shrink !justify-start !whitespace-normal !px-1 text-start"
       :aria-label="
         t('pages.catalog.categoryManager.editLabel', { name: displayName })
       "
@@ -42,36 +43,21 @@
         </small>
       </span>
       <Pencil :size="15" class="shrink-0 text-black/30" />
-    </button>
-    <button
-      type="button"
-      role="switch"
-      :aria-checked="active"
-      :aria-label="
-        t('pages.catalog.categoryManager.toggleLabel', { name: displayName })
-      "
+    </Button>
+    <Switch
+      :model-value="active"
+      :aria-label="t('pages.catalog.categoryManager.toggleLabel', { name: displayName })"
+      :aria-busy="saving"
       :disabled="saving"
-      class="relative flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-xl transition disabled:cursor-wait disabled:opacity-60"
-      @click="$emit('toggle', !active)"
-    >
-      <LoaderCircle v-if="saving" :size="20" class="animate-spin" />
-      <span
-        v-else
-        class="relative block h-6 w-11 rounded-full transition"
-        :class="active ? 'bg-emerald-600' : 'bg-black/20'"
-      >
-        <span
-          class="absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition"
-          :class="active ? 'left-[22px]' : 'left-0.5'"
-        />
-      </span>
-    </button>
+      @update:model-value="$emit('toggle', Boolean($event))"
+    />
   </div>
 </template>
 <script setup lang="ts">
+import { Button, Switch } from "frappe-ui";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { Folder, LoaderCircle, Pencil } from "lucide-vue-next";
+import { Folder, Pencil } from "lucide-vue-next";
 import FallbackImage from "../../../../shared/FallbackImage.vue";
 import type { Category } from "../stores/admin";
 

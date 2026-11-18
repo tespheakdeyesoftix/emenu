@@ -18,7 +18,7 @@ import {
   branchOrderColumns, branchOrderOverrides, branchOrderPolicy, findBranch, findMenuRoot, firstActiveMenuRoot, listBranches, orderMenuSections, ownsPortionBranches,
   visibleMenuAssignments, visibleMenuIds, type Branch, type MenuRoot,
 } from "./catalogScope";
-import { isOrderStatusUpdate, updateOrderStatus } from "./orderStatus";
+import { isOrderStatus, isOrderStatusUpdate, updateOrderStatus } from "./orderStatus";
 import { connectPosOrderEvents, OrderEvents } from "./orderEvents";
 import { handlePosOrders } from "./posOrders";
 import { handlePosApi } from "./posApi";
@@ -211,7 +211,7 @@ function localDateKey(date: Date, timeZone: string) {
   return `${value.year}-${value.month}-${value.day}`;
 }
 
-function endOfLocalDateUtc(value: string, timeZone: string) {
+function endOfLocalDateUtc(value: string, timeZone: string, dayOffset = 1) {
   if (!LOCAL_DATE_PATTERN.test(value)) return null;
   const [year, month, day] = value.split("-").map(Number);
   const parsed = new Date(Date.UTC(year, month - 1, day));
@@ -226,7 +226,7 @@ function endOfLocalDateUtc(value: string, timeZone: string) {
   } catch {
     return null;
   }
-  const target = Date.UTC(year, month - 1, day + 1);
+  const target = Date.UTC(year, month - 1, day + dayOffset);
   let guess = target;
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -977,7 +977,7 @@ function normalizeSearchTerm(value: unknown) {
     .slice(0, 80);
 }
 
-function reportDate(value: string) {
+function parseLocalDate(value: string) {
   if (!LOCAL_DATE_PATTERN.test(value)) return null;
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return Number.isNaN(parsed.getTime()) ||
@@ -987,7 +987,7 @@ function reportDate(value: string) {
 }
 
 function shiftDate(value: string, days: number) {
-  const parsed = reportDate(value);
+  const parsed = parseLocalDate(value);
   if (!parsed) return "";
   parsed.setUTCDate(parsed.getUTCDate() + days);
   return parsed.toISOString().slice(0, 10);
@@ -1940,9 +1940,11 @@ function controlPagesForResource(
       return ["reports"];
     case "pos":
       if (path === `${posAdminPath}/overview`) return ["sellingOverview"];
-      if (path === `${posAdminPath}/sales`) return ["salesList"];
+      if (path === `${posAdminPath}/sales` || path === `${posAdminPath}/shift-audit`) return ["salesList"];
       if (path === `${posAdminPath}/payment-types` || path.startsWith(`${posAdminPath}/payment-types/`))
         return ["posPaymentTypes"];
+      if (/^\/api\/admin\/pos\/(customers|customer-groups)(?:\/|$)/.test(path))
+        return ["posCustomers"];
       return ["posProfiles"];
     case "tables":
     case "table-groups":
@@ -3481,6 +3483,7 @@ async function handle(request: Request, env: Env, execution: ExecutionContext): 
       return result.status === "verified" ? result.account : null;
     },
     localDate: localDateKey,
+    startOfLocalDate: (date, timezone) => endOfLocalDateUtc(date, timezone, 0),
     subscription: (identity) => subscriptionSummary(identity, identity.timezone),
     pricing: resolvePriceList,
     priceMap,
@@ -4441,6 +4444,25 @@ async function handle(request: Request, env: Env, execution: ExecutionContext): 
     return json({ id: menuId },existingId ? 200 : 201);
   }
 
+  if (request.method === "GET" && path === "/api/admin/orders/filters/options") {
+    if (!canViewBusinessActivity)
+      return json({ error: "Owner or manager access is required" }, 403);
+    const [branches, tables] = await Promise.all([
+      listBranches(env.DB, auth.businessId),
+      env.DB.prepare(
+        `SELECT t.id, t.branch_id AS branchId, t.code, t.label, g.name AS groupName
+         FROM restaurant_tables t
+         JOIN table_groups g ON g.id=t.group_id AND g.business_id=t.business_id
+         WHERE t.business_id=?
+         ORDER BY g.sort_order, t.sort_order, t.code, t.id`,
+      ).bind(auth.businessId).all(),
+    ]);
+    return json({
+      branches: branches.results.map(({ id, name }) => ({ id, name })),
+      tables: tables.results,
+    });
+  }
+
   const adminOrderMatch = path.match(
     /^\/api\/admin\/orders(?:\/([a-zA-Z0-9_-]+))?$/,
   );
@@ -4520,11 +4542,42 @@ async function handle(request: Request, env: Env, execution: ExecutionContext): 
     if (!Number.isSafeInteger(page) || page < 1 || page > 1_000_000)
       return json({ error: "Invalid page number" }, 400);
     const pageSize = 25;
+    const status = url.searchParams.get("status") || "";
+    if (status && !isOrderStatus(status))
+      return json({ error: "Invalid order status filter" }, 400);
     const branchId = url.searchParams.get("branchId") || "";
+    const tableId = url.searchParams.get("tableId") || "";
+    const from = url.searchParams.get("from") || "";
+    const to = url.searchParams.get("to") || "";
+    if ((from && !parseLocalDate(from)) || (to && !parseLocalDate(to)) || (from && to && from > to))
+      return json({ error: "Invalid order date range" }, 400);
+
+    const filters = [];
+    const bindings = [auth.businessId];
+    if (branchId) {
+      filters.push(" AND o.branch_id=?");
+      bindings.push(branchId);
+    }
+    if (status) {
+      filters.push(" AND o.status=?");
+      bindings.push(status);
+    }
+    if (tableId) {
+      filters.push(" AND o.table_id=?");
+      bindings.push(tableId);
+    }
+    if (from) {
+      filters.push(" AND o.posting_date>=?");
+      bindings.push(from);
+    }
+    if (to) {
+      filters.push(" AND o.posting_date<=?");
+      bindings.push(to);
+    }
     const { results } = await env.DB.prepare(
-      `${summarySql()} AND (?='' OR o.branch_id=?) ORDER BY o.posting_date DESC, o.rowid DESC LIMIT ? OFFSET ?`,
+      `${summarySql()}${filters.join("")} ORDER BY o.posting_date DESC, o.rowid DESC LIMIT ? OFFSET ?`,
     )
-      .bind(auth.businessId, branchId, branchId, pageSize + 1, (page - 1) * pageSize)
+      .bind(...bindings, pageSize + 1, (page - 1) * pageSize)
       .all();
     return json({
       orders: results.slice(0, pageSize),
@@ -4542,8 +4595,8 @@ async function handle(request: Request, env: Env, execution: ExecutionContext): 
     const today = localDateKey(new Date(), auth.timezone || "UTC");
     const from = url.searchParams.get("from") || shiftDate(today, -29);
     const to = url.searchParams.get("to") || today;
-    const fromDate = reportDate(from);
-    const toDate = reportDate(to);
+    const fromDate = parseLocalDate(from);
+    const toDate = parseLocalDate(to);
     if (!fromDate || !toDate || fromDate > toDate)
       return json({ error: "Invalid report date range" }, 400);
     const duration =

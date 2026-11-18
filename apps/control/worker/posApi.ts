@@ -1,7 +1,9 @@
 import type { Env } from "./index";
 import { getCatalog } from "./posApiCatalog";
+import { readRegisterCustomerPhoto, registerCustomerDirectory } from "./posApiCustomers";
 import {
   activeDeviceSession,
+  allowsCashFloat,
   bodyOf,
   Command,
   conflict,
@@ -52,6 +54,7 @@ import {
 import {
   currentOperations,
   readOperations,
+  reviewShift,
   writeDay,
   writeShift,
 } from "./posApiShifts";
@@ -266,9 +269,18 @@ async function tables(context: PosContext, url: URL) {
       url,
       "tables",
       `SELECT t.id,t.code,t.label,t.group_id,g.name AS group_name,
-    s.id AS open_sale_id,CASE WHEN s.id IS NULL THEN 'available' ELSE 'occupied' END AS status
+    s.id AS open_sale_id,s.guest_cover,bk.arrival_at AS booking_arrival_at,bk.pax AS booking_pax,
+    CASE WHEN s.id IS NOT NULL THEN 'occupied' WHEN bk.id IS NOT NULL THEN 'booked' ELSE 'available' END AS status
     FROM restaurant_tables t JOIN table_groups g ON g.id=t.group_id AND g.business_id=t.business_id AND g.branch_id=t.branch_id
     LEFT JOIN sales s ON s.business_id=t.business_id AND s.profile_id=?1 AND s.table_id=t.id AND s.status='open'
+    LEFT JOIN bookings bk ON bk.id=(
+      SELECT reservation.id FROM bookings reservation
+      WHERE reservation.business_id=t.business_id AND reservation.branch_id=t.branch_id
+        AND reservation.table_id=t.id AND reservation.status='confirmed'
+        AND reservation.arrival_at > strftime('%Y-%m-%dT%H:%M:%fZ',?5,'-2 hours')
+        AND reservation.arrival_at <= strftime('%Y-%m-%dT%H:%M:%fZ',?5,'+30 minutes')
+      ORDER BY reservation.arrival_at,reservation.id LIMIT 1
+    )
     LEFT JOIN json_each(?4) selected ON selected.value=g.id
     WHERE t.business_id=?2 AND t.branch_id=?3 AND t.is_active=1 AND g.is_active=1
       AND (?4 IS NULL OR selected.key IS NOT NULL)
@@ -278,9 +290,65 @@ async function tables(context: PosContext, url: URL) {
         context.identity.business_id,
         context.profile.branch_id,
         context.config.table_group_ids ? JSON.stringify(context.config.table_group_ids) : null,
+        context.now,
       ],
     ),
   );
+}
+
+function posProfileView(profile: PosProfile) {
+  const settings = profileView(profile);
+  const { print_copies, tax_mode, tax_rate_bps, ...config } = settings.config;
+  return {
+    ...settings,
+    config: {
+      ...config,
+      ...(!config.default_tax_rule && tax_mode !== "disabled" && tax_rate_bps > 0
+        ? { legacy_tax: { tax_mode, tax_rate_bps } }
+        : {}),
+    },
+  };
+}
+
+function registerConfig(profile: PosProfile): ProfileConfig {
+  const active: ProfileConfig = JSON.parse(profile.config_json);
+  if (active.catalog_mode !== "menu" || !profile.pending_config_json)
+    return active;
+
+  const pending: ProfileConfig = JSON.parse(profile.pending_config_json);
+  if (pending.catalog_mode !== "menu") return active;
+
+  // Add newly selected menus now. Keep existing menus available until any
+  // open bills and shifts finish and the pending profile is promoted.
+  const selectedIds = active.selected_ids && pending.selected_ids
+    ? [...new Set([...active.selected_ids, ...pending.selected_ids])]
+    : null;
+  return { ...active, selected_ids: selectedIds };
+}
+
+async function registerDefaultMenu(
+  { db, identity, profile, config }: PosContext,
+) {
+  const saved = config.default_menu_id ?? null;
+  if (config.catalog_mode !== "menu" || !profile.pending_config_json)
+    return saved;
+  const pending: ProfileConfig = JSON.parse(profile.pending_config_json);
+  if (pending.catalog_mode !== "menu") return saved;
+  const menu = pending.default_menu_id;
+  if (menu === null) return null;
+  if (
+    !menu || menu === saved ||
+    (config.selected_ids && !config.selected_ids.includes(menu))
+  )
+    return saved;
+
+  const available = await sql(
+    db,
+    "SELECT 1 FROM menus WHERE business_id=? AND id=? AND parent_id IS NULL AND is_active=1 AND deleted_in_admin=0",
+    identity.business_id,
+    menu,
+  ).first();
+  return available ? menu : saved;
 }
 
 export async function handlePosApi(
@@ -335,7 +403,7 @@ export async function handlePosApi(
       return respond({
         ...page,
         profiles: (page.profiles as PosProfile[]).map((profile) =>
-          profileView(profile),
+          posProfileView(profile),
         ),
       });
     }
@@ -346,11 +414,20 @@ export async function handlePosApi(
       db,
       identity,
       profile,
-      config: JSON.parse(profile.config_json) as ProfileConfig,
+      config: registerConfig(profile),
       now: now.toISOString(),
       localDate: deps.localDate(now, identity.timezone),
     };
     const { readOnly } = deps.subscription(identity);
+    const pendingCommand = path.match(/^\/commands\/([a-zA-Z0-9_-]{8,128})$/);
+    if (pendingCommand && request.method === "GET") {
+      const row = await sql(db, `SELECT response_json,response_status FROM pos_commands
+        WHERE business_id=? AND profile_id=? AND actor_id=? AND idempotency_key=?`,
+        identity.business_id, profile.id, identity.user_id, pendingCommand[1])
+        .first<{ response_json: string; response_status: number }>();
+      if (!row) missing("Command");
+      return respond({ result: JSON.parse(row.response_json), status: row.response_status });
+    }
     if (path === "/auth/resolve-username")
       return request.method === "POST"
         ? await resolveStaffUsername(context, request)
@@ -382,13 +459,28 @@ export async function handlePosApi(
         : methodNotAllowed();
     if (path === "/context") {
       if (request.method !== "GET") return methodNotAllowed();
-      const [current, accepted, authority] = await Promise.all([
+      const settings = posProfileView(profile);
+      const [current, accepted, authority, defaultMenu] = await Promise.all([
         currentOperations(context),
         paymentTypes(context),
         storeAuthority(context),
+        registerDefaultMenu(context),
       ]);
       return respond({
-        profile: profileView(profile),
+        profile: {
+          ...settings,
+          config: {
+            ...settings.config,
+            selected_ids: context.config.selected_ids ?? null,
+            default_menu_id: defaultMenu,
+            payment_types: accepted.map((type) => ({
+              id: type.id,
+              payment_type: type.name,
+              currency: type.currency,
+              allow_cash_float: allowsCashFloat(type),
+            })),
+          },
+        },
         operator: {
           id: identity.user_id,
           name: identity.display_name,
@@ -413,6 +505,11 @@ export async function handlePosApi(
           store_recovery: true,
           reversal_context_guard: true,
           staff_usernames: true,
+          cart_line_edits: true,
+          bill_information: true,
+          shift_management: true,
+          customer_directory: true,
+          customer_photo_upload: true,
         },
         ...current,
       });
@@ -436,19 +533,16 @@ export async function handlePosApi(
       return request.method === "GET"
         ? await tables(context, url)
         : methodNotAllowed();
-    if (path === "/customers") {
-      if (request.method !== "GET") return methodNotAllowed();
-      return respond(
-        await pageOf(
-          db,
-          url,
-          "customers",
-          `SELECT id,name,external_reference,is_walk_in
-        FROM pos_customers WHERE business_id=? ORDER BY is_walk_in DESC,name,id`,
-          [identity.business_id],
-        ),
+    const customerPhoto = path.match(/^\/customers\/([a-zA-Z0-9_-]{1,80})\/photo$/);
+    if (customerPhoto)
+      return request.method === "GET"
+        ? await readRegisterCustomerPhoto(context, customerPhoto[1])
+        : methodNotAllowed();
+    const customer = path.match(/^\/customers(?:\/([a-zA-Z0-9_-]{1,80}))?$/);
+    if (customer || path === "/customer-groups")
+      return await registerCustomerDirectory(
+        request, url, context, customer ? "customers" : "customer-groups", customer?.[1], readOnly,
       );
-    }
     const match = path.match(
       /^\/(working-days|cashier-shifts|sales)(?:\/([a-zA-Z0-9_-]{1,80})(?:\/([a-z-]+))?)?$/,
     );
@@ -457,8 +551,13 @@ export async function handlePosApi(
     if (resource === "sales") {
       if (action && !["checkout", "cancel", "reverse"].includes(action))
         missing("Endpoint");
-      if (request.method === "GET" && !action)
+      if (request.method === "GET" && !action) {
+        if (!id && url.searchParams.get("history") === "active" &&
+            !context.config.cashier_shift_enabled && !context.config.working_day_enabled) {
+          context.localDateStart = deps.startOfLocalDate(context.localDate, identity.timezone);
+        }
         return await readSales(context, url, id);
+      }
       if (
         (!id && request.method !== "POST") ||
         (id && request.method !== (action ? "POST" : "PATCH"))
@@ -468,14 +567,16 @@ export async function handlePosApi(
     } else {
       const actions =
         resource === "working-days"
-          ? ["close"]
-          : ["close", "cash-floats", "reconciliation"];
+          ? ["close", "summary"]
+          : ["close", "cash-floats", "reconciliation", "summary", "reopen"];
       if (action && !actions.includes(action)) missing("Endpoint");
-      if (request.method === "GET" && action !== "close")
+      if (request.method === "GET" && action !== "close" && action !== "reopen")
         return await readOperations(context, url, resource, id, action);
+      if (resource === "cashier-shifts" && id && action === "reconciliation" && request.method === "POST")
+        return await reviewShift(context, id, await bodyOf(request));
       if (
         request.method !== "POST" ||
-        (id && (!action || action === "reconciliation"))
+        (id && (!action || action === "reconciliation" || action === "summary"))
       )
         return methodNotAllowed();
     }
@@ -504,6 +605,22 @@ export async function handlePosApi(
     } catch (error) {
       const replay = await command.replay();
       if (replay) return replay;
+      if (id && action === "close" && String(error).includes("POS_STATE_CONFLICT")) {
+        if (resource === "cashier-shifts") {
+          const current = await sql(db, `SELECT activity_revision FROM cashier_shifts
+            WHERE business_id=? AND profile_id=? AND id=? AND closed_at IS NULL`,
+            identity.business_id, profile.id, id).first<number>("activity_revision");
+          if (current != null && current !== command.body.activity_revision)
+            conflict("Refresh the shift reconciliation", "RECONCILIATION_CHANGED");
+        } else if (resource === "working-days") {
+          const blocked = await sql(db, `SELECT 1 FROM working_days d
+            WHERE d.business_id=? AND d.branch_id=? AND d.id=? AND d.closed_at IS NULL
+              AND (EXISTS(SELECT 1 FROM cashier_shifts WHERE working_day_id=d.id AND closed_at IS NULL)
+                OR EXISTS(SELECT 1 FROM sales WHERE working_day_id=d.id AND status='open'))`,
+            identity.business_id, profile.branch_id, id).first();
+          if (blocked) conflict("Close the working day's shifts and bills", "WORKING_DAY_HAS_ACTIVITY");
+        }
+      }
       throw error;
     }
   } catch (error) {

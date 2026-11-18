@@ -9,9 +9,29 @@ Run `emenu_pos.exe` from its Windows release folder with the bundled DLLs and `d
 1. Start the eMenu API from the repository root with `npm run db:migrate:local` and `npm run dev:api`.
 2. Configure a POS profile, payment types, and a catalog on the local API. Use a business owner for the first register setup. Follow the [POS API guide](../../docs/pos-api.md).
 3. In this directory, run `flutter pub get` and `flutter run -d windows`. Windows builds need permission to create plugin links and the Desktop development with C++ workload. Standalone Visual Studio Build Tools 2022 works with MSVC, CMake, the Windows SDK, and C++ ATL (x86 and x64) for the secure storage plugin.
-4. Enter the API origin and business slug, then sign in with the owner's account email and password. Select the profile and create a six-digit PIN. An owner or manager can open **Staff usernames** to set a username for a staff member who has profile access. Staff use their username or eMenu email and password once per till, then create a local six-digit PIN.
+4. Enter the API origin and business slug, then sign in with the owner's account email and password. Select the POS profile. The first sign-in offers a six-digit PIN. Select **Skip** to continue with password sign-in. An owner or manager can open **Staff usernames** to set a username for a staff member who has profile access. Staff use their username or eMenu email and password. Use **Profile** at the bottom of the desktop rail to set or change a local PIN.
 
 The register uses Drift with SQLite and stores its database in the app support directory. Operator PIN verifiers and POS session tokens use the OS credential store. The sales screen uses the cached profile catalog when the internet is unavailable.
+
+### Sign in to the right local business
+
+An activated register keeps its API address and business slug. The sign-in screen shows both. An account from another business cannot sign in to that register, even with the correct password.
+
+For local development, use `POS_DATA_PROFILE` to select a separate register database in a named subfolder of the app support directory. This keeps the default register's saved data available. For the existing bakery register, run:
+
+```powershell
+flutter run -d windows --debug --dart-define=POS_DATA_PROFILE=pheakdey-backery-local
+```
+
+Check that the sign-in screen shows `pheakdey-backery` and the same API used by Super Control. An activated bakery register connected to a local loopback API opens the password form with the demo cashier prefilled in debug builds. Enter the owner's credentials when testing owner tasks. In Super Control, generating or copying a temporary password does not save it: click **Reset credentials** and wait for **Account credentials reset** before using it. After signing in, select the profile and choose whether to set a six-digit PIN.
+
+Profile names accept up to 64 letters, digits, hyphens, or underscores and must start with a letter or digit. A new name starts register setup; omitting `POS_DATA_PROFILE` uses the default register database.
+
+## Table service
+
+**Sell** opens the sale screen in disabled and optional table modes. In optional mode, staff can assign a table, return the bill to the counter, or open the table plan from the Sell toolbar. In required mode, **Sell** opens the table plan with the groups configured in Control. Tap a table to open a sale or resume its saved order.
+
+**General Info** on the POS profile controls the table colors and the guest count keypad. **Save order**, **Hold bill**, and **Request bill** set the table state on the store register. To mark a table booked, assign it to a confirmed booking in Control.
 
 ## Pair tills on the store network
 

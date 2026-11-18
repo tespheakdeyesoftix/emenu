@@ -1,9 +1,9 @@
 <template>
   <div class="space-y-3">
     <div class="flex justify-end">
-      <button type="button" class="btn-soft shrink-0" @click="openNewGroup">
-        <Plus :size="15" />បន្ថែមក្រុមជម្រើស
-      </button>
+      <Button variant="subtle" size="lg" type="button" class="shrink-0" @click="openNewGroup">
+        <template #prefix><Plus :size="15" /></template>បន្ថែមក្រុមជម្រើស
+      </Button>
     </div>
 
     <div
@@ -11,40 +11,35 @@
       :key="group.id"
       class="flex items-center gap-2 rounded-2xl border border-black/[.08] bg-white p-3"
     >
-      <button
+      <Button
+        variant="ghost" size="lg"
         type="button"
-        class="min-w-0 flex-1 text-left"
+        class="admin-action-card !shrink min-w-0 flex-1 !p-1 text-start"
         @click="openEditGroup(groupIndex)"
       >
         <strong class="block truncate text-sm">{{ group.labelKm }}</strong>
         <span class="mt-1 flex flex-wrap gap-1.5 text-[10px] font-bold">
-          <span class="rounded-full bg-cream px-2 py-1">
-            {{ group.options.length }} ជម្រើស
-          </span>
-          <span v-if="group.required" class="rounded-full bg-cream px-2 py-1">
-            តម្រូវឱ្យជ្រើស
-          </span>
-          <span v-if="group.multiple" class="rounded-full bg-cream px-2 py-1">
-            ជ្រើសបានច្រើន
-          </span>
+          <Badge>{{ group.options.length }} ជម្រើស</Badge>
+          <Badge v-if="group.required">តម្រូវឱ្យជ្រើស</Badge>
+          <Badge v-if="group.multiple">ជ្រើសបានច្រើន</Badge>
         </span>
-      </button>
-      <button
+      </Button>
+      <Button variant="ghost"
         type="button"
         class="grid size-9 shrink-0 place-items-center rounded-full hover:bg-cream"
         aria-label="កែសម្រួលក្រុមជម្រើស"
         @click="openEditGroup(groupIndex)"
       >
-        <Pencil :size="15" />
-      </button>
-      <button
+        <template #icon><Pencil :size="15" /></template>
+      </Button>
+      <Button variant="ghost"
         type="button"
         class="grid size-9 shrink-0 place-items-center rounded-full text-red-600 hover:bg-red-50"
         aria-label="លុបក្រុមជម្រើស"
         @click="model.splice(groupIndex, 1)"
       >
-        <Trash2 :size="15" />
-      </button>
+        <template #icon><Trash2 :size="15" /></template>
+      </Button>
     </div>
 
     <div
@@ -68,26 +63,23 @@
         <div class="grid gap-3 sm:grid-cols-2">
           <label>
             <span class="label">ឈ្មោះក្រុម · ខ្មែរ</span>
-            <input
+            <TextInput size="lg" variant="outline"
               v-model.trim="draft.labelKm"
-              class="input"
               lang="km"
               placeholder="ឧ. កម្រិតហឹរ"
             />
           </label>
           <label v-if="enableEn">
             <span class="label">ឈ្មោះក្រុម · អង់គ្លេស (មិនចាំបាច់)</span>
-            <input
+            <TextInput size="lg" variant="outline"
               v-model.trim="draft.labelEn"
-              class="input"
               placeholder="ឧ. កម្រិតហឹរ"
             />
           </label>
           <label v-if="enableZh">
             <span class="label">ឈ្មោះក្រុម · ចិន (មិនចាំបាច់)</span>
-            <input
+            <TextInput size="lg" variant="outline"
               v-model.trim="draft.labelZh"
-              class="input"
               lang="zh"
               placeholder="例如：辣度"
             />
@@ -98,7 +90,7 @@
           <label
             class="flex items-center gap-2 rounded-xl bg-cream px-3 py-2 text-xs font-bold"
           >
-            <input
+            <Checkbox
               v-model="draft.required"
               type="checkbox"
               class="size-4 accent-black"
@@ -108,7 +100,7 @@
           <label
             class="flex items-center gap-2 rounded-xl bg-cream px-3 py-2 text-xs font-bold"
           >
-            <input
+            <Checkbox
               v-model="draft.multiple"
               type="checkbox"
               class="size-4 accent-black"
@@ -120,9 +112,9 @@
         <div class="space-y-3 border-t border-black/[.08] pt-4">
           <div class="flex items-center justify-between">
             <span class="label !mb-0">ជម្រើស</span>
-            <button type="button" class="btn-soft" @click="addOption">
-              <Plus :size="14" />បន្ថែមជម្រើស
-            </button>
+            <Button variant="subtle" size="lg" type="button" @click="addOption">
+              <template #prefix><Plus :size="14" /></template>បន្ថែមជម្រើស
+            </Button>
           </div>
           <div
             v-for="(option, optionIndex) in draft.options"
@@ -132,34 +124,35 @@
             <div class="grid gap-3 sm:grid-cols-2">
               <label>
                 <span class="label">ឈ្មោះជម្រើស · ខ្មែរ</span>
-                <input v-model.trim="option.labelKm" class="input" lang="km" />
+                <TextInput size="lg" variant="outline" v-model.trim="option.labelKm" lang="km" />
               </label>
               <label v-if="enableEn">
                 <span class="label">ឈ្មោះជម្រើស · អង់គ្លេស (មិនចាំបាច់)</span>
-                <input v-model.trim="option.labelEn" class="input" />
+                <TextInput size="lg" variant="outline" v-model.trim="option.labelEn" />
               </label>
               <label v-if="enableZh">
                 <span class="label">ឈ្មោះជម្រើស · ចិន (មិនចាំបាច់)</span>
-                <input v-model.trim="option.labelZh" class="input" lang="zh" />
+                <TextInput size="lg" variant="outline" v-model.trim="option.labelZh" lang="zh" />
               </label>
               <label>
                 <span class="label">ការកែតម្លៃ (មិនចាំបាច់)</span>
-                <input
-                  v-model.number="option.priceCents"
+                <TextInput size="lg" variant="outline"
+                  :model-value="option.priceCents ?? ''"
+                  @update:model-value="option.priceCents = $event === '' ? null : Number($event)"
                   type="number"
                   :step="currency === 'USD' ? '0.01' : '1'"
-                  class="input"
                   placeholder="0"
                 />
               </label>
             </div>
-            <button
+            <Button
+              variant="ghost" theme="red" size="sm"
               type="button"
-              class="mt-2 flex items-center gap-1 text-xs font-bold text-red-600"
+              class="mt-2"
               @click="draft.options.splice(optionIndex, 1)"
             >
-              <Trash2 :size="13" />លុបជម្រើស
-            </button>
+              <template #prefix><Trash2 :size="13" aria-hidden="true" /></template>លុបជម្រើស
+            </Button>
           </div>
           <p
             v-if="!draft.options.length"
@@ -169,25 +162,24 @@
           </p>
         </div>
 
-        <p v-if="formError" class="m-0 text-xs font-bold text-red-600">
-          {{ formError }}
-        </p>
+        <Alert v-if="formError" theme="red" :title="formError" />
       </form>
 
       <template #footer>
-        <button
+        <Button variant="solid" size="lg"
           type="submit"
           form="modifier-group-form"
-          class="btn-primary w-full"
+          class="w-full"
         >
           {{ editingIndex >= 0 ? "រក្សាទុកក្រុម" : "បន្ថែមក្រុម" }}
-        </button>
+        </Button>
       </template>
     </ModalPanel>
   </div>
 </template>
 
 <script setup lang="ts">
+import { Badge, Alert, Button, Checkbox, TextInput } from "frappe-ui";
 import { reactive, ref } from "vue";
 import { Pencil, Plus, Trash2 } from "lucide-vue-next";
 import ModalPanel from "./ModalPanel.vue";

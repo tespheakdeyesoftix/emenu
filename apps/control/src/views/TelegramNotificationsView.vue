@@ -1,32 +1,23 @@
 <template>
   <div>
-    <PageHeader
-      :title="t('nav.telegramNotifications')"
-      :description="t('telegram.description')"
-      eyebrow=""
-    >
+    <PageHeader :title="t('nav.telegramNotifications')">
       <div class="flex flex-wrap gap-2">
-        <button type="button" class="btn-soft" @click="historyOpen = true">
-          <History :size="16" aria-hidden="true" />{{
+        <Button variant="subtle" size="lg" type="button" @click="historyOpen = true">
+          <template #prefix><History :size="16" aria-hidden="true" /></template>{{
             t("telegram.history.title")
           }}
-        </button>
-        <button
+        </Button>
+        <Button variant="solid" size="lg"
           type="button"
-          class="btn-primary"
           :disabled="loading || !!loadError"
           @click="open()"
         >
-          <Plus :size="16" aria-hidden="true" />{{ t("telegram.new") }}
-        </button>
+          <template #prefix><Plus :size="16" aria-hidden="true" /></template>{{ t("telegram.new") }}
+        </Button>
       </div>
     </PageHeader>
-    <p v-if="loading" class="card p-5" role="status">
-      {{ t("common.loading") }}
-    </p>
-    <p v-if="loadError" class="card p-5 text-sm text-red-700" role="alert">
-      {{ loadError }}
-    </p>
+    <LoadingText v-if="loading" :text="t('common.loading')" role="status" class="card p-5" />
+    <Alert v-if="loadError" theme="red" :title="loadError" class="mb-4" />
     <p
       v-else-if="!loading && !rules.length"
       class="card p-5 text-sm text-black/60"
@@ -40,12 +31,12 @@
         class="card min-w-0 space-y-3 p-4"
       >
         <div class="flex flex-wrap gap-2 text-xs font-bold text-black/60">
-          <span class="rounded-full bg-cream px-2 py-1">{{
+          <Badge>{{
             t(`telegram.sources.${rule.source}`)
-          }}</span>
-          <span class="rounded-full bg-cream px-2 py-1">{{
+          }}</Badge>
+          <Badge>{{
             branchName(rule.branchId)
-          }}</span>
+          }}</Badge>
         </div>
         <h2 class="m-0 break-words text-base font-bold">{{ rule.title }}</h2>
         <p class="m-0 break-words text-sm text-black/60">{{ rule.chatId }}</p>
@@ -55,13 +46,23 @@
             · {{ t(`telegram.delivery.${rule.lastStatus}`) }}</template
           >
         </p>
-        <button type="button" class="btn-soft" @click="open(rule)">
-          <Pencil :size="14" aria-hidden="true" />{{ t("telegram.edit") }}
-        </button>
+        <Button variant="subtle" size="lg" type="button" @click="open(rule)">
+          <template #prefix><Pencil :size="14" aria-hidden="true" /></template>{{ t("telegram.edit") }}
+        </Button>
       </article>
     </div>
 
     <TelegramDeliveryHistory v-if="historyOpen" @close="historyOpen = false" />
+
+    <ConfirmDialog
+      :open="confirmDelete"
+      :title="t('telegram.delete')"
+      :message="t('telegram.confirmDelete')"
+      :busy="busy === 'delete'"
+      :error="actionError"
+      @close="confirmDelete = false"
+      @confirm="remove"
+    />
 
     <ModalPanel
       :open="editing"
@@ -79,39 +80,31 @@
           <div class="grid gap-3 sm:grid-cols-2">
             <label
               ><span class="label">{{ t("telegram.source") }}</span>
-              <select
+              <Select
+                size="lg"
+                variant="outline"
                 v-model="draft.source"
-                class="input"
-                @change="changeSource"
-              >
-                <option
-                  v-for="source in telegramSources"
-                  :key="source"
-                  :value="source"
-                >
-                  {{ t(`telegram.sources.${source}`) }}
-                </option>
-              </select>
+                @update:model-value="changeSource"
+                :options="[...telegramSources.map(source => ({ label: t(`telegram.sources.${source}`), value: source }))]"
+              />
             </label>
             <label
               ><span class="label">{{ t("menus.branch") }}</span>
-              <select v-model="draft.branchId" class="input">
-                <option value="">{{ t("menus.allBranches") }}</option>
-                <option
-                  v-for="branch in branches"
-                  :key="branch.id"
-                  :value="branch.id"
-                >
-                  {{ branch.name }}
-                </option>
-              </select>
+              <Select
+                size="lg"
+                variant="outline"
+                v-model="draft.branchId"
+                :options="[
+                  { label: t('menus.allBranches'), value: '' },
+                  ...branches.map(branch => ({ label: branch.name, value: branch.id })),
+                ]"
+              />
             </label>
             <div>
               <label class="block">
                 <span class="label">{{ t("telegram.chat") }}</span>
-                <input
+                <TextInput size="lg" variant="outline"
                   v-model.trim="draft.chatId"
-                  class="input"
                   required
                   :maxlength="maxTelegramChatListLength"
                   placeholder="-1001234567890, 123456789"
@@ -127,10 +120,8 @@
             </div>
             <label
               ><span class="label">{{ t("telegram.token") }}</span>
-              <input
+              <Password size="lg" variant="outline"
                 v-model.trim="draft.botToken"
-                class="input"
-                type="password"
                 autocomplete="new-password"
                 :required="!draft.id"
                 maxlength="121"
@@ -140,18 +131,17 @@
           </div>
           <label class="block"
             ><span class="label">{{ t("telegram.title") }}</span>
-            <input
+            <TextInput size="lg" variant="outline"
               v-model="draft.title"
-              class="input"
               required
               maxlength="160"
             />
           </label>
           <label class="block"
             ><span class="label">{{ t("telegram.message") }}</span>
-            <textarea
+            <Textarea size="lg" variant="outline"
               v-model="draft.message"
-              class="input min-h-52 font-mono"
+              class="min-h-52 font-mono"
               required
               maxlength="6000"
               spellcheck="false"
@@ -167,16 +157,15 @@
             <div class="grid gap-3 sm:grid-cols-2">
               <div class="min-w-0 space-y-2">
                 <label class="flex items-center gap-2 text-sm font-bold">
-                  <input v-model="draft.showAcceptButton" type="checkbox" />
+                  <Checkbox v-model="draft.showAcceptButton" type="checkbox" />
                   {{ t("telegram.orderButtons.showAccept") }}
                 </label>
                 <label class="block">
                   <span class="label">{{
                     t("telegram.orderButtons.acceptUrl")
                   }}</span>
-                  <input
+                  <TextInput size="lg" variant="outline"
                     v-model.trim="draft.acceptUrl"
-                    class="input"
                     type="text"
                     inputmode="url"
                     :maxlength="maxTelegramOrderActionUrlLength"
@@ -190,16 +179,15 @@
               </div>
               <div class="min-w-0 space-y-2">
                 <label class="flex items-center gap-2 text-sm font-bold">
-                  <input v-model="draft.showCancelButton" type="checkbox" />
+                  <Checkbox v-model="draft.showCancelButton" type="checkbox" />
                   {{ t("telegram.orderButtons.showCancel") }}
                 </label>
                 <label class="block">
                   <span class="label">{{
                     t("telegram.orderButtons.cancelUrl")
                   }}</span>
-                  <input
+                  <TextInput size="lg" variant="outline"
                     v-model.trim="draft.cancelUrl"
-                    class="input"
                     type="text"
                     inputmode="url"
                     :maxlength="maxTelegramOrderActionUrlLength"
@@ -222,9 +210,8 @@
           <div>
             <label class="block max-w-52">
               <span class="label">{{ t("telegram.historyDays") }}</span>
-              <input
+              <TextInput size="lg" variant="outline"
                 v-model.number="draft.historyDays"
-                class="input"
                 type="number"
                 :min="minTelegramDeliveryRetentionDays"
                 :max="maxTelegramDeliveryRetentionDays"
@@ -246,13 +233,11 @@
             </p>
           </div>
           <label class="flex items-center gap-2 text-sm font-bold">
-            <input v-model="draft.enabled" type="checkbox" />{{
+            <Checkbox v-model="draft.enabled" type="checkbox" />{{
               t("telegram.enabled")
             }}
           </label>
-          <p v-if="actionError" class="m-0 text-sm text-red-700" role="alert">
-            {{ actionError }}
-          </p>
+          <Alert v-if="actionError" theme="red" :title="actionError" />
         </div>
         <aside class="min-w-0 space-y-3 rounded-2xl bg-cream p-4">
           <h3 class="m-0 text-sm font-bold">
@@ -270,39 +255,34 @@
             <code>format_date</code>, <code>format_datetime</code>,
             <code>format_currency</code>
           </p>
-          <details>
-            <summary class="cursor-pointer text-xs font-bold">
-              {{ t("telegram.sampleFields") }}
-            </summary>
+          <DisclosureSection :title="t('telegram.sampleFields')">
             <pre
               class="mt-2 max-h-64 overflow-auto rounded-lg bg-white p-3 text-xs"
               >{{
                 JSON.stringify({ doc: examples[draft.source] }, null, 2)
               }}</pre>
-          </details>
+          </DisclosureSection>
           <div class="flex flex-wrap gap-2">
-            <button
+            <Button variant="subtle" size="lg"
               type="button"
-              class="btn-soft"
               :disabled="!!busy || !hasTemplate"
               @click="preview"
             >
-              <Eye :size="14" aria-hidden="true" />{{ t("telegram.preview") }}
-            </button>
-            <button
+              <template #prefix><Eye :size="14" aria-hidden="true" /></template>{{ t("telegram.preview") }}
+            </Button>
+            <Button variant="subtle" size="lg"
               type="button"
-              class="btn-soft"
               :disabled="!!busy || !canSendTest"
               @click="sendTest"
             >
-              <Send :size="14" aria-hidden="true" />{{
+              <template #prefix><Send :size="14" aria-hidden="true" /></template>{{
                 t(
                   busy === "test"
                     ? "telegram.sendingTest"
                     : "telegram.sendTest",
                 )
               }}
-            </button>
+            </Button>
           </div>
           <p
             v-if="rendered"
@@ -319,11 +299,11 @@
             <h4 class="m-0 text-sm font-bold">
               {{ t("telegram.testResults") }}
             </h4>
-            <ul class="mb-0 mt-2 list-none space-y-2 p-0">
-              <li
+            <List divider="none" class="mb-0 mt-2 list-none space-y-2 p-0">
+              <ListRow
                 v-for="result in testResults"
                 :key="result.chatId"
-                class="text-sm"
+                class="!block text-sm"
               >
                 <div
                   class="flex flex-wrap items-center justify-between gap-x-2"
@@ -340,39 +320,37 @@
                 <p v-if="!result.ok" class="mb-0 mt-0.5 text-xs text-red-700">
                   {{ result.error }}
                 </p>
-              </li>
-            </ul>
+              </ListRow>
+            </List>
           </div>
         </aside>
       </form>
       <template #footer>
         <div class="flex flex-wrap items-center justify-between gap-3">
-          <button
+          <Button variant="subtle" size="lg"
             v-if="draft.id"
             type="button"
-            class="btn-soft text-red-700"
+            class="text-red-700"
             :disabled="!!busy"
-            @click="remove"
+            @click="confirmDelete = true; actionError = ''"
           >
-            <Trash2 :size="14" aria-hidden="true" />{{ t("telegram.delete") }}
-          </button>
+            <template #prefix><Trash2 :size="14" aria-hidden="true" /></template>{{ t("telegram.delete") }}
+          </Button>
           <div class="ml-auto flex gap-2">
-            <button
+            <Button variant="subtle" size="lg"
               type="button"
-              class="btn-soft"
               :disabled="!!busy"
               @click="close"
             >
               {{ t("common.cancel") }}
-            </button>
-            <button
+            </Button>
+            <Button variant="solid" size="lg"
               type="submit"
               form="telegram-notification-form"
-              class="btn-primary"
               :disabled="!!busy"
             >
               {{ t(busy === "save" ? "common.saving" : "telegram.save") }}
-            </button>
+            </Button>
           </div>
         </div>
       </template>
@@ -381,6 +359,8 @@
 </template>
 
 <script setup lang="ts">
+import { List, ListRow } from "frappe-ui/list";
+import { Badge, Password, LoadingText, Alert, Button, Checkbox, Select, TextInput, Textarea } from "frappe-ui";
 import { Eye, History, Pencil, Plus, Send, Trash2 } from "lucide-vue-next";
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -397,6 +377,8 @@ import {
   type TelegramTestResult,
   type TelegramDeliveryStatus,
 } from "../../../../shared/telegramNotifications";
+import ConfirmDialog from "../components/ConfirmDialog.vue";
+import DisclosureSection from "../components/DisclosureSection.vue";
 import ModalPanel from "../components/ModalPanel.vue";
 import PageHeader from "../components/PageHeader.vue";
 import TelegramDeliveryHistory from "../components/TelegramDeliveryHistory.vue";
@@ -429,6 +411,7 @@ const templates = ref(telegramTemplates);
 const examples = ref<Partial<Record<TelegramSource, unknown>>>({});
 const loading = ref(true);
 const editing = ref(false);
+const confirmDelete = ref(false);
 const historyOpen = ref(false);
 const busy = ref<"" | "save" | "delete" | "preview" | "test">("");
 const loadError = ref("");
@@ -621,11 +604,12 @@ async function save() {
 }
 
 async function remove() {
-  if (busy.value || !window.confirm(t("telegram.confirmDelete"))) return;
+  if (!confirmDelete.value || !draft.id || busy.value) return;
   busy.value = "delete";
   actionError.value = "";
   try {
     await admin.request(`${endpoint}/${draft.id}`, { method: "DELETE" });
+    confirmDelete.value = false;
     editing.value = false;
     draft.botToken = "";
     await load();

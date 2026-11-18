@@ -1,13 +1,16 @@
 <template>
   <div>
-    <PageHeader
-      :eyebrow="greeting"
-      :title="t('pages.overview.title')"
-      :description="t('pages.overview.description')"
-      ><button v-if="store.canAccessPage('catalog')" class="btn-primary" @click="$router.push('/catalog')">
-        <Plus :size="17" />{{ t("pages.overview.addDish") }}
-      </button></PageHeader
-    >
+    <PageHeader :title="t('pages.overview.title')">
+      <Button
+        variant="solid"
+        size="lg"
+        v-if="store.canAccessPage('catalog')"
+        @click="$router.push('/catalog')"
+      >
+        <template #prefix><Plus :size="17" /></template
+        >{{ t("pages.overview.addDish") }}
+      </Button>
+    </PageHeader>
     <section class="grid gap-4 md:grid-cols-3">
       <article v-for="stat in stats" :key="stat.label" class="card p-6">
         <div class="mb-8 flex items-center justify-between">
@@ -15,10 +18,7 @@
             class="grid size-10 place-items-center rounded-xl"
             :class="stat.color"
             ><component :is="stat.icon" :size="18" /></span
-          ><span
-            class="rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800"
-            >{{ stat.note }}</span
-          >
+          ><Badge theme="green" :label="stat.note" />
         </div>
         <div class="display text-[2.5rem] leading-none">{{ stat.value }}</div>
         <p class="mb-0 mt-2 text-sm text-black/50">{{ stat.label }}</p>
@@ -37,11 +37,11 @@
               {{ t("pages.overview.recentProductsDescription") }}
             </p>
           </div>
-          <RouterLink
+          <Button
             v-if="store.canAccessPage('catalog')"
-            to="/catalog"
-            class="text-sm font-semibold underline decoration-black/20 underline-offset-4 hover:decoration-black/60"
-            >{{ t("pages.overview.manageAll") }}</RouterLink
+            route="/catalog"
+            variant="ghost"
+            >{{ t("pages.overview.manageAll") }}</Button
           >
         </div>
         <div class="divide-y divide-black/[0.06]">
@@ -52,8 +52,7 @@
           >
             <span class="w-4 text-xs font-bold text-black/25">{{
               String(i + 1).padStart(2, "0")
-            }}</span
-            >
+            }}</span>
             <MenuProductThumbnail
               :src="product.imageUrl || product.images?.[0]?.url || ''"
               class="size-14 rounded-xl"
@@ -92,25 +91,20 @@
           </h2>
           <span class="display text-2xl">{{ readinessPercent }}%</span>
         </div>
-        <div
-          class="my-5 h-2 overflow-hidden rounded-full bg-black/[0.06]"
-          role="progressbar"
+        <Progress
+          class="my-5"
+          size="sm"
+          :value="readinessPercent"
           :aria-label="t('pages.overview.readinessProgress')"
-          aria-valuemin="0"
-          aria-valuemax="100"
-          :aria-valuenow="readinessPercent"
-        >
-          <div
-            class="h-full rounded-full bg-mint transition-[width] duration-300"
-            :style="{ width: `${readinessPercent}%` }"
-          ></div>
-        </div>
+        />
         <div class="space-y-3">
-          <RouterLink
+          <Button
             v-for="task in tasks"
             :key="task.name"
-            :to="task.to"
-            class="flex items-center gap-3 rounded-xl bg-cream p-3 transition hover:bg-black/[0.06] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+            :route="task.to"
+            variant="outline"
+            size="lg"
+            class="admin-row-button !h-auto min-h-12 w-full !justify-start text-start"
           >
             <span
               class="grid size-7 shrink-0 place-items-center rounded-full"
@@ -124,24 +118,28 @@
               :title="task.done ? t('pages.overview.done') : task.meta"
               >{{ task.done ? t("pages.overview.done") : task.meta }}</span
             ><ChevronRight :size="15" class="shrink-0 text-black/25" />
-          </RouterLink>
+          </Button>
         </div>
-        <RouterLink
+        <Button
+          variant="subtle"
+          size="lg"
           v-if="nextTask"
-          :to="nextTask.to"
-          class="btn-soft mt-5 w-full"
+          :route="nextTask.to"
+          class="mt-5 w-full"
         >
           {{ t("pages.overview.continueSetup") }} <ArrowRight :size="16" />
-        </RouterLink>
-        <a
+        </Button>
+        <Button
+          variant="subtle"
+          size="lg"
           v-else
           :href="store.publicMenuUrl"
           target="_blank"
           rel="noopener noreferrer"
-          class="btn-soft mt-5 w-full"
+          class="mt-5 w-full"
         >
           {{ t("pages.overview.viewLiveMenu") }} <ExternalLink :size="16" />
-        </a>
+        </Button>
       </article>
     </section>
     <MenuQrPanel
@@ -153,6 +151,7 @@
   </div>
 </template>
 <script setup lang="ts">
+import { Badge, Button, Progress } from "frappe-ui";
 import { computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import {
@@ -177,11 +176,6 @@ const { locale, t } = useI18n();
 onMounted(() => {
   void store.loadRecentProducts().catch(() => undefined);
 });
-const greeting = computed(() =>
-  t("pages.overview.greeting", {
-    name: store.user.displayName || t("pages.overview.fallbackName"),
-  }),
-);
 const money = (amount: number) =>
   formatCurrency(amount, store.business.currency);
 const productAvailable = (product: Product) =>
@@ -253,52 +247,56 @@ const tasks = computed(() => {
   const profileMissing = missingProfileDetails.value.length;
   const photoMissing = store.readiness.missingPhotoProducts;
 
-  return ([
-    {
-      name: t("pages.overview.tasks.profile"),
-      done: profileMissing === 0,
-      meta: t("pages.overview.tasks.profileMissingDetails", {
-        details: formattedMissingProfileDetails.value,
-      }),
-      to: "/business",
-      page: "business",
-    },
-    {
-      name: t("pages.overview.tasks.menu"),
-      done: menuComplete,
-      meta:
-        publishedCategoryIds.value.size === 0
-          ? t("pages.overview.tasks.addCategory")
-          : store.readiness.publishedProducts === 0
-            ? t("pages.overview.tasks.addFirstDish")
-            : t("pages.overview.tasks.published", {
-                count: store.readiness.publishedProducts,
-              }),
-      to: "/catalog",
-      page: "catalog",
-    },
-    {
-      name: t("pages.overview.tasks.photos"),
-      done: photosComplete,
-      meta:
-        store.readiness.publishedProducts === 0
-          ? t("pages.overview.tasks.addDishFirst")
-          : t("pages.overview.tasks.photosMissing", { count: photoMissing }),
-      to: "/catalog?filter=missing-photos",
-      page: "catalog",
-    },
-    {
-      name: t("pages.overview.tasks.qr"),
-      done: Boolean(store.readiness.firstQrDownloadedAt),
-      meta: t("pages.overview.tasks.downloadOnce"),
-      to: "/qr-designs",
-      page: "qrDesigns",
-    },
-  ] as const).filter((task) => store.canAccessPage(task.page));
+  return (
+    [
+      {
+        name: t("pages.overview.tasks.profile"),
+        done: profileMissing === 0,
+        meta: t("pages.overview.tasks.profileMissingDetails", {
+          details: formattedMissingProfileDetails.value,
+        }),
+        to: "/business",
+        page: "business",
+      },
+      {
+        name: t("pages.overview.tasks.menu"),
+        done: menuComplete,
+        meta:
+          publishedCategoryIds.value.size === 0
+            ? t("pages.overview.tasks.addCategory")
+            : store.readiness.publishedProducts === 0
+              ? t("pages.overview.tasks.addFirstDish")
+              : t("pages.overview.tasks.published", {
+                  count: store.readiness.publishedProducts,
+                }),
+        to: "/catalog",
+        page: "catalog",
+      },
+      {
+        name: t("pages.overview.tasks.photos"),
+        done: photosComplete,
+        meta:
+          store.readiness.publishedProducts === 0
+            ? t("pages.overview.tasks.addDishFirst")
+            : t("pages.overview.tasks.photosMissing", { count: photoMissing }),
+        to: "/catalog?filter=missing-photos",
+        page: "catalog",
+      },
+      {
+        name: t("pages.overview.tasks.qr"),
+        done: Boolean(store.readiness.firstQrDownloadedAt),
+        meta: t("pages.overview.tasks.downloadOnce"),
+        to: "/qr-designs",
+        page: "qrDesigns",
+      },
+    ] as const
+  ).filter((task) => store.canAccessPage(task.page));
 });
 const readinessPercent = computed(() =>
   Math.round(
-    (tasks.value.filter((task) => task.done).length / (tasks.value.length || 1)) * 100,
+    (tasks.value.filter((task) => task.done).length /
+      (tasks.value.length || 1)) *
+      100,
   ),
 );
 const nextTask = computed(() => tasks.value.find((task) => !task.done));

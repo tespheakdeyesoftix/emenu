@@ -426,7 +426,7 @@ export const useAdminStore = defineStore("admin", {
       localStorage.setItem("mf_token", result.token);
       this.notify("បានប្តូរពាក្យសម្ងាត់ដោយជោគជ័យ។");
     },
-    async request(path: string, init?: RequestInit) {
+    async request(path: string, init?: RequestInit, responseType: "json" | "blob" = "json") {
       const token = localStorage.getItem("mf_token");
       const response = await fetch(`${API}${path}`, {
         ...init,
@@ -451,6 +451,7 @@ export const useAdminStore = defineStore("admin", {
           "សម័យប្រើប្រាស់របស់អ្នកបានផុតកំណត់។ សូមចូលគណនីម្តងទៀត។",
         );
       }
+      if (response.ok && responseType === "blob") return response.blob();
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         if (

@@ -1,9 +1,5 @@
 <template>
-  <PageHeader
-    eyebrow="Tenant onboarding"
-    title="Register a business"
-    description="Create the owner account and a ready-to-configure menu workspace."
-  />
+  <PageHeader title="Register a business" />
   <form
     class="mx-auto grid max-w-4xl gap-6 lg:grid-cols-[1fr_.8fr]"
     @submit.prevent="submit"

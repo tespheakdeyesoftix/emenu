@@ -1,54 +1,49 @@
 <template>
   <div v-if="selecting || (!hideTrigger && pageProductIds.length)" class="flex flex-wrap items-center gap-2">
-    <button
+    <Button variant="subtle" size="lg"
       v-if="!selecting"
       type="button"
-      class="btn-soft"
       :disabled="disabled"
       @click="selecting = true"
     >
-      <Trash2 :size="16" aria-hidden="true" />
+      <template #prefix><Trash2 :size="16" aria-hidden="true" /></template>
       {{ t("bulkProductDelete.action") }}
-    </button>
+    </Button>
     <template v-else>
       <span class="mr-1 text-sm font-bold text-black/60" role="status">
         {{ t("bulkProductDelete.selected", { count: selectedIds.length }) }}
       </span>
-      <button type="button" class="btn-soft" :disabled="disabled || selectingMatches || pageSelected" @click="selectPage">
+      <Button variant="subtle" size="lg" type="button" :disabled="disabled || selectingMatches || pageSelected" @click="selectPage">
         {{ t("bulkProductDelete.selectPage") }}
-      </button>
-      <button
+      </Button>
+      <Button variant="subtle" size="lg"
         type="button"
-        class="btn-soft"
         :disabled="disabled || selectingMatches || !pageProductIds.length"
         @click="selectAllMatches"
       >
         {{ t(selectingMatches ? "common.loading" : "menus.selectAll") }}
-      </button>
-      <button
+      </Button>
+      <Button variant="subtle" size="lg"
         type="button"
-        class="btn-soft"
         :disabled="!selectedIds.length && !selectingMatches"
         @click="clearSelection"
       >
         {{ t("menus.unselectAll") }}
-      </button>
-      <button type="button" class="btn-soft" @click="cancel">
+      </Button>
+      <Button variant="subtle" size="lg" type="button" @click="cancel">
         {{ t("common.cancel") }}
-      </button>
-      <button
+      </Button>
+      <Button variant="subtle" size="lg"
         type="button"
-        class="btn-soft text-red-700"
+        class="text-red-700"
         :disabled="disabled || selectingMatches || !selectedIds.length"
         @click="openConfirmation"
       >
-        <Trash2 :size="16" aria-hidden="true" />
+        <template #prefix><Trash2 :size="16" aria-hidden="true" /></template>
         {{ t("bulkProductDelete.deleteSelected") }}
-      </button>
+      </Button>
     </template>
-    <p v-if="selectionError" class="m-0 w-full text-sm text-red-700" role="alert">
-      {{ selectionError }}
-    </p>
+    <Alert v-if="selectionError" theme="red" :title="selectionError" class="w-full" />
   </div>
   <ConfirmDialog
     :open="pendingIds.length > 0"
@@ -62,6 +57,7 @@
 </template>
 
 <script setup lang="ts">
+import { Alert, Button } from "frappe-ui";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Trash2 } from "lucide-vue-next";

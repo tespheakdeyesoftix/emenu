@@ -1,5 +1,5 @@
 <template>
-  <PageHeader eyebrow="Subscription settings" title="Subscription plans" description="Set prices, Control features, and which plans customers can choose." />
+  <PageHeader title="Subscription plans" />
   <p v-if="error" class="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700" role="alert">{{ error }}</p>
   <div class="grid items-start gap-6 xl:grid-cols-2">
     <section class="panel p-6">

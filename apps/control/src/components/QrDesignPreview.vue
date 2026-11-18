@@ -6,7 +6,7 @@
       v-if="loading"
       class="absolute inset-0 z-10 grid place-items-center bg-white/60 backdrop-blur-sm"
     >
-      <LoaderCircle :size="28" class="animate-spin text-black/35" />
+      <Spinner class="!size-[28px] text-black/35" />
     </div>
     <canvas
       v-show="!failed"
@@ -25,7 +25,7 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { LoaderCircle } from "lucide-vue-next";
+import { Spinner } from "frappe-ui";
 import { renderQrCanvas, type QrRenderInput } from "../utils/qrRenderer";
 
 const props = defineProps<{ input: QrRenderInput }>();

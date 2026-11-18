@@ -14,77 +14,60 @@
       <p class="mb-3 mt-1 text-sm text-black/55">
         {{ t("menus.moveMenuHelp") }}
       </p>
-      <input
+      <TextInput
+        size="lg"
+        variant="outline"
         ref="parentSearch"
         v-model="parentQuery"
         type="search"
-        class="input"
         :placeholder="t('menus.searchMenus')"
         :aria-label="t('menus.searchMenus')"
       />
-      <ul v-if="parentOptions.length" class="mb-0 mt-3 list-none space-y-1 p-0">
-        <li v-for="{ id, label } in parentOptions" :key="id">
-          <button
+      <List divider="none" v-if="parentOptions.length" class="mb-0 mt-3 list-none space-y-1 p-0">
+        <ListRow v-for="{ id, label } in parentOptions" :key="id" class="!block">
+          <Button
+            variant="outline"
             type="button"
-            class="flex min-h-11 w-full items-center gap-2 rounded-xl border border-black/10 px-3 py-2 text-start text-sm hover:bg-cream"
+            class="!h-auto min-h-11 w-full !justify-start !whitespace-normal text-start"
             @click="moveTo(id)"
           >
-            <Folder :size="16" class="shrink-0" aria-hidden="true" />
+            <template #prefix><Folder :size="16" aria-hidden="true" /></template>
             <span class="min-w-0 [overflow-wrap:anywhere]">{{ label }}</span>
-          </button>
-        </li>
-      </ul>
-      <p v-else class="my-4 text-sm text-black/55" role="status">
-        {{ t("menus.noParentOptions") }}
-      </p>
+          </Button>
+        </ListRow>
+      </List>
+      <Alert v-else :title="t('menus.noParentOptions')" class="my-4" />
     </div>
     <template v-else>
       <div class="mb-3 flex flex-wrap items-start justify-between gap-2">
         <p class="m-0 max-w-xl text-sm text-black/60">
           {{ t("menus.sortTreeHelp") }}
         </p>
-        <button
+        <Button
+          variant="outline"
           v-if="expandableIds.length"
           type="button"
-          class="min-h-9 rounded-lg border border-black/10 px-3 text-sm font-semibold hover:bg-cream"
+          size="lg"
           :disabled="saving || !!draggedSubmenuId"
           @click="toggleAll"
         >
           {{
             t(hasCollapsedBranches ? "menus.expandAll" : "menus.collapseAll")
           }}
-        </button>
+        </Button>
       </div>
-      <p v-if="moveNotice" class="mb-3 mt-0 text-sm font-medium" role="status">
-        {{ moveNotice }}
-      </p>
+      <Alert v-if="moveNotice" :title="moveNotice" class="mb-3 mt-0" />
       <MenuSidebarTree
         v-slot="{ menu }"
         :children="draftChildren"
         :collapsed="collapsed"
-        :dragged-submenu-id="draggedSubmenuId"
-        :blocked-parents="blockedParents"
         :busy="saving"
         editable
         all-sources
         @reorder="reorder"
+        @toggle="toggle"
         @drag="draggedSubmenuId = $event"
       >
-        <button
-          v-if="draftChildren.has(menu.id)"
-          type="button"
-          class="grid size-7 shrink-0 place-items-center rounded-lg hover:bg-cream sm:size-8"
-          :aria-expanded="!collapsed.has(menu.id)"
-          :aria-label="t('menus.submenusOf', { name: menuName(menu, locale) })"
-          @click="toggle(menu.id)"
-        >
-          <ChevronRight
-            :size="16"
-            :class="{ 'rotate-90': !collapsed.has(menu.id) }"
-            aria-hidden="true"
-          />
-        </button>
-        <span v-else class="w-7 shrink-0 sm:w-8" aria-hidden="true" />
         <span
           :id="rowId(menu.id)"
           tabindex="-1"
@@ -92,19 +75,21 @@
           :class="menu.id === focusedMenuId ? 'bg-ink text-white' : 'bg-cream'"
           >{{ menuName(menu, locale) }}</span
         >
-        <button
+        <Button
+          variant="ghost"
           v-if="menu.parentId"
           type="button"
-          class="flex min-h-9 shrink-0 items-center justify-center gap-1 rounded-lg px-1.5 text-xs font-semibold hover:bg-cream sm:border sm:border-black/10 sm:px-2"
+          class="min-h-9 !gap-1 !px-1.5 sm:!px-2"
           :disabled="saving"
           :aria-label="t('menus.moveMenuTo', { name: menuName(menu, locale) })"
           :title="t('menus.moveTo')"
           @click="openParentPicker(menu)"
         >
-          <FolderInput :size="16" aria-hidden="true" />
+          <template #prefix><FolderInput :size="16" aria-hidden="true" /></template>
           <span class="hidden sm:inline">{{ t("menus.moveTo") }}</span>
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="ghost"
           type="button"
           class="grid size-8 shrink-0 place-items-center rounded-lg hover:bg-cream disabled:opacity-25 sm:size-9"
           :disabled="saving || !neighbor(menu, -1)"
@@ -112,9 +97,10 @@
           :title="t('common.moveUp')"
           @click="move(menu, -1)"
         >
-          <ArrowUp :size="16" aria-hidden="true" />
-        </button>
-        <button
+          <template #icon><ArrowUp :size="16" aria-hidden="true" /></template>
+        </Button>
+        <Button
+          variant="ghost"
           type="button"
           class="grid size-8 shrink-0 place-items-center rounded-lg hover:bg-cream disabled:opacity-25 sm:size-9"
           :disabled="saving || !neighbor(menu, 1)"
@@ -122,40 +108,41 @@
           :title="t('common.moveDown')"
           @click="move(menu, 1)"
         >
-          <ArrowDown :size="16" aria-hidden="true" />
-        </button>
+          <template #icon><ArrowDown :size="16" aria-hidden="true" /></template>
+        </Button>
       </MenuSidebarTree>
     </template>
-    <p v-if="error" class="mb-0 mt-4 text-sm text-red-700" role="alert">
-      {{ error }}
-    </p>
+    <Alert v-if="error" theme="red" :title="error" class="mb-0 mt-4" />
     <template #footer>
       <div class="flex flex-wrap justify-end gap-2">
-        <button
+        <Button
+          variant="subtle"
+          size="lg"
           v-if="movingMenu"
           type="button"
-          class="btn-soft"
           @click="closeParentPicker"
         >
           {{ t("menus.backToSorting") }}
-        </button>
+        </Button>
         <template v-else>
-          <button
+          <Button
+            variant="subtle"
+            size="lg"
             type="button"
-            class="btn-soft"
             :disabled="saving"
             @click="$emit('close')"
           >
             {{ t("common.cancel") }}
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="solid"
+            size="lg"
             type="button"
-            class="btn-primary"
             :disabled="saving || !updates.length"
             @click="$emit('save', updates)"
           >
             {{ t(saving ? "common.saving" : "menus.saveOrder") }}
-          </button>
+          </Button>
         </template>
       </div>
     </template>
@@ -163,13 +150,9 @@
 </template>
 
 <script setup lang="ts">
-import {
-  ArrowDown,
-  ArrowUp,
-  ChevronRight,
-  Folder,
-  FolderInput,
-} from "lucide-vue-next";
+import { List, ListRow } from "frappe-ui/list";
+import { Alert, Button, TextInput } from "frappe-ui";
+import { ArrowDown, ArrowUp, Folder, FolderInput } from "lucide-vue-next";
 import { computed, nextTick, onMounted, reactive, ref, useId } from "vue";
 import { useI18n } from "vue-i18n";
 import {
@@ -204,7 +187,7 @@ const draggedSubmenuId = ref<string | null>(null);
 const movingMenuId = ref("");
 const movingMenu = computed(() => draftById.value.get(movingMenuId.value));
 const parentQuery = ref("");
-const parentSearch = ref<HTMLInputElement>();
+const parentSearch = ref<InstanceType<typeof TextInput>>();
 const moveNotice = ref("");
 const blockedParents = computed(() => {
   const id = draggedSubmenuId.value ?? movingMenuId.value;

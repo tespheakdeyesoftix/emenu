@@ -1,55 +1,64 @@
 <template>
   <div>
-    <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <h1 class="display m-0 text-2xl">{{ t("pages.tables.title") }}</h1>
+    <PageHeader :title="t('pages.tables.title')">
       <div v-if="!admin.isReadOnly" class="flex flex-wrap items-center gap-2">
-        <button type="button" class="btn-soft" :disabled="busy || store.loading" @click="openNewGroup">
-          <FolderPlus :size="16" aria-hidden="true" />{{ t("pages.tables.addGroup") }}
-        </button>
-        <button
+        <Button variant="subtle" size="lg" type="button" :disabled="busy || store.loading" @click="openNewGroup">
+          <template #prefix><FolderPlus :size="16" aria-hidden="true" /></template>{{ t("pages.tables.addGroup") }}
+        </Button>
+        <Button variant="solid" size="lg"
           type="button"
-          class="btn-primary"
           :disabled="busy || store.loading || !availableGroups.length"
           @click="openNewTable"
         >
-          <Plus :size="16" aria-hidden="true" />{{ t("pages.tables.addTable") }}
-        </button>
+          <template #prefix><Plus :size="16" aria-hidden="true" /></template>{{ t("pages.tables.addTable") }}
+        </Button>
         <MenuActionPopover
           v-if="!selectingDelete && (filteredTables.length || visibleGroups.length)"
           v-slot="{ close }"
           :label="t('common.moreActions')"
           :disabled="busy || store.loading"
         >
-          <button type="button" class="text-red-700" @click="close(); selectingDelete = true">
-            <Trash2 :size="16" aria-hidden="true" />{{ t("tableDeletion.bulk") }}
-          </button>
+          <Button variant="ghost" type="button" class="text-red-700" @click="close(); selectingDelete = true">
+            <template #prefix><Trash2 :size="16" aria-hidden="true" /></template>{{ t("tableDeletion.bulk") }}
+          </Button>
         </MenuActionPopover>
       </div>
-    </header>
+    </PageHeader>
     <div class="card mb-5 flex flex-wrap items-center gap-3 p-3">
       <div class="relative w-full sm:w-72">
-        <Search
-          class="absolute left-3 top-1/2 -translate-y-1/2 text-black/30"
-          :size="15"
-        />
-        <input
+        <TextInput size="lg" variant="outline"
           v-model="query"
           type="search"
-          class="input !rounded-xl !py-2.5 !pl-9 !text-left !text-xs"
           :aria-label="t('pages.tables.search')"
-          :placeholder="t('pages.tables.search')"
-        />
+          :placeholder="t('pages.tables.search')">
+          <template #prefix>
+            <Search :size="15" aria-hidden="true" />
+          </template>
+        </TextInput>
       </div>
-      <select v-model="selectedBranchId" class="input !w-auto max-w-full" :aria-label="t('menus.branch')" @change="selectedGroupId = ''">
-        <option value="">{{ t('menus.allBranches') }}</option>
-        <option v-for="branch in store.branches" :key="branch.id" :value="branch.id">{{ branch.name }}</option>
-      </select>
-      <select v-model="selectedGroupId" class="input !w-auto max-w-full sm:max-w-xs" :aria-label="t('pages.tables.groups')">
-        <option value="">{{ t("pages.tables.allGroups") }}</option>
-        <option v-for="group in visibleGroups" :key="group.id" :value="group.id">
-          {{ group.name }}<template v-if="!selectedBranchId"> · {{ branchName(group.branchId) }}</template>
-        </option>
-      </select>
+      <Select
+        size="lg"
+        variant="outline"
+        v-model="selectedBranchId"
+        class="!w-auto max-w-full"
+        :aria-label="t('menus.branch')"
+        @update:model-value="selectedGroupId = ''"
+        :options="[
+          { label: t('menus.allBranches'), value: '' },
+          ...store.branches.map(branch => ({ label: branch.name, value: branch.id })),
+        ]"
+      />
+      <Select
+        size="lg"
+        variant="outline"
+        v-model="selectedGroupId"
+        class="!w-auto max-w-full sm:max-w-xs"
+        :aria-label="t('pages.tables.groups')"
+        :options="[
+          { label: t('pages.tables.allGroups'), value: '' },
+          ...visibleGroups.map(group => ({ label: [group.name, (!selectedBranchId ? [' · ', branchName(group.branchId)].join('') : '')].join(''), value: group.id })),
+        ]"
+      />
       <span class="text-sm font-semibold text-black/55">
         {{ t("pages.tables.count", { count: filteredTables.length }) }}
       </span>
@@ -60,79 +69,69 @@
         <span class="mr-1 text-sm font-bold text-black/60" role="status">
           {{ t("tableDeletion.selected", { tables: selectedTableIds.length, groups: selectedGroupIds.length }) }}
         </span>
-        <button type="button" class="btn-soft" :disabled="busy || !filteredTables.length" @click="selectMatchingTables">
+        <Button variant="subtle" size="lg" type="button" :disabled="busy || !filteredTables.length" @click="selectMatchingTables">
           {{ t("tableDeletion.selectTables") }}
-        </button>
-        <button type="button" class="btn-soft" :disabled="busy || !visibleGroups.length" @click="selectVisibleGroups">
+        </Button>
+        <Button variant="subtle" size="lg" type="button" :disabled="busy || !visibleGroups.length" @click="selectVisibleGroups">
           {{ t("tableDeletion.selectGroups") }}
-        </button>
-        <button type="button" class="btn-soft" :disabled="busy || !hasSelection" @click="clearDeleteSelection">
+        </Button>
+        <Button variant="subtle" size="lg" type="button" :disabled="busy || !hasSelection" @click="clearDeleteSelection">
           {{ t("menus.unselectAll") }}
-        </button>
-        <button type="button" class="btn-soft" :disabled="busy" @click="closeBulkDelete">
+        </Button>
+        <Button variant="subtle" size="lg" type="button" :disabled="busy" @click="closeBulkDelete">
           {{ t("common.cancel") }}
-        </button>
-        <button
+        </Button>
+        <Button variant="subtle" size="lg"
           type="button"
-          class="btn-soft text-red-700"
+          class="text-red-700"
           :disabled="busy || !hasSelection"
           @click="requestDelete(selectedTableIds, selectedGroupIds)"
         >
           {{ t("tableDeletion.deleteSelected") }}
-        </button>
+        </Button>
       </div>
     </div>
 
     <div v-if="store.loading" class="card grid min-h-80 place-items-center">
-      <LoaderCircle :size="32" class="animate-spin text-black/25" />
+      <Spinner class="!size-[32px] text-black/25" />
     </div>
 
     <div v-else class="grid items-start gap-5 xl:grid-cols-[300px_minmax(0,1fr)]">
       <aside class="card min-w-0 p-3">
         <h2 class="display m-0 px-2 pb-3 pt-1 text-lg">{{ t("pages.tables.groups") }}</h2>
 
-        <button
+        <Button
           type="button"
-          class="mb-2 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-bold transition"
-          :class="
-            !selectedGroupId
-              ? 'bg-ink text-white'
-              : 'text-black/55 hover:bg-cream'
-          "
+          size="lg"
+          :variant="!selectedGroupId ? 'solid' : 'ghost'"
+          class="mb-2 w-full !justify-start text-start"
           :aria-pressed="!selectedGroupId"
           @click="selectedGroupId = ''"
         >
-          <LayoutGrid :size="17" aria-hidden="true" />{{ t("pages.tables.allTables") }}
-          <span
-            class="ml-auto rounded-full px-2 py-0.5 text-xs"
-            :class="!selectedGroupId ? 'bg-white/10' : 'bg-black/[.06]'"
-          >
-            {{ branchTables.length }}
-          </span>
-        </button>
+          <template #prefix><LayoutGrid :size="17" aria-hidden="true" /></template>{{ t("pages.tables.allTables") }}
+          <template #suffix>
+          <Badge :class="!selectedGroupId ? 'bg-white/10' : 'bg-black/[.06]'" class="ml-auto rounded-full px-2 py-0.5 text-xs">{{ branchTables.length }}</Badge>
+        </template>
+        </Button>
 
         <div
           v-for="group in visibleGroups"
           :key="group.id"
           class="mb-1 flex items-center gap-1"
         >
-          <input
+          <Checkbox
             v-if="selectingDelete && !admin.isReadOnly"
-            v-model="selectedGroupIds"
-            type="checkbox"
-            class="size-4 shrink-0 accent-red-600"
-            :value="group.id"
+            :model-value="selectedGroupIds.includes(group.id)"
+            class="shrink-0"
             :disabled="busy"
             :aria-label="t('tableDeletion.selectGroup', { name: group.name })"
+            @update:model-value="selectedGroupIds = setIdSelected(selectedGroupIds, group.id, Boolean($event))"
           />
-          <button
+          <Button
             type="button"
-            class="flex min-w-0 flex-1 items-start gap-2 rounded-xl px-2 py-2.5 text-start transition"
-            :class="
-              selectedGroupId === group.id
-                ? 'bg-ink text-white'
-                : 'hover:bg-cream'
-            "
+            size="lg"
+            :variant="selectedGroupId === group.id ? 'solid' : 'ghost'"
+            class="admin-row-button !h-auto min-h-11 min-w-0 flex-1 !shrink !justify-start !px-2 py-2 text-start"
             :aria-pressed="selectedGroupId === group.id"
             @click="selectedGroupId = group.id"
           >
@@ -144,12 +143,8 @@
                 <span v-else> · {{ t("pages.tables.activeCount", { count: group.activeTableCount || 0 }) }}</span>
               </small>
             </span>
-            <span
-              class="shrink-0 rounded-full px-2 py-0.5 text-[11px] tabular-nums"
-              :class="selectedGroupId === group.id ? 'bg-white/10' : 'bg-cream text-black/60'"
-              :aria-label="t('pages.tables.count', { count: group.tableCount || 0 })"
-            >{{ group.tableCount || 0 }}</span>
-          </button>
+            <Badge :class="selectedGroupId === group.id ? 'bg-white/10' : 'bg-cream text-black/60'" :aria-label="t('pages.tables.count', { count: group.tableCount || 0 })" class="shrink-0 rounded-full px-2 py-0.5 text-[11px] tabular-nums">{{ group.tableCount || 0 }}</Badge>
+          </Button>
           <MenuActionPopover
             v-if="!selectingDelete && !admin.isReadOnly"
             v-slot="{ close }"
@@ -157,30 +152,30 @@
             :label="t('common.actionsFor', { name: group.name })"
             :disabled="busy"
           >
-            <button type="button" @click="close(); openEditGroup(group)">
-              <Pencil :size="16" aria-hidden="true" />{{ t("common.edit") }}
-            </button>
-            <button
+            <Button variant="ghost" type="button" @click="close(); openEditGroup(group)">
+              <template #prefix><Pencil :size="16" aria-hidden="true" /></template>{{ t("common.edit") }}
+            </Button>
+            <Button variant="ghost"
               type="button"
               :disabled="!canMoveGroup(group, -1)"
               @click="close(); moveGroup(group, -1)"
             >
-              <ArrowUp :size="16" aria-hidden="true" />{{ t("common.moveUp") }}
-            </button>
-            <button
+              <template #prefix><ArrowUp :size="16" aria-hidden="true" /></template>{{ t("common.moveUp") }}
+            </Button>
+            <Button variant="ghost"
               type="button"
               :disabled="!canMoveGroup(group, 1)"
               @click="close(); moveGroup(group, 1)"
             >
-              <ArrowDown :size="16" aria-hidden="true" />{{ t("common.moveDown") }}
-            </button>
-            <button
+              <template #prefix><ArrowDown :size="16" aria-hidden="true" /></template>{{ t("common.moveDown") }}
+            </Button>
+            <Button variant="ghost"
               type="button"
               class="text-red-700"
               @click="close(); requestDelete([], [group.id], t('tableDeletion.deleteGroup', { name: group.name }))"
             >
-              <Trash2 :size="16" aria-hidden="true" />{{ t("common.delete") }}
-            </button>
+              <template #prefix><Trash2 :size="16" aria-hidden="true" /></template>{{ t("common.delete") }}
+            </Button>
           </MenuActionPopover>
         </div>
 
@@ -198,14 +193,13 @@
           :key="table.id"
           class="card flex items-start gap-3 p-3 sm:items-center sm:gap-4 sm:p-4"
         >
-          <input
+          <Checkbox
             v-if="selectingDelete && !admin.isReadOnly"
-            v-model="selectedTableIds"
-            type="checkbox"
-            class="size-4 shrink-0 accent-red-600"
-            :value="table.id"
+            :model-value="selectedTableIds.includes(table.id)"
+            class="shrink-0"
             :disabled="busy"
             :aria-label="t('tableDeletion.selectTable', { name: table.code })"
+            @update:model-value="selectedTableIds = setIdSelected(selectedTableIds, table.id, Boolean($event))"
           />
           <span
             class="grid size-12 shrink-0 place-items-center rounded-xl bg-cream text-black/30 sm:size-20 sm:rounded-2xl"
@@ -215,11 +209,7 @@
           <div class="min-w-0 flex-1">
             <div class="mb-1 flex flex-wrap items-baseline gap-2">
               <h3 class="m-0 min-w-0 font-bold [overflow-wrap:anywhere]">{{ table.label }}</h3>
-              <span
-                class="max-w-full rounded-full bg-mint px-2 py-0.5 text-[10px] font-extrabold uppercase [overflow-wrap:anywhere]"
-              >
-                {{ table.code }}
-              </span>
+              <Badge theme="green" class="max-w-full uppercase [overflow-wrap:anywhere]">{{ table.code }}</Badge>
             </div>
             <p class="m-0 text-xs font-medium text-black/55 [overflow-wrap:anywhere]">
               {{ table.groupName }}
@@ -240,30 +230,30 @@
             :label="t('common.actionsFor', { name: table.label })"
             :disabled="busy"
           >
-            <button type="button" @click="close(); openEditTable(table)">
-              <Pencil :size="16" aria-hidden="true" />{{ t("common.edit") }}
-            </button>
-            <button
+            <Button variant="ghost" type="button" @click="close(); openEditTable(table)">
+              <template #prefix><Pencil :size="16" aria-hidden="true" /></template>{{ t("common.edit") }}
+            </Button>
+            <Button variant="ghost"
               type="button"
               :disabled="!canMoveTable(table, -1)"
               @click="close(); moveTable(table, -1)"
             >
-              <ArrowUp :size="16" aria-hidden="true" />{{ t("common.moveUp") }}
-            </button>
-            <button
+              <template #prefix><ArrowUp :size="16" aria-hidden="true" /></template>{{ t("common.moveUp") }}
+            </Button>
+            <Button variant="ghost"
               type="button"
               :disabled="!canMoveTable(table, 1)"
               @click="close(); moveTable(table, 1)"
             >
-              <ArrowDown :size="16" aria-hidden="true" />{{ t("common.moveDown") }}
-            </button>
-            <button
+              <template #prefix><ArrowDown :size="16" aria-hidden="true" /></template>{{ t("common.moveDown") }}
+            </Button>
+            <Button variant="ghost"
               type="button"
               class="text-red-700"
               @click="close(); requestDelete([table.id], [], t('tableDeletion.deleteTable', { name: table.code }))"
             >
-              <Trash2 :size="16" aria-hidden="true" />{{ t("common.delete") }}
-            </button>
+              <template #prefix><Trash2 :size="16" aria-hidden="true" /></template>{{ t("common.delete") }}
+            </Button>
           </MenuActionPopover>
         </article>
 
@@ -294,7 +284,7 @@
       @confirm="confirmDelete"
     >
       <label v-if="pendingDelete && pendingDelete.groupIds.length" class="mt-4 flex items-center gap-3 text-sm font-semibold">
-        <input v-model="pendingDelete.includeGroupTables" type="checkbox" class="size-4" :disabled="busy" />
+        <Checkbox v-model="pendingDelete.includeGroupTables" type="checkbox" class="size-4" :disabled="busy" />
         {{ t("tableDeletion.includeGroupTables") }}
       </label>
     </ConfirmDialog>
@@ -306,15 +296,18 @@
     >
       <form id="table-group-form" class="space-y-4" @submit.prevent="saveGroup">
         <label v-if="!editingGroupId"><span class="label">{{ t('menus.branch') }}</span>
-          <select v-model="groupForm.branchId" class="input" required>
-            <option v-for="branch in store.activeBranches" :key="branch.id" :value="branch.id">{{ branch.name }}</option>
-          </select>
+          <Select
+            size="lg"
+            variant="outline"
+            v-model="groupForm.branchId"
+            required
+            :options="[...store.activeBranches.map(branch => ({ label: branch.name, value: branch.id }))]"
+          />
         </label>
         <label>
           <span class="label">ឈ្មោះក្រុម</span>
-          <input
+          <TextInput size="lg" variant="outline"
             v-model.trim="groupForm.name"
-            class="input"
             required
             placeholder="ឧ. បន្ទប់ទទួលភ្ញៀវធំ"
           />
@@ -323,23 +316,21 @@
           v-if="editingGroupId"
           class="flex items-center gap-3 rounded-2xl bg-cream p-4 text-sm font-bold"
         >
-          <input
+          <Checkbox
             v-model="groupForm.isActive"
             type="checkbox"
             class="size-4 accent-black"
           />
           បើកប្រើក្រុមនេះ
         </label>
-        <p v-if="formError" class="m-0 text-xs font-bold text-red-600">
-          {{ formError }}
-        </p>
+        <Alert v-if="formError" theme="red" :title="formError" />
       </form>
 
       <template #footer>
-        <button
+        <Button variant="solid" size="lg"
           type="submit"
           form="table-group-form"
-          class="btn-primary w-full"
+          class="w-full"
           :disabled="busy"
         >
           {{
@@ -349,7 +340,7 @@
                 ? "រក្សាទុកក្រុម"
                 : "បន្ថែមក្រុម"
           }}
-        </button>
+        </Button>
       </template>
     </ModalPanel>
 
@@ -366,22 +357,22 @@
       >
         <label>
           <span class="label">ក្រុមតុ</span>
-          <select v-model="tableForm.groupId" class="input" required>
-            <option value="" disabled>ជ្រើសរើសក្រុម</option>
-            <option
-              v-for="group in availableGroups"
-              :key="group.id"
-              :value="group.id"
-            >
-              {{ group.name }}
-            </option>
-          </select>
+          <Select
+            size="lg"
+            variant="outline"
+            v-model="tableForm.groupId"
+            required
+            :options="[
+              { label: 'ជ្រើសរើសក្រុម', value: '', disabled: true },
+              ...availableGroups.map(group => ({ label: group.name, value: group.id })),
+            ]"
+          />
         </label>
         <label>
           <span class="label">លេខកូដតុ</span>
-          <input
+          <TextInput size="lg" variant="outline"
             v-model.trim="tableForm.code"
-            class="input uppercase"
+            class="uppercase"
             required
             maxlength="32"
             placeholder="ឧ. T01"
@@ -389,9 +380,8 @@
         </label>
         <label>
           <span class="label">ឈ្មោះតុ</span>
-          <input
+          <TextInput size="lg" variant="outline"
             v-model.trim="tableForm.label"
-            class="input"
             required
             maxlength="80"
             placeholder="ឧ. តុជិតបង្អួច"
@@ -401,35 +391,36 @@
           v-if="editingTableId"
           class="flex items-center gap-3 rounded-2xl bg-cream p-4 text-sm font-bold"
         >
-          <input
+          <Checkbox
             v-model="tableForm.isActive"
             type="checkbox"
             class="size-4 accent-black"
           />
           បើកប្រើតុនេះ
         </label>
-        <p v-if="formError" class="m-0 text-xs font-bold text-red-600">
-          {{ formError }}
-        </p>
+        <Alert v-if="formError" theme="red" :title="formError" />
       </form>
 
       <template #footer>
-        <button
+        <Button variant="solid" size="lg"
           type="submit"
           form="table-editor-form"
-          class="btn-primary w-full"
+          class="w-full"
           :disabled="busy"
         >
           {{
             busy ? "កំពុងរក្សាទុក…" : editingTableId ? "រក្សាទុកតុ" : "បន្ថែមតុ"
           }}
-        </button>
+        </Button>
       </template>
     </ModalPanel>
   </div>
 </template>
 
 <script setup lang="ts">
+import PageHeader from "./PageHeader.vue";
+import { setIdSelected } from "../utils/selection";
+import { Badge, Alert, Button, Checkbox, Select, TextInput, Spinner } from "frappe-ui";
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
@@ -438,7 +429,6 @@ import {
   ArrowUp,
   FolderPlus,
   LayoutGrid,
-  LoaderCircle,
   Pencil,
   Plus,
   Search,

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
+import 'api_endpoint.dart';
 import 'pos_api.dart';
 import 'register_access.dart';
 import 'register_authority.dart';
@@ -76,7 +77,41 @@ class RegisterNetwork {
     final server = StoreHost(
       authority,
       certificate,
-      verifyPosSession: (token) => api.request('/context', token: token),
+      verifyPosSession: (token) =>
+          api.request(ApiEndpoint.context, token: token),
+      reloadProfile: (operatorId, profileId) async {
+        final store = await _db.storeOperatingState();
+        final snapshot = await access.withSession(
+          api,
+          operatorId,
+          (token) => access.prepareProfile(api, token),
+          profileId: profileId,
+        );
+        final context = jsonObject(snapshot['context']);
+        if (jsonObject(context['profile'])['id'] != profileId ||
+            jsonObject(context['operator'])['id'] != operatorId) {
+          throw _wrongActor;
+        }
+        await authority.serialize(() async {
+          final current = await _db.storeOperatingState();
+          if (current?.epoch != store?.epoch ||
+              current?.phase != store?.phase) {
+            throw const FormatException('SALE_CONTEXT_CHANGED');
+          }
+          await _db.saveSnapshot(profileId, snapshot);
+        });
+      },
+      readServerSaleHistory: (operatorId, profileId, page, saleId) =>
+          access.withSession(
+            api,
+            operatorId,
+            (token) => saleId == null
+                ? api.activeSalesPage(token, page!)
+                : api.request(ApiEndpoint.saleById(saleId), token: token),
+            profileId: profileId,
+          ),
+      requestCustomerDirectory: (operatorId, profileId, input) =>
+          _cloudCustomerDirectory(api, operatorId, profileId, input),
       onVerified: (context, token) async {
         final profileId = jsonObject(context['profile'])['id'] as String;
         if (profileId != (await _db.installation())!.profileId) {
@@ -134,7 +169,10 @@ class RegisterNetwork {
         try {
           final context = await access.withSession(api, id, (token) async {
             final store = await _db.storeOperatingState();
-            final context = await api.request('/context', token: token);
+            final context = await api.request(
+              ApiEndpoint.context,
+              token: token,
+            );
             if (jsonObject(context['profile'])['id'] != profileId ||
                 jsonObject(context['operator'])['id'] != id) {
               throw _wrongActor;
@@ -266,12 +304,20 @@ class RegisterNetwork {
       List<(LocalSale, SaleOutboxData)> sales,
     })
   >
-  state(String operatorId) async {
+  state(String operatorId, {bool reloadMenu = false}) async {
     final reply = await _till!.state(
       await _staff(operatorId),
       snapshotVersion: _snapshotVersion,
+      reloadMenu: reloadMenu,
     );
     final snapshot = reply['snapshot'];
+    if (reloadMenu && (reply['menu_reloaded'] != true || snapshot is! Map)) {
+      throw const PosApiError(
+        503,
+        'SERVER_UPGRADE_REQUIRED',
+        'Update the store register to reload menus.',
+      );
+    }
     if (snapshot is Map) {
       final setup = (await _db.installation())!;
       await _db.saveSnapshot(setup.profileId, jsonObject(snapshot));
@@ -289,6 +335,111 @@ class RegisterNetwork {
           )
           .toList(),
     );
+  }
+
+  Future<Json> salesHistory(
+    String operatorId, {
+    int? serverPage,
+    String? saleId,
+  }) async => _till!.salesHistory(
+    await _staff(operatorId),
+    serverPage: serverPage,
+    saleId: saleId,
+  );
+
+  Future<Json> customerDirectory(
+    PosApi api,
+    String operatorId,
+    String profileId,
+    Json input,
+  ) async {
+    final till = _till;
+    if (till == null) {
+      return _cloudCustomerDirectory(api, operatorId, profileId, input);
+    }
+    final result = await till.customerDirectory(
+      await _staff(operatorId),
+      input,
+    );
+    await _cacheCustomerResult(input, result);
+    return result;
+  }
+
+  Future<Json> _cloudCustomerDirectory(
+    PosApi api,
+    String operatorId,
+    String profileId,
+    Json input,
+  ) async {
+    final operation = input['operation'];
+    if (operation == 'groups') {
+      return access.withSession(
+        api,
+        operatorId,
+        (token) async => {
+          'customer_groups': await api.pages(
+            ApiEndpoint.customerGroups,
+            'customer_groups',
+            token,
+          ),
+        },
+        profileId: profileId,
+      );
+    }
+    final id = input['customer_id'];
+    if (operation != 'create' &&
+        (id is! String || !RegExp(r'^[a-zA-Z0-9_-]{1,80}$').hasMatch(id))) {
+      throw RegisterAuthority.invalidCommand;
+    }
+    if (operation == 'photo') {
+      return access.withSession(
+        api,
+        operatorId,
+        (token) => api.request(
+          ApiEndpoint.customerPhotoFor(id as String),
+          token: token,
+        ),
+        profileId: profileId,
+      );
+    }
+    final commandId = input['command_id'];
+    if (commandId is! String) throw RegisterAuthority.invalidCommand;
+    final (method, path) = switch (operation) {
+      'create' => ('POST', ApiEndpoint.customers),
+      'update' => ('PATCH', ApiEndpoint.customerFor(id as String)),
+      'delete' => ('DELETE', ApiEndpoint.customerFor(id as String)),
+      _ => throw RegisterAuthority.invalidCommand,
+    };
+    final result = await access.withSession(
+      api,
+      operatorId,
+      (token) => api.request(
+        path,
+        method: method,
+        token: token,
+        commandId: commandId,
+        body: operation == 'delete' ? {} : jsonObject(input['fields']),
+      ),
+      profileId: profileId,
+    );
+    await _cacheCustomerResult(input, result);
+    return result;
+  }
+
+  Future<void> _cacheCustomerResult(Json input, Json result) async {
+    if (input['operation'] == 'groups' || input['operation'] == 'photo') return;
+    final deleted = input['operation'] == 'delete';
+    final id = (deleted ? input['customer_id'] : result['id']) as String;
+    final setup = await _db.installation();
+    if (setup != null) {
+      await authority.serialize(
+        () => _db.cacheCustomerChange(
+          setup.businessId,
+          id,
+          deleted ? null : result,
+        ),
+      );
+    }
   }
 
   Future<void> submit(
@@ -316,21 +467,46 @@ class RegisterNetwork {
     await _send(command);
   }
 
+  Future<Json> shiftManagement(String operatorId, Json body) async =>
+      _till!.shiftManagement(await _staff(operatorId), body);
+
   Future<RegisterAction?> retry(String operatorId) async {
     final command = await _db.tillCommand(operatorId);
-    return command == null ? null : _send(command);
+    return command == null || command.action == 'cloud_shift'
+        ? null
+        : _send(command, verify: true);
   }
 
-  Future<RegisterAction> _send(TillCommand command) async {
+  Future<RegisterAction> _send(
+    TillCommand command, {
+    bool verify = false,
+  }) async {
     final action = RegisterAction.values.byName(command.action);
     final body = jsonObject(jsonDecode(command.payload));
     try {
-      await _till!.command(
-        staffCredential: await _staff(command.operatorId),
-        id: command.commandId,
-        action: action,
-        body: body,
-      );
+      var found = false;
+      if (verify &&
+          !action.consumesCart &&
+          action != RegisterAction.reverseSale) {
+        try {
+          found =
+              (await shiftManagement(command.operatorId, {
+                'kind': 'command',
+                'id': command.commandId,
+              }))['found'] ==
+              true;
+        } on PosApiError catch (error) {
+          if (error.status != 404) rethrow;
+        }
+      }
+      if (!found) {
+        await _till!.command(
+          staffCredential: await _staff(command.operatorId),
+          id: command.commandId,
+          action: action,
+          body: body,
+        );
+      }
     } on PosApiError catch (error) {
       // A definitive rejection can be corrected. Keep ambiguous writes until acknowledged.
       if (!error.transient &&

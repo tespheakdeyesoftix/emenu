@@ -1,29 +1,39 @@
 <template>
-  <label>
-    <span class="label flex justify-between"
-      ><span>{{ label }}</span
-      ><span>{{ modelValue }}{{ suffix }}</span></span
+  <div class="space-y-2">
+    <div
+      class="flex items-center justify-between gap-2 text-sm-medium text-ink-gray-7"
     >
-    <input
-      :value="modelValue"
-      type="range"
+      <span>{{ label }}</span>
+      <span class="tabular-nums">{{ model }}{{ suffix }}</span>
+    </div>
+    <Slider
+      :model-value="[model]"
       :min="min"
       :max="max"
-      class="w-full accent-black"
-      @input="update"
+      :step="step"
+      :disabled="disabled"
+      :aria-label="label"
+      @update:model-value="update"
     />
-  </label>
+  </div>
 </template>
+
 <script setup lang="ts">
+import { Slider } from "frappe-ui";
+
 defineProps<{
-  modelValue: number;
   label: string;
   min: number;
   max: number;
+  step?: number;
   suffix?: string;
+  disabled?: boolean;
 }>();
-const emit = defineEmits<{ "update:modelValue": [value: number] }>();
-function update(event: Event) {
-  emit("update:modelValue", Number((event.target as HTMLInputElement).value));
+
+const model = defineModel<number>({ required: true });
+
+function update(values: number[] | undefined) {
+  const value = values?.[0];
+  if (value !== undefined) model.value = value;
 }
 </script>

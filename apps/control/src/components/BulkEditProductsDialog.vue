@@ -16,7 +16,7 @@
       class="grid min-h-72 place-items-center rounded-2xl bg-cream text-center"
     >
       <div>
-        <LoaderCircle :size="30" class="mx-auto animate-spin text-black/30" />
+        <Spinner class="!size-[30px] mx-auto text-black/30" />
         <p class="mb-0 mt-3 text-sm font-bold text-black/45">
           កំពុងផ្ទុកមុខម្ហូបទាំងអស់…
         </p>
@@ -28,34 +28,29 @@
         class="sticky top-0 z-10 -mx-2 mb-4 grid gap-3 bg-white/95 px-2 pb-3 backdrop-blur md:grid-cols-[minmax(220px,1fr)_minmax(190px,260px)_auto] md:items-center"
       >
         <label class="relative block">
-          <Search
-            :size="16"
-            class="absolute left-3 top-1/2 -translate-y-1/2 text-black/30"
-          />
-          <input
+          <TextInput size="lg" variant="outline"
             v-model.trim="query"
             type="search"
-            class="input !pl-9"
             :placeholder="t('pages.catalog.bulkEdit.searchPlaceholder')"
-            :aria-label="t('pages.catalog.bulkEdit.searchLabel')"
-          />
+            :aria-label="t('pages.catalog.bulkEdit.searchLabel')">
+            <template #prefix>
+              <Search :size="16" aria-hidden="true" />
+            </template>
+          </TextInput>
         </label>
         <label>
           <span class="sr-only">{{
             t("pages.catalog.bulkEdit.categoryFilter")
           }}</span>
-          <select v-model="selectedCategory" class="input">
-            <option value="">
-              {{ t("pages.catalog.bulkEdit.allCategories") }}
-            </option>
-            <option
-              v-for="category in categoryOptions"
-              :key="category.id"
-              :value="category.id"
-            >
-              {{ categoryPath(category) }}
-            </option>
-          </select>
+          <Select
+            size="lg"
+            variant="outline"
+            v-model="selectedCategory"
+            :options="[
+              { label: t('pages.catalog.bulkEdit.allCategories'), value: '' },
+              ...categoryOptions.map(category => ({ label: categoryPath(category), value: category.id })),
+            ]"
+          />
         </label>
         <div class="flex items-center gap-2 text-xs font-bold">
           <span class="rounded-full bg-cream px-3 py-2 text-black/45">
@@ -77,78 +72,66 @@
       <div
         class="hidden overflow-x-auto rounded-2xl border border-black/[.07] md:block"
       >
-        <table class="w-full min-w-[900px] border-collapse text-sm">
-          <thead
-            class="sticky top-[76px] z-[1] bg-cream text-left text-xs text-black/50"
-          >
-            <tr>
-              <th class="w-52 p-3">មុខម្ហូប</th>
-              <th class="w-36 min-w-32 p-3">
+        <List class="w-full [--list-gap:0px]" :columns="productColumns" :style="{ minWidth: (42 + (Number(enableEn) + Number(enableZh)) * 12) + 'rem' }">
+          <ListHeader class="!h-auto min-h-9 bg-surface-gray-1 py-2 text-ink-gray-7">
+
+              <ListHeaderCell class="px-2">មុខម្ហូប</ListHeaderCell>
+              <ListHeaderCell class="px-2">
                 {{ t("pages.catalog.bulkEdit.itemCode") }}
-              </th>
-              <th class="min-w-48 p-3">ឈ្មោះ · ខ្មែរ</th>
-              <th v-if="enableEn" class="min-w-48 p-3">Name · English</th>
-              <th v-if="enableZh" class="min-w-48 p-3">名称 · 中文</th>
-              <th class="w-36 min-w-32 p-3">ឯកតា</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="row in filteredRows"
-              :key="row.id"
-              class="border-t border-black/[.06] align-top"
-              :class="isChanged(row) ? 'bg-amber-50/55' : 'bg-white'"
-            >
-              <td class="p-3">
+              </ListHeaderCell>
+              <ListHeaderCell class="px-2">ឈ្មោះ · ខ្មែរ</ListHeaderCell>
+              <ListHeaderCell v-if="enableEn" class="px-2">Name · English</ListHeaderCell>
+              <ListHeaderCell v-if="enableZh" class="px-2">名称 · 中文</ListHeaderCell>
+              <ListHeaderCell class="px-2">ឯកតា</ListHeaderCell>
+
+          </ListHeader>
+
+            <ListRow v-for="row in filteredRows" :key="row.id" :class="isChanged(row) ? 'bg-amber-50/55' : 'bg-white'">
+              <ListCell class="!block px-2 py-2">
                 <strong class="block truncate">{{ row.originalName }}</strong>
-              </td>
-              <td class="p-2">
-                <input
+              </ListCell>
+              <ListCell class="!block px-2 py-2">
+                <TextInput size="lg" variant="outline"
                   v-model="row.code"
-                  class="input"
                   maxlength="64"
                   :aria-label="`${t('pages.catalog.bulkEdit.itemCode')} ${row.originalName}`"
                 />
-              </td>
-              <td class="p-2">
-                <input
+              </ListCell>
+              <ListCell class="!block px-2 py-2">
+                <TextInput size="lg" variant="outline"
                   v-model="row.nameKm"
-                  class="input"
                   maxlength="240"
                   required
                   lang="km"
                   :aria-label="`ឈ្មោះខ្មែររបស់ ${row.originalName}`"
                 />
-              </td>
-              <td v-if="enableEn" class="p-2">
-                <input
+              </ListCell>
+              <ListCell v-if="enableEn" class="!block px-2 py-2">
+                <TextInput size="lg" variant="outline"
                   v-model="row.nameEn"
-                  class="input"
                   maxlength="240"
                   :aria-label="`English name for ${row.originalName}`"
                 />
-              </td>
-              <td v-if="enableZh" class="p-2">
-                <input
+              </ListCell>
+              <ListCell v-if="enableZh" class="!block px-2 py-2">
+                <TextInput size="lg" variant="outline"
                   v-model="row.nameZh"
-                  class="input"
                   maxlength="240"
                   lang="zh"
                   :aria-label="`中文名称 ${row.originalName}`"
                 />
-              </td>
-              <td class="p-2">
-                <input
+              </ListCell>
+              <ListCell class="!block px-2 py-2">
+                <TextInput size="lg" variant="outline"
                   v-model="row.unit"
-                  class="input"
                   maxlength="40"
                   placeholder="ចាន / កែវ"
                   :aria-label="`ឯកតារបស់ ${row.originalName}`"
                 />
-              </td>
-            </tr>
-          </tbody>
-        </table>
+              </ListCell>
+            </ListRow>
+
+        </List>
       </div>
 
       <div class="space-y-3 md:hidden">
@@ -172,13 +155,12 @@
               <span class="label">{{
                 t("pages.catalog.bulkEdit.itemCode")
               }}</span>
-              <input v-model="row.code" class="input" maxlength="64" />
+              <TextInput size="lg" variant="outline" v-model="row.code" maxlength="64" />
             </label>
             <label>
               <span class="label">ឈ្មោះមុខម្ហូប · ខ្មែរ</span>
-              <input
+              <TextInput size="lg" variant="outline"
                 v-model="row.nameKm"
-                class="input"
                 maxlength="240"
                 required
                 lang="km"
@@ -186,22 +168,20 @@
             </label>
             <label v-if="enableEn">
               <span class="label">Product name · English</span>
-              <input v-model="row.nameEn" class="input" maxlength="240" />
+              <TextInput size="lg" variant="outline" v-model="row.nameEn" maxlength="240" />
             </label>
             <label v-if="enableZh">
               <span class="label">产品名称 · 中文</span>
-              <input
+              <TextInput size="lg" variant="outline"
                 v-model="row.nameZh"
-                class="input"
                 maxlength="240"
                 lang="zh"
               />
             </label>
             <label>
               <span class="label">ឯកតា</span>
-              <input
+              <TextInput size="lg" variant="outline"
                 v-model="row.unit"
-                class="input"
                 maxlength="40"
                 placeholder="ចាន / កែវ"
               />
@@ -216,37 +196,28 @@
       >
         មិនមានមុខម្ហូបត្រូវនឹងការស្វែងរកទេ។
       </p>
-      <p
-        v-if="validationError"
-        class="mb-0 mt-4 text-xs font-bold text-red-600"
-      >
-        {{ validationError }}
-      </p>
-      <p v-if="error" class="mb-0 mt-4 text-xs font-bold text-red-600">
-        {{ error }}
-      </p>
+      <Alert v-if="validationError" theme="red" :title="validationError" class="mb-0 mt-4" />
+      <Alert v-if="error" theme="red" :title="error" class="mb-0 mt-4" />
     </template>
 
     <template v-if="!loading" #footer>
       <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <button
+        <Button variant="subtle" size="lg"
           type="button"
-          class="btn-soft"
           :disabled="saving"
           @click="requestClose"
         >
           បោះបង់
-        </button>
-        <button
+        </Button>
+        <Button variant="solid" size="lg"
           type="button"
-          class="btn-primary"
           :disabled="saving || !changedRows.length || Boolean(validationError)"
           @click="save"
         >
-          <LoaderCircle v-if="saving" :size="16" class="animate-spin" />
-          <Save v-else :size="16" />
+          <template #prefix><Spinner v-if="saving" />
+          <Save v-else :size="16" /></template>
           {{ saving ? "កំពុងរក្សាទុក…" : `រក្សាទុក ${changedRows.length} មុខ` }}
-        </button>
+        </Button>
       </div>
     </template>
   </ModalPanel>
@@ -255,40 +226,32 @@
     :open="discardPromptOpen"
     :title="t('pages.catalog.bulkEdit.unsavedTitle')"
     :close-on-backdrop="false"
-    @close="discardPromptOpen = false"
+    @close="dismissDiscard"
   >
-    <div role="alertdialog" aria-modal="true">
-      <div class="flex gap-4 rounded-2xl bg-amber-50 p-4 text-amber-950">
-        <span
-          class="grid size-10 shrink-0 place-items-center rounded-full bg-amber-100 text-amber-700"
-        >
-          <TriangleAlert :size="20" />
-        </span>
-        <p class="m-0 text-sm leading-6">
-          {{ t("pages.catalog.bulkEdit.unsavedMessage") }}
-        </p>
-      </div>
-    </div>
+    <Alert theme="amber" :title="t('pages.catalog.bulkEdit.unsavedMessage')" />
 
     <template #footer>
       <div class="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-        <button class="btn-soft sm:min-w-32" @click="discardPromptOpen = false">
+        <Button variant="subtle" size="lg" class="sm:min-w-32" @click="dismissDiscard">
           {{ t("pages.catalog.bulkEdit.keepEditing") }}
-        </button>
-        <button
-          class="inline-flex items-center justify-center rounded-full bg-red-600 px-6 py-3.5 text-sm font-bold text-white transition hover:bg-red-700 sm:min-w-36"
+        </Button>
+        <Button
+          variant="solid" theme="red" size="lg" type="button"
+          class="sm:min-w-36"
           @click="discardChanges"
         >
           {{ t("pages.catalog.bulkEdit.discardChanges") }}
-        </button>
+        </Button>
       </div>
     </template>
   </ModalPanel>
 </template>
 
 <script setup lang="ts">
+import { List, ListCell, ListHeader, ListHeaderCell, ListRow } from "frappe-ui/list";
+import { Alert, Button, Select, TextInput, Spinner } from "frappe-ui";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { LoaderCircle, Save, Search, TriangleAlert } from "lucide-vue-next";
+import { Save, Search } from "lucide-vue-next";
 import { useI18n } from "vue-i18n";
 import ModalPanel from "./ModalPanel.vue";
 import type { BulkProductInfoUpdate, Category, Product } from "../stores/admin";
@@ -298,6 +261,7 @@ type EditableRow = BulkProductInfoUpdate & {
   originalName: string;
 };
 
+const productColumns = computed(() => ["minmax(12rem,1.2fr)", "9rem", "minmax(12rem,1fr)", ...(props.enableEn ? ["minmax(12rem,1fr)"] : []), ...(props.enableZh ? ["minmax(12rem,1fr)"] : []), "9rem"]);
 const { locale, t } = useI18n();
 
 const props = defineProps<{
@@ -322,6 +286,8 @@ const selectedCategory = ref("");
 const rows = ref<EditableRow[]>([]);
 const initialValues = ref(new Map<string, BulkProductInfoUpdate>());
 const discardPromptOpen = ref(false);
+let discardDecision: Promise<boolean> | undefined;
+let resolveDiscard: ((confirmed: boolean) => void) | undefined;
 
 const normalize = (value: string) => value.trim();
 const comparable = (row: BulkProductInfoUpdate) => ({
@@ -445,10 +411,32 @@ function requestClose() {
   emit("close");
 }
 
-function discardChanges() {
+function confirmDiscard() {
+  discardPromptOpen.value = true;
+  discardDecision ??= new Promise<boolean>((resolve) => {
+    resolveDiscard = resolve;
+  });
+  return discardDecision;
+}
+
+function settleDiscard(confirmed: boolean) {
   discardPromptOpen.value = false;
+  resolveDiscard?.(confirmed);
+  resolveDiscard = undefined;
+  discardDecision = undefined;
+}
+
+function dismissDiscard() {
+  settleDiscard(false);
+}
+
+function discardChanges() {
+  settleDiscard(true);
   emit("close");
 }
+
+defineExpose({ confirmDiscard });
+onBeforeUnmount(dismissDiscard);
 
 function warnBeforeUnload(event: BeforeUnloadEvent) {
   if (!props.open || props.saving || !changedRows.value.length) return;
@@ -471,7 +459,7 @@ watch(
   () => [props.open, props.loading, props.products] as const,
   ([open, loading]) => {
     if (!open) {
-      discardPromptOpen.value = false;
+      dismissDiscard();
       emit("dirtyChange", false);
       return;
     }

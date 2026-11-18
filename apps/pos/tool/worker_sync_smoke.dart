@@ -2,12 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/native.dart';
-import 'package:emenu_pos/core/cart_line.dart';
+import 'package:emenu_pos/core/api_endpoint.dart';
+import 'package:emenu_pos/features/sales/sale/cart_line.dart';
 import 'package:emenu_pos/core/pos_api.dart';
 import 'package:emenu_pos/core/pos_device_key.dart';
 import 'package:emenu_pos/core/register_authority.dart';
 import 'package:emenu_pos/core/register_database.dart';
-import 'package:emenu_pos/core/sale_sync.dart';
+import 'package:emenu_pos/features/sales/sale/sale_sync.dart';
 import 'package:emenu_pos/core/store_host.dart';
 import 'package:emenu_pos/core/store_transport.dart';
 import 'package:http/http.dart' as http;
@@ -25,8 +26,8 @@ class InterruptedCheckout extends http.BaseClient {
     final response = await _client.send(request);
     final path = request.url.path;
     if (request is! http.Request ||
-        !(path.endsWith('/store-operations') ||
-            path.endsWith('/store-operations/recover'))) {
+        !(path.endsWith(ApiEndpoint.storeOperations) ||
+            path.endsWith(ApiEndpoint.recoverStoreOperations))) {
       return response;
     }
     final input = jsonObject(jsonDecode(request.body));
@@ -86,23 +87,31 @@ Future<void> main() async {
       profile,
     );
     final token = session['token'] as String;
-    final context = await api.request('/context', token: token);
+    final context = await api.request(ApiEndpoint.context, token: token);
     final owner = jsonObject(context['operator']);
     final ownerId = owner['id'] as String;
     final business = jsonObject(context['business']);
     final config = jsonObject(jsonObject(context['profile'])['config']);
-    final catalog = await api.catalog(token);
-    final tables = await api.pages('/tables', 'tables', token);
-    final customers = await api.pages('/customers', 'customers', token);
+    final catalog = await api.catalog(
+      token,
+      menuId: defaultCatalogMenuId(context),
+    );
+    final tables = await api.pages(ApiEndpoint.tables, 'tables', token);
+    final customers = await api.pages(
+      ApiEndpoint.customers,
+      'customers',
+      token,
+    );
     final product = jsonRows(catalog['products'])
         .singleWhere((product) => product['id'] == env['POS_PRODUCT_ID']);
     final line = CartLine(product);
     final price = line.totals(config).total;
     final currency = business['currency'] as String;
     final payment = jsonRows(context['payment_types']).firstWhere(
-      (method) =>
-          method['kind'] == 'cash' &&
-          (method['currencies'] as List).contains(currency),
+      (method) => method['kind'] == 'cash' && method['currency'] == currency,
+    );
+    final khrCash = jsonRows(context['payment_types']).firstWhere(
+      (method) => method['kind'] == 'cash' && method['currency'] == 'KHR',
     );
     await database
         .into(database.registerInstallations)
@@ -147,19 +156,27 @@ Future<void> main() async {
     host = StoreHost(
       RegisterAuthority(database, now: () => clock),
       StoreCertificate.generate(),
-      verifyPosSession: (token) => api.request('/context', token: token),
+      verifyPosSession: (token) =>
+          api.request(ApiEndpoint.context, token: token),
       onVerified: (context, token) async {
         final selected = jsonObject(context['profile'])['id'] as String;
         if (selected != profile) {
           await database.saveSnapshot(selected, {
             'context': context,
-            'catalog': await api.catalog(token),
-            'tables': await api.pages('/tables', 'tables', token),
-            'customers': await api.pages('/customers', 'customers', token),
+            'catalog': await api.catalog(
+              token,
+              menuId: defaultCatalogMenuId(context),
+            ),
+            'tables': await api.pages(ApiEndpoint.tables, 'tables', token),
+            'customers': await api.pages(
+              ApiEndpoint.customers,
+              'customers',
+              token,
+            ),
           });
         }
         final credential = await api.request(
-          '/devices',
+          ApiEndpoint.devices,
           method: 'POST',
           token: token,
           body: descriptor,
@@ -237,17 +254,25 @@ Future<void> main() async {
     }
 
     final authority = await api.request(
-      '/store-authority',
+      ApiEndpoint.storeAuthority,
       method: 'POST',
       token: token,
       body: {},
     );
     final epoch = authority['epoch'] as String;
     await database.startStoreAuthority(epoch, authority['timezone'] as String);
-    await api.request('/sessions/current', method: 'DELETE', token: token);
-    await api.request('/sessions/current', method: 'DELETE', token: sideToken);
     await api.request(
-      '/sessions/current',
+      ApiEndpoint.currentSession,
+      method: 'DELETE',
+      token: token,
+    );
+    await api.request(
+      ApiEndpoint.currentSession,
+      method: 'DELETE',
+      token: sideToken,
+    );
+    await api.request(
+      ApiEndpoint.currentSession,
       method: 'DELETE',
       token: cashierToken,
     );
@@ -267,6 +292,12 @@ Future<void> main() async {
     Future<Json> registerContext() async {
       final state = await counter!.state(counterGrant);
       return jsonObject(jsonObject(state['snapshot'])['context']);
+    }
+
+    Future<Json> frontCount() async {
+      final state = await front!.state(frontGrant);
+      final context = jsonObject(jsonObject(state['snapshot'])['context']);
+      return jsonObject(context['cashier_shift']);
     }
 
     Future<Json> sideContext() async {
@@ -302,7 +333,7 @@ Future<void> main() async {
     });
     await command(front, frontGrant, RegisterAction.cashMovement, {
       'shift_id': firstShift['id'],
-      'payment_type_id': drawerId,
+      'payment_type_id': khrCash['id'],
       'currency': 'KHR',
       'amount_minor': 4000,
       'kind': 'cash_in',
@@ -321,21 +352,50 @@ Future<void> main() async {
       ],
     };
     final localId = const Uuid().v4();
+    final editedLine = line.withLineEdits({
+      'base_price_override_minor': line.catalogBase,
+      'note': 'Offline table order',
+    });
     final bill = {
+      'cart_line_edits_version': 1,
       'table_id': tables.first['id'],
+      'guest_cover': 4,
       'expected_context': registerOperatingContext(
         await registerContext(),
         clock,
       ),
-      'quote': [line.quote(config)],
+      'quote': [editedLine.quote(config)],
       'total_minor': price,
       'currency': currency,
       'exchange_rate': business['secondary_exchange_rate'],
     };
     await command(front, frontGrant, RegisterAction.hold, bill, id: localId);
     final shared = await counter.state(counterGrant);
-    if (jsonRows(shared['bills']).single['id'] != localId) {
+    var pairedBill = jsonRows(shared['bills']).single;
+    if (pairedBill['id'] != localId ||
+        jsonObject(
+              jsonDecode(pairedBill['payload'] as String),
+            )['table_status'] !=
+            'hold') {
       throw StateError('The paired till did not see the held bill');
+    }
+    for (final status in ['occupied', 'bill_requested']) {
+      await command(front, frontGrant, RegisterAction.hold, {
+        ...bill,
+        'bill_id': localId,
+        'bill_revision': pairedBill['revision'],
+        'table_status': status,
+      });
+      pairedBill = jsonRows((await counter.state(counterGrant))['bills'])
+          .single;
+      final payload = jsonObject(jsonDecode(pairedBill['payload'] as String));
+      if (pairedBill['id'] != localId ||
+          payload['table_status'] != status ||
+          payload['guest_cover'] != 4) {
+        throw StateError(
+          'The paired till did not see $status and the saved guest count',
+        );
+      }
     }
     if (jsonRows((await side.state(sideGrant))['bills']).isNotEmpty) {
       throw StateError('The retail till saw another profile’s held bill');
@@ -350,7 +410,7 @@ Future<void> main() async {
       front,
       frontGrant,
       RegisterAction.closeShift,
-      countInput(jsonObject((await registerContext())['cashier_shift'])),
+      countInput(await frontCount()),
     );
     try {
       await command(front, frontGrant, RegisterAction.closeDay, {
@@ -379,7 +439,7 @@ Future<void> main() async {
         clock,
       ),
       'bill_id': localId,
-      'bill_revision': 1,
+      'bill_revision': pairedBill['revision'],
       'payments': [
         {
           'payment_type_id': payment['id'],
@@ -387,12 +447,12 @@ Future<void> main() async {
           'amount_minor': price ~/ 2,
         },
         {
-          'payment_type_id': payment['id'],
+          'payment_type_id': khrCash['id'],
           'currency': 'KHR',
           'amount_minor': 6000,
         },
         {
-          'payment_type_id': payment['id'],
+          'payment_type_id': khrCash['id'],
           'currency': 'KHR',
           'entry_type': 'change',
           'amount_minor': 6000 - (price - price ~/ 2) * 40,
@@ -400,9 +460,7 @@ Future<void> main() async {
       ],
     });
     final checkoutTime = clock;
-    final stale = countInput(
-      jsonObject((await registerContext())['cashier_shift']),
-    );
+    final stale = countInput(await frontCount());
     await command(front, frontGrant, RegisterAction.cashMovement, {
       'shift_id': lastShift['id'],
       'payment_type_id': drawerId,
@@ -417,11 +475,32 @@ Future<void> main() async {
     } on PosApiError catch (error) {
       if (error.code != 'RECONCILIATION_CHANGED') rethrow;
     }
+    final blind = jsonObject((await registerContext())['cashier_shift']);
+    if (jsonRows(blind['counts'])
+        .any((row) => row.containsKey('expected_minor'))) {
+      throw StateError(
+        'The cashier received expected counts before submission',
+      );
+    }
+    final counted = countInput(await frontCount());
+    final review = await counter.shiftManagement(counterGrant, {
+      'kind': 'review',
+      'id': blind['id'],
+      'count': counted,
+    });
+    if (jsonRows(review['counts']).any((row) => row['variance_minor'] != 0)) {
+      throw StateError('The verified close count did not balance');
+    }
+    await command(counter, counterGrant, RegisterAction.closeShift, counted);
+    await command(front, frontGrant, RegisterAction.reopenShift, {
+      'shift_id': lastShift['id'],
+      'reason': 'Validate reopening while offline',
+    });
     await command(
-      counter,
-      counterGrant,
+      front,
+      frontGrant,
       RegisterAction.closeShift,
-      countInput(jsonObject((await registerContext())['cashier_shift'])),
+      countInput(await frontCount()),
     );
     try {
       await command(front, frontGrant, RegisterAction.closeDay, {
@@ -476,7 +555,7 @@ Future<void> main() async {
         'opening_cash': [
           {'payment_type_id': drawerId, 'currency': 'USD', 'amount_minor': 500},
           {
-            'payment_type_id': drawerId,
+            'payment_type_id': khrCash['id'],
             'currency': 'KHR',
             'amount_minor': 10000,
           },
@@ -522,7 +601,7 @@ Future<void> main() async {
       front,
       frontGrant,
       RegisterAction.closeShift,
-      countInput(jsonObject((await registerContext())['cashier_shift'])),
+      countInput(await frontCount()),
     );
     await command(front, frontGrant, RegisterAction.closeDay, {
       'day_id': refundDay['id'],
@@ -547,7 +626,7 @@ Future<void> main() async {
       if (!renewedTokens.containsKey(scope)) {
         final proof = await signingKey.proof(credentials[scope]!);
         final renewed = await api.request(
-          '/auth/device-session',
+          ApiEndpoint.deviceSession,
           method: 'POST',
           body: proof,
         );
@@ -568,7 +647,7 @@ Future<void> main() async {
     if (revocationToken != null) {
       final revoked = await http
           .put(
-            api.origin.resolve('/api/admin/pos/profiles/$profile/grants'),
+            api.origin.resolve(AdminApiEndpoint.profileGrantsFor(profile)),
             headers: {
               'Authorization': 'Bearer $revocationToken',
               'Content-Type': 'application/json',
@@ -617,7 +696,7 @@ Future<void> main() async {
       throw StateError('The reversal did not synchronize');
     }
     await api.request(
-      '/store-authority',
+      ApiEndpoint.storeAuthority,
       method: 'DELETE',
       token: renewedTokens[(ownerId, profile)],
       body: {'epoch': epoch, 'last_sequence': lastSequence},

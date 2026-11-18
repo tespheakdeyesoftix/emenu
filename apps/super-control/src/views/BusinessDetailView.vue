@@ -13,11 +13,7 @@
     >
   </div>
   <template v-else>
-    <PageHeader
-      eyebrow="Business detail"
-      :title="detail.business.name"
-      :description="`/${detail.business.slug} · Registered ${formatDate(detail.business.createdAt)}`"
-    >
+    <PageHeader :title="detail.business.name">
       <div class="flex flex-wrap gap-2">
         <button type="button" class="btn-soft" @click="cloneOpen = true">
           <Copy :size="16" />Clone data
@@ -588,7 +584,6 @@ import type { ManagedPlan } from "../../../../shared/subscriptionPlans";
 import {
   api,
   ApiError,
-  formatDate,
   type BusinessDetail,
   type CloneResult,
   type Member,

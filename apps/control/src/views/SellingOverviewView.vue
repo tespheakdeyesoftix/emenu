@@ -1,34 +1,28 @@
 <template>
-  <PageHeader
-    :eyebrow="t('nav.groups.selling')"
-    :title="t('nav.sellingOverview')"
-  >
+  <PageHeader :title="t('nav.sellingOverview')">
     <div class="flex flex-wrap gap-2">
-      <RouterLink
+      <Button variant="subtle" size="lg"
         v-if="store.canAccessPage('posProfiles')"
-        :to="{ name: 'posProfiles' }"
-        class="btn-soft"
+        :route="{ name: 'posProfiles' }"
       >
-        <SlidersHorizontal :size="16" />{{ t("nav.posProfiles") }}
-      </RouterLink>
-      <RouterLink
+        <template #prefix><SlidersHorizontal :size="16" /></template>{{ t("nav.posProfiles") }}
+      </Button>
+      <Button variant="solid" size="lg"
         v-if="store.canAccessPage('salesList')"
-        :to="{ name: 'salesList' }"
-        class="btn-primary"
+        :route="{ name: 'salesList' }"
       >
-        <Receipt :size="16" />{{ t("nav.salesList") }}
-      </RouterLink>
+        <template #prefix><Receipt :size="16" /></template>{{ t("nav.salesList") }}
+      </Button>
     </div>
   </PageHeader>
-  <p v-if="loading" class="card p-6 text-sm text-black/55" role="status">
-    {{ t("common.loading") }}
-  </p>
-  <div v-else-if="error" class="card p-6" role="alert">
-    <p class="mb-3 text-sm text-red-700">{{ error }}</p>
-    <button type="button" class="btn-soft" @click="load">
-      {{ t("common.tryAgain") }}
-    </button>
-  </div>
+  <LoadingText v-if="loading" :text="t('common.loading')" role="status" class="card p-6" />
+  <Alert v-else-if="error" theme="red" :title="error" class="m-4">
+    <template #actions>
+      <Button variant="subtle" size="lg" type="button" @click="load">
+        {{ t("common.tryAgain") }}
+      </Button>
+    </template>
+  </Alert>
   <template v-else-if="overview">
     <p class="mb-3 text-sm font-semibold text-black/60">
       {{ t("selling.businessDate") }} · {{ overview.business_date }}
@@ -63,6 +57,7 @@
 </template>
 
 <script setup lang="ts">
+import { LoadingText, Alert, Button } from "frappe-ui";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Receipt, SlidersHorizontal } from "lucide-vue-next";

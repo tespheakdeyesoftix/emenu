@@ -1,38 +1,26 @@
 <template>
-  <div class="grid gap-4">
-    <header class="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h1 class="m-0 text-2xl font-extrabold">{{ copy.title }}</h1>
-        <p class="mb-0 mt-1 text-sm text-black/65">{{ copy.description }}</p>
-      </div>
-      <div class="flex gap-2" v-if="!bookingId">
-        <button
-          v-for="tab in tabs"
-          :key="tab"
-          type="button"
-          :aria-pressed="mode === tab"
-          :class="mode === tab ? 'btn-primary' : 'btn-soft'"
-          @click="mode = tab"
-        >
-          {{ copy[tab] }}
-        </button>
-      </div>
-    </header>
+  <Tabs v-model="mode" class="min-w-0">
+    <PageHeader :title="copy.title">
+      <TabList v-if="!bookingId" variant="subtle" size="md" :aria-label="copy.title">
+        <TabTrigger value="list" :label="copy.list" />
+        <TabTrigger value="calendar" :label="copy.calendar" />
+      </TabList>
+    </PageHeader>
 
     <section
       v-if="bookingId"
-      class="panel grid gap-4 p-4 sm:p-6"
+      class="grid min-w-0 gap-4 rounded-6 border border-outline-gray-1 bg-surface-base p-4 sm:p-6"
       :aria-label="copy.details"
     >
-      <RouterLink
-        :to="bookingLink()"
-        class="justify-self-start font-bold underline"
-        >{{ copy.back }}</RouterLink
-      >
-      <p v-if="detailLoading" class="m-0" role="status">{{ copy.loading }}</p>
-      <p v-if="detailError" class="m-0 text-red-700" role="alert">
-        {{ detailError }}
-      </p>
+      <Button
+        :route="bookingLink()"
+        variant="ghost"
+        icon-left="lucide-arrow-left"
+        class="justify-self-start"
+        :label="copy.back"
+      />
+      <LoadingText v-if="detailLoading" :text="copy.loading" role="status" />
+      <Alert v-if="detailError" theme="red" :title="detailError" />
       <template v-if="detail">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -42,21 +30,24 @@
               {{ detail.arrivalTime }} · {{ detail.timezone }}
             </p>
           </div>
-          <span class="rounded-full bg-cream px-3 py-1 text-sm font-bold">{{
-            copy.statuses[detail.status]
-          }}</span>
+          <Badge :theme="statusThemes[detail.status]" :label="copy.statuses[detail.status]" />
         </div>
-        <dl class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <dl class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 [&_dt]:text-sm [&_dt]:text-ink-gray-6">
           <div>
             <dt>{{ copy.guest }}</dt>
             <dd class="m-0 font-bold">{{ detail.guestName }}</dd>
           </div>
           <div>
             <dt>{{ copy.phone }}</dt>
-            <dd class="m-0 font-bold">
-              <a :href="`tel:${detail.guestPhone}`" class="underline">{{
-                detail.guestPhone
-              }}</a>
+            <dd class="m-0">
+              <Button
+                :href="`tel:${detail.guestPhone}`"
+                target="_self"
+                variant="ghost"
+                icon-left="lucide-phone"
+                :label="detail.guestPhone"
+                class="-ms-2"
+              />
             </dd>
           </div>
           <div>
@@ -93,213 +84,199 @@
             </dd>
           </div>
         </dl>
-        <details class="rounded-xl bg-cream p-3">
-          <summary class="cursor-pointer font-bold">{{ copy.terms }}</summary>
+        <form
+          v-if="detail.status === 'confirmed' && detailCanManage && !store.isReadOnly"
+          class="flex flex-wrap items-end gap-3"
+          @submit.prevent="saveTable"
+        >
+          <label class="min-w-48">
+            <span class="label">{{ copy.bookingTable }}</span>
+            <Select
+              v-model="selectedTable"
+              size="lg"
+              variant="outline"
+              :disabled="savingTable"
+              :options="[
+                { value: '', label: copy.unassignedTable },
+                ...tableOptions.map(table => ({ value: table.id, label: table.groupName + ' · ' + table.label })),
+              ]"
+            />
+          </label>
+          <Button
+            type="submit"
+            size="lg"
+            :label="copy.saveTable"
+            :loading="savingTable"
+            :disabled="saving !== null || selectedTable === (detail.tableId ?? '')"
+          />
+        </form>
+        <p v-else-if="detail.tableLabel" class="m-0 text-sm">{{ copy.bookingTable }} · {{ detail.tableLabel }}</p>
+        <DisclosureSection :title="copy.terms" class="rounded-5 bg-surface-gray-1 px-2">
           <p class="mb-0 whitespace-pre-wrap break-words">
             {{ detail.termsText }}
           </p>
           <p class="mb-0 break-all text-xs text-black/65">
             {{ detail.termsVersion }}
           </p>
-        </details>
+        </DisclosureSection>
         <div
           v-if="detailCanManage && !store.isReadOnly"
           class="flex flex-wrap gap-2"
         >
-          <button
+          <Button size="lg"
             v-for="status in bookingStatusActions(detail.status)"
             :key="status"
             type="button"
-            :class="status === 'confirmed' ? 'btn-primary' : 'btn-soft'"
-            :disabled="saving"
+            :variant="status === 'confirmed' ? 'solid' : 'subtle'"
+            :disabled="saving !== null"
+            :loading="saving === status"
             @click="updateStatus(status)"
           >
             {{ copy.actions[status] }}
-          </button>
+          </Button>
         </div>
-        <p v-else class="m-0 text-sm text-black/65">{{ copy.readOnly }}</p>
+        <Alert v-else :title="copy.readOnly" />
       </template>
     </section>
 
     <section
       v-else
-      class="panel grid gap-4 p-4 sm:p-6"
+      class="grid min-w-0 gap-4 rounded-6 border border-outline-gray-1 bg-surface-base p-4 sm:p-6"
       :aria-label="copy[mode]"
     >
-      <div class="flex flex-wrap items-end gap-3">
-        <label class="text-sm font-bold"
-          >{{ copy.branch }}
-          <select v-model="branchId" class="input mt-1 min-w-36">
-            <option value="">{{ copy.allBranches }}</option>
-            <option
-              v-for="branch in branches"
-              :key="branch.id"
-              :value="branch.id"
-            >
-              {{ branch.name }}
-            </option>
-          </select>
-        </label>
+      <div class="grid grid-cols-1 items-end gap-3 sm:flex sm:flex-wrap">
+        <Select
+          v-model="branchId"
+          :label="copy.branch"
+          :options="branchOptions"
+          size="lg"
+          variant="outline"
+          class="sm:min-w-40"
+        />
         <template v-if="mode === 'list'">
-          <label class="text-sm font-bold"
-            >{{ copy.from
-            }}<input v-model="from" type="date" class="input mt-1"
-          /></label>
-          <label class="text-sm font-bold"
-            >{{ copy.to }}<input v-model="to" type="date" class="input mt-1"
-          /></label>
-        </template>
-        <template v-else>
-          <button
-            type="button"
-            class="btn-soft"
-            :aria-label="copy.previousMonth"
-            @click="moveMonth(-1)"
-          >
-            ‹
-          </button>
-          <strong class="self-center" aria-live="polite">{{
-            monthLabel
-          }}</strong>
-          <button
-            type="button"
-            class="btn-soft"
-            :aria-label="copy.nextMonth"
-            @click="moveMonth(1)"
-          >
-            ›
-          </button>
+          <DateFilter
+            v-for="field in dateFields"
+            :key="field"
+            v-model="dateFilters[field]"
+            :label="copy[field]"
+            class="sm:w-44"
+          />
         </template>
       </div>
-      <p
-        v-if="!canManage && !loading && !error"
-        class="m-0 text-sm text-black/65"
-      >
-        {{ copy.readOnly }}
-      </p>
-      <p v-if="loading" class="m-0" role="status">{{ copy.loading }}</p>
-      <p v-else-if="error" class="m-0 text-red-700" role="alert">{{ error }}</p>
-      <template v-else-if="mode === 'list'">
-        <p v-if="!records.length" class="m-0" role="status">{{ copy.empty }}</p>
-        <div v-else class="overflow-x-auto">
-          <table class="w-full text-left text-sm">
-            <thead>
-              <tr class="border-b border-black/10">
-                <th
-                  v-for="heading in headings"
-                  :key="heading"
-                  class="whitespace-nowrap px-2 py-3"
-                  scope="col"
-                >
-                  {{ copy[heading] }}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="booking in records"
-                :key="booking.id"
-                class="border-b border-black/10"
-              >
-                <td class="px-2 py-3">
-                  <RouterLink
-                    :to="bookingLink(booking.id)"
-                    class="font-bold underline"
-                    >{{ booking.reference }}</RouterLink
-                  >
-                </td>
-                <td class="px-2 py-3">{{ booking.guestName }}</td>
-                <td class="px-2 py-3">{{ booking.branchName }}</td>
-                <td class="whitespace-nowrap px-2 py-3">
-                  {{ booking.arrivalDate }} {{ booking.arrivalTime }}
-                </td>
-                <td class="px-2 py-3">{{ booking.pax }}</td>
-                <td class="px-2 py-3">{{ copy.statuses[booking.status] }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div
-          v-if="page > 1 || hasMore"
-          class="flex flex-wrap items-center gap-2"
+      <Alert v-if="!canManage && !loading && !error" :title="copy.readOnly" />
+      <LoadingText v-if="loading" :text="copy.loading" role="status" />
+      <Alert v-if="error" theme="red" :title="error" />
+      <TabPanel value="list" class="min-w-0" :aria-busy="loading">
+        <ListView
+          v-if="!loading && !error"
+          :columns="bookingColumns"
+          :rows="records"
+          row-key="id"
+          :options="bookingListOptions"
+          :class="[
+            records.length ? '!min-w-[735px]' : 'min-h-32',
+            '!w-full p-2 [&_a:focus-visible]:outline [&_a:focus-visible]:outline-2 [&_a:focus-visible]:-outline-offset-2 [&_a:focus-visible]:outline-outline-gray-4',
+          ]"
         >
-          <button
-            type="button"
-            class="btn-soft"
-            :disabled="page === 1"
-            @click="page--"
-          >
-            {{ copy.previous }}
-          </button>
-          <span>{{ page }}</span>
-          <button
-            type="button"
-            class="btn-soft"
-            :disabled="!hasMore"
-            @click="page++"
-          >
-            {{ copy.next }}
-          </button>
-        </div>
-      </template>
-      <div v-else class="overflow-x-auto">
-        <table
-          class="booking-calendar w-full table-fixed border-collapse text-sm"
+          <template #cell="{ column, row, item }">
+            <span v-if="column.key === 'reference'" class="block truncate text-base-semibold underline underline-offset-2" :title="row.reference">
+              {{ row.reference }}
+            </span>
+            <span v-else-if="column.key === 'arrival'" class="whitespace-nowrap text-base tabular-nums">
+              {{ row.arrivalDate }} {{ row.arrivalTime }}
+            </span>
+            <Badge v-else-if="column.key === 'status'" :theme="statusThemes[row.status as BookingStatus]" :label="copy.statuses[row.status as BookingStatus]" />
+            <ListRowItem v-else :column="column" :row="row" :item="item" :align="column.align" />
+          </template>
+        </ListView>
+        <ListFooter v-if="!loading && !error && (page > 1 || hasMore)" class="mt-4">
+          <nav :aria-label="copy.pages" class="flex flex-wrap items-center gap-2">
+            <Button variant="subtle" size="lg" :label="copy.previous" :disabled="page === 1" @click="page--" />
+            <Badge :label="String(page)" aria-current="page" />
+            <Button variant="subtle" size="lg" :label="copy.next" :disabled="!hasMore" @click="page++" />
+          </nav>
+        </ListFooter>
+      </TabPanel>
+      <TabPanel value="calendar" class="min-w-0">
+        <Calendar
+          ref="calendar"
+          class="booking-calendar min-h-[30rem]"
+          :aria-label="copy.calendar"
+          :aria-busy="loading"
+          :events="loading || error ? [] : calendarEvents"
+          :config="calendarConfig"
+          :on-click="openCalendarBooking"
+          @range-change="calendarRange = $event"
         >
-          <thead>
-            <tr>
-              <th
-                v-for="day in weekdayLabels"
-                :key="day"
-                class="p-2"
-                scope="col"
-              >
-                {{ day }}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="week in calendarWeeks" :key="week[0]">
-              <td
-                v-for="date in week"
-                :key="date"
-                class="h-24 border border-black/10 p-1 align-top"
-                :class="date.slice(0, 7) === month ? '' : 'bg-black/[.04]'"
-              >
-                <time :datetime="date" class="block px-1 font-bold">{{
-                  Number(date.slice(-2))
-                }}</time>
-                <div
-                  v-for="booking in recordsByDate.get(date) || []"
-                  :key="booking.id"
-                  class="mb-1 rounded bg-cream px-1 py-1"
-                >
-                  <RouterLink
-                    :to="bookingLink(booking.id)"
-                    class="block truncate font-bold underline"
-                    :title="`${booking.arrivalTime} · ${booking.guestName}`"
-                  >
-                    {{ booking.arrivalTime }} {{ booking.guestName }}
-                  </RouterLink>
-                  <span class="block truncate text-xs text-black/65">{{
-                    copy.statuses[booking.status]
-                  }}</span>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+          <template #header="{ currentYear, currentMonth, activeView, updateActiveView, decrement, increment, setCalendarDate }">
+            <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h2 class="text-lg-semibold text-ink-gray-9" aria-live="polite">
+                {{ calendarHeading(currentYear, currentMonth) }}
+              </h2>
+              <div class="flex items-center gap-1">
+                <Button
+                  v-if="activeView === 'Day'"
+                  variant="outline"
+                  :label="copy.calendar"
+                  @click="updateActiveView('Month')"
+                />
+                <Button
+                  variant="ghost"
+                  icon="lucide-chevron-left"
+                  :aria-label="activeView === 'Day' ? copy.previousDay : copy.previousMonth"
+                  @click="decrement"
+                />
+                <Button
+                  variant="subtle"
+                  :label="copy.today"
+                  @click="setCalendarDate(bookingToday())"
+                />
+                <Button
+                  variant="ghost"
+                  icon="lucide-chevron-right"
+                  :aria-label="activeView === 'Day' ? copy.nextDay : copy.nextMonth"
+                  @click="increment"
+                />
+              </div>
+            </div>
+            <div
+              v-if="activeView === 'Month'"
+              class="booking-weekdays grid grid-cols-7 text-center text-xs text-ink-gray-6"
+            >
+              <span v-for="day in weekdayLabels" :key="day" class="py-2">{{ day }}</span>
+            </div>
+          </template>
+        </Calendar>
+      </TabPanel>
     </section>
-  </div>
+  </Tabs>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { useI18n } from "vue-i18n";
-import { useRoute } from "vue-router";
 import {
-  addBookingDays,
+  Alert,
+  Badge,
+  Button,
+  LoadingText,
+  Select,
+  TabList,
+  TabPanel,
+  TabTrigger,
+  Tabs,
+} from "frappe-ui";
+import {
+  Calendar,
+  ListFooter,
+  ListRowItem,
+  ListView,
+  type CalendarConfig,
+  type CalendarEvent,
+  type CalendarMode,
+} from "frappe-ui/experimental";
+import { computed, reactive, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
+import { useRoute, useRouter } from "vue-router";
+import {
   bookingDateAt,
   bookingStatusActions,
   type BookingBranch,
@@ -307,26 +284,39 @@ import {
   type BookingStatus,
   type BookingSummary,
 } from "../../../../shared/booking";
+import DateFilter from "../components/DateFilter.vue";
+import DisclosureSection from "../components/DisclosureSection.vue";
+import PageHeader from "../components/PageHeader.vue";
 import { useAdminStore } from "../stores/admin";
 
 const store = useAdminStore();
 const route = useRoute();
+const router = useRouter();
 const { locale } = useI18n();
 const copy = computed(() => messages[locale.value === "km" ? "km" : "en"]);
-const tabs = ["list", "calendar"] as const;
-const headings = [
-  "reference",
-  "guest",
-  "branch",
-  "arrival",
-  "pax",
-  "status",
-] as const;
-const mode = ref<(typeof tabs)[number]>("list");
+const dateFields = ["from", "to"] as const;
+const bookingColumns = computed(() => [
+  { key: "reference", label: copy.value.reference, width: "minmax(105px, 1fr)" },
+  { key: "guestName", label: copy.value.guest, width: "minmax(115px, 1.25fr)" },
+  { key: "branchName", label: copy.value.branch, width: "minmax(105px, 1fr)" },
+  { key: "arrival", label: copy.value.arrival, width: "133px" },
+  { key: "pax", label: copy.value.pax, width: "62px" },
+  { key: "status", label: copy.value.status, width: "100px" },
+]);
+const bookingListOptions = computed(() => ({
+  selectable: false,
+  rowHeight: 48,
+  getRowRoute: (booking: BookingSummary) => bookingLink(booking.id),
+  emptyState: { title: copy.value.empty },
+}));
+const mode = ref<"list" | "calendar">("list");
 const branchId = ref("");
 const branches = ref<BookingBranch[]>([]);
-const from = ref("");
-const to = ref("");
+const branchOptions = computed(() => [
+  { label: copy.value.allBranches, value: "" },
+  ...branches.value.map(({ id, name }) => ({ label: name, value: id })),
+]);
+const dateFilters = reactive({ from: "", to: "" });
 const page = ref(1);
 const hasMore = ref(false);
 const records = ref<BookingSummary[]>([]);
@@ -334,53 +324,57 @@ const loading = ref(false);
 const canManage = ref(false);
 const error = ref("");
 const timezone = ref("UTC");
-const monthSelection = ref("");
-const month = computed(
-  () =>
-    monthSelection.value ||
-    bookingDateAt(Date.now(), timezone.value).slice(0, 7),
-);
-const monthLabel = computed(() =>
-  new Intl.DateTimeFormat(locale.value, {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(`${month.value}-01T00:00:00Z`)),
+type CalendarRange = { view: CalendarMode; startDate: string; endDate: string };
+const calendarRange = ref<CalendarRange | null>(null);
+const calendar = ref<InstanceType<typeof Calendar>>();
+const calendarConfig: Partial<CalendarConfig> = {
+  defaultMode: "Month",
+  isEditMode: false,
+  enableShortcuts: false,
+  timeFormat: "24h",
+  showIcon: false,
+};
+const statusThemes = {
+  requested: "amber",
+  confirmed: "green",
+  declined: "red",
+  cancelled: "gray",
+} as const satisfies Record<BookingStatus, string>;
+const calendarColors: Record<BookingStatus, string> = {
+  requested: "amber",
+  confirmed: "green",
+  declined: "pink",
+  cancelled: "violet",
+};
+const calendarEvents = computed<CalendarEvent[]>(() =>
+  records.value.map((record) => ({
+    id: record.id,
+    title: `${record.guestName} · ${copy.value.statuses[record.status]}`,
+    fromDate: record.arrivalDate,
+    toDate: record.arrivalDate,
+    fromTime: record.arrivalTime,
+    toTime: record.arrivalTime,
+    color: calendarColors[record.status],
+  })),
 );
 const weekdayLabels = computed(() =>
-  Array.from({ length: 7 }, (_, i) =>
+  Array.from({ length: 7 }, (_, index) =>
     new Intl.DateTimeFormat(locale.value, {
       weekday: "short",
       timeZone: "UTC",
-    }).format(new Date(Date.UTC(2026, 10, 1 + i))),
+    }).format(new Date(Date.UTC(2026, 10, 1 + index))),
   ),
 );
-const calendarWeeks = computed(() => {
-  const first = `${month.value}-01`;
-  const start = addBookingDays(
-    first,
-    -new Date(`${first}T00:00:00Z`).getUTCDay(),
-  );
-  return Array.from({ length: 6 }, (_, week) =>
-    Array.from({ length: 7 }, (_, day) =>
-      addBookingDays(start, week * 7 + day),
-    ),
-  );
-});
-const recordsByDate = computed(() => {
-  const days = new Map<string, BookingSummary[]>();
-  for (const record of records.value) {
-    if (!days.has(record.arrivalDate)) days.set(record.arrivalDate, []);
-    days.get(record.arrivalDate)!.push(record);
-  }
-  return days;
-});
+let calendarAnchor: Date | undefined;
 const bookingId = computed(() => String(route.params.bookingId || ""));
 const detail = ref<BookingDetail | null>(null);
 const detailCanManage = ref(false);
 const detailLoading = ref(false);
+const tableOptions = ref<{ id: string; label: string; groupName: string }[]>([]);
+const selectedTable = ref("");
+const savingTable = ref(false);
 const detailError = ref("");
-const saving = ref(false);
+const saving = ref<BookingStatus | null>(null);
 let listGeneration = 0;
 let detailGeneration = 0;
 
@@ -394,11 +388,22 @@ type Listing = {
 function bookingLink(id?: string) {
   return { name: "bookings", params: { bookingId: id || "" } };
 }
-function moveMonth(delta: number) {
-  const [year, current] = month.value.split("-").map(Number);
-  monthSelection.value = new Date(Date.UTC(year, current - 1 + delta, 1))
-    .toISOString()
-    .slice(0, 7);
+function bookingToday() {
+  return new Date(`${bookingDateAt(Date.now(), timezone.value)}T12:00:00`);
+}
+
+function calendarHeading(year: number, month: number) {
+  const day = calendarRange.value?.view === "Day" ? calendarRange.value.startDate : "";
+  const date = day ? new Date(`${day}T12:00:00`) : new Date(year, month, 1);
+  return new Intl.DateTimeFormat(locale.value, {
+    month: "long",
+    year: "numeric",
+    day: day ? "numeric" : undefined,
+  }).format(date);
+}
+
+function openCalendarBooking({ calendarEvent }: { calendarEvent: CalendarEvent }) {
+  if (typeof calendarEvent.id === "string") void router.push(bookingLink(calendarEvent.id));
 }
 function formatTimestamp(value: string, timeZone: string) {
   const date = new Date(
@@ -423,12 +428,14 @@ function presetLabel(value: string) {
 async function loadList() {
   const generation = ++listGeneration;
   if (bookingId.value) return;
+  const calendarMode = mode.value === "calendar";
+  const range = calendarRange.value;
+  if (calendarMode && !range) return;
   loading.value = true;
   error.value = "";
-  const calendar = mode.value === "calendar";
-  const first = calendar ? calendarWeeks.value[0][0] : from.value;
-  const last = calendar ? calendarWeeks.value[5][6] : to.value;
-  let requestedPage = calendar ? 1 : page.value;
+  const first = calendarMode ? range!.startDate : dateFilters.from;
+  const last = calendarMode ? range!.endDate : dateFilters.to;
+  let requestedPage = calendarMode ? 1 : page.value;
   const items: BookingSummary[] = [];
   try {
     let result: Listing;
@@ -441,7 +448,7 @@ async function loadList() {
       if (generation !== listGeneration) return;
       items.push(...result.bookings);
       requestedPage++;
-    } while (calendar && result.hasMore);
+    } while (calendarMode && result.hasMore);
     records.value = items;
     branches.value = result.branches;
     hasMore.value = result.hasMore;
@@ -465,10 +472,12 @@ async function loadDetail(id: string) {
   try {
     const result = (await store.request(
       `/api/admin/bookings/${encodeURIComponent(id)}`,
-    )) as { booking: BookingDetail; canManage: boolean };
+    )) as { booking: BookingDetail; canManage: boolean; tableOptions: typeof tableOptions.value };
     if (generation === detailGeneration) {
       detail.value = result.booking;
       detailCanManage.value = result.canManage;
+      selectedTable.value = result.booking.tableId ?? "";
+      tableOptions.value = result.tableOptions;
     }
   } catch (value) {
     if (generation === detailGeneration)
@@ -479,16 +488,35 @@ async function loadDetail(id: string) {
   }
 }
 
+async function saveTable() {
+  if (!detail.value || !detailCanManage.value || store.isReadOnly || savingTable.value) return;
+  const { id, tableId } = detail.value;
+  savingTable.value = true;
+  detailError.value = "";
+  try {
+    await store.request(`/api/admin/bookings/${encodeURIComponent(id)}/table`, {
+      method: "PATCH",
+      body: JSON.stringify({ tableId: selectedTable.value || null, expectedTableId: tableId }),
+    });
+    if (bookingId.value === id) await loadDetail(id);
+  } catch (value) {
+    if (bookingId.value === id)
+      detailError.value = value instanceof Error ? value.message : copy.value.loadFailed;
+  } finally {
+    savingTable.value = false;
+  }
+}
+
 async function updateStatus(status: BookingStatus) {
   if (
     !detail.value ||
     !detailCanManage.value ||
     store.isReadOnly ||
-    saving.value
+    saving.value !== null || savingTable.value
   )
     return;
   const { id, status: expectedStatus } = detail.value;
-  saving.value = true;
+  saving.value = status;
   detailError.value = "";
   try {
     const result = (await store.request(
@@ -508,18 +536,23 @@ async function updateStatus(status: BookingStatus) {
           value instanceof Error ? value.message : copy.value.loadFailed;
     }
   } finally {
-    saving.value = false;
+    saving.value = null;
   }
 }
 
 watch(
-  [branchId, from, to, mode],
+  [branchId, dateFilters, mode],
   () => {
     page.value = 1;
   },
   { flush: "sync" },
 );
-watch([mode, branchId, from, to, page, month, bookingId], loadList, {
+watch(calendar, (current, previous) => {
+  if (previous) calendarAnchor = new Date(previous.currentYear, previous.currentMonth, 1, 12);
+  if (current) current.setCalendarDate(calendarAnchor ?? bookingToday());
+  else calendarRange.value = null;
+}, { flush: "post" });
+watch([mode, branchId, dateFilters, page, calendarRange, bookingId], loadList, {
   immediate: true,
 });
 watch(bookingId, loadDetail, { immediate: true });
@@ -527,7 +560,6 @@ watch(bookingId, loadDetail, { immediate: true });
 const messages = {
   en: {
     title: "Bookings",
-    description: "Review booking requests and upcoming arrivals.",
     details: "Booking details",
     list: "List",
     calendar: "Calendar",
@@ -540,6 +572,9 @@ const messages = {
     branch: "Branch",
     arrival: "Arrival",
     pax: "Guests",
+    bookingTable: "Reserved table",
+    unassignedTable: "Unassigned",
+    saveTable: "Save table",
     status: "Status",
     phone: "Phone number",
     preference: "Preference",
@@ -550,11 +585,15 @@ const messages = {
     terms: "Accepted booking terms",
     from: "Arrival from",
     to: "Arrival through",
+    pages: "Booking pages",
     allBranches: "All branches",
     empty: "No bookings match these filters.",
     previous: "Previous",
     next: "Next",
     previousMonth: "Previous month",
+    previousDay: "Previous day",
+    nextDay: "Next day",
+    today: "Today",
     nextMonth: "Next month",
     statuses: {
       requested: "Requested",
@@ -576,7 +615,6 @@ const messages = {
   },
   km: {
     title: "ការកក់តុ",
-    description: "ពិនិត្យសំណើកក់តុ និងការមកដល់នាពេលខាងមុខ។",
     details: "ព័ត៌មានការកក់",
     list: "បញ្ជី",
     calendar: "ប្រតិទិន",
@@ -589,6 +627,9 @@ const messages = {
     branch: "សាខា",
     arrival: "ពេលមកដល់",
     pax: "ចំនួនភ្ញៀវ",
+    bookingTable: "តុដែលបានកក់",
+    unassignedTable: "មិនទាន់ជ្រើសតុ",
+    saveTable: "រក្សាទុកតុ",
     status: "ស្ថានភាព",
     phone: "លេខទូរសព្ទ",
     preference: "ចំណូលចិត្ត",
@@ -599,11 +640,15 @@ const messages = {
     terms: "លក្ខខណ្ឌការកក់ដែលបានយល់ព្រម",
     from: "មកដល់ចាប់ពី",
     to: "មកដល់រហូតដល់",
+    pages: "ទំព័រការកក់",
     allBranches: "សាខាទាំងអស់",
     empty: "មិនមានការកក់ត្រូវនឹងតម្រងនេះទេ។",
     previous: "មុន",
     next: "បន្ទាប់",
     previousMonth: "ខែមុន",
+    previousDay: "ថ្ងៃមុន",
+    nextDay: "ថ្ងៃបន្ទាប់",
+    today: "ថ្ងៃនេះ",
     nextMonth: "ខែបន្ទាប់",
     statuses: {
       requested: "បានស្នើ",
@@ -627,11 +672,7 @@ const messages = {
 </script>
 
 <style scoped>
-.booking-calendar {
-  min-width: 38rem;
-}
-dt {
-  font-size: 0.875rem;
-  color: #57534e;
+.booking-calendar:has(.booking-weekdays) :deep(.grid.grid-cols-7:not(.booking-weekdays):has(+ div [data-week-row])) {
+  display: none;
 }
 </style>

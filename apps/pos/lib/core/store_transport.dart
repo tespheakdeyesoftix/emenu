@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:basic_utils/basic_utils.dart' as x509;
 import 'package:crypto/crypto.dart';
 
+import 'api_endpoint.dart';
 import 'pos_api.dart';
 import 'register_authority.dart';
 
@@ -161,23 +162,52 @@ class StoreClient {
     required String label,
     required String posToken,
   }) => _request(
-    '/pair',
+    StoreApiEndpoint.pair,
     credential: invitation.secret,
     body: {'attempt_id': attemptId, 'label': label, 'pos_token': posToken},
   );
 
   Future<Json> enroll(String deviceCredential, String posToken) => _request(
-    '/enroll',
+    StoreApiEndpoint.enroll,
     credential: deviceCredential,
     body: {'pos_token': posToken},
   );
 
-  Future<Json> state(String staffCredential, {String? snapshotVersion}) =>
+  Future<Json> state(
+    String staffCredential, {
+    String? snapshotVersion,
+    bool reloadMenu = false,
+  }) => _request(
+    StoreApiEndpoint.state,
+    credential: staffCredential,
+    body: {
+      'snapshot_version': snapshotVersion,
+      if (reloadMenu) 'reload_menu': true,
+    },
+  );
+
+  Future<Json> shiftManagement(String staffCredential, Json input) => _request(
+    StoreApiEndpoint.shiftManagement,
+    credential: staffCredential,
+    body: input,
+  );
+
+  Future<Json> customerDirectory(String staffCredential, Json input) =>
       _request(
-        '/state',
+        StoreApiEndpoint.customerDirectory,
         credential: staffCredential,
-        body: {'snapshot_version': snapshotVersion},
+        body: input,
       );
+
+  Future<Json> salesHistory(
+    String staffCredential, {
+    int? serverPage,
+    String? saleId,
+  }) => _request(
+    StoreApiEndpoint.salesHistory,
+    credential: staffCredential,
+    body: {'server_page': ?serverPage, 'sale_id': ?saleId},
+  );
 
   Future<Json> command({
     required String staffCredential,
@@ -185,7 +215,7 @@ class StoreClient {
     required RegisterAction action,
     required Json body,
   }) => _request(
-    '/command',
+    StoreApiEndpoint.command,
     credential: staffCredential,
     body: {'id': id, 'action': action.name, 'payload': body},
   );
@@ -197,9 +227,7 @@ class StoreClient {
   }) async {
     try {
       return await (() async {
-        final request = await _http.postUrl(
-          endpoint.uri.replace(path: '/store/v1$path'),
-        );
+        final request = await _http.postUrl(endpoint.uri.replace(path: path));
         request.followRedirects = false;
         request.headers.set(
           HttpHeaders.authorizationHeader,

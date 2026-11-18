@@ -4,7 +4,17 @@
     "english": "English",
     "khmer": "Khmer"
   },
+  "colorPicker": {
+    "open": "Choose color for {label}",
+    "presets": "Preset colors",
+    "red": "Red",
+    "green": "Green",
+    "blue": "Blue"
+  },
   "common": {
+    "clear": "Clear",
+    "selectDate": "Select date",
+    "selectDateTime": "Select date and time",
     "add": "Add",
     "cancel": "Cancel",
     "close": "Close",
@@ -71,6 +81,7 @@
     "sellingOverview": "Dashboard",
     "posProfiles": "POS profile settings",
     "posPaymentTypes": "Payment types",
+    "posCustomers": "Customers",
     "salesList": "Sales list",
     "groups": {
       "menu": "Menu",
@@ -80,7 +91,96 @@
       "business": "Business"
     }
   },
+  "customers": {
+    "searchPlaceholder": "Search by name, phone number, or customer code",
+    "noMatches": "No customers match your search.",
+    "sortBy": "Sort by",
+    "sortDirection": "Order",
+    "ascending": "Ascending",
+    "descending": "Descending",
+    "groups": "Customer groups",
+    "group": "Customer group",
+    "noGroup": "No group",
+    "addCustomer": "New customer",
+    "editCustomer": "Edit customer",
+    "viewCustomer": "Customer details",
+    "addGroup": "New customer group",
+    "editGroup": "Edit customer group",
+    "emptyCustomers": "No customers found.",
+    "emptyGroups": "No customer groups yet.",
+    "view": "View",
+    "walkIn": "Walk-in customer",
+    "phone": "Phone number",
+    "email": "Email",
+    "gender": "Gender",
+    "dob": "Date of birth",
+    "reference": "External reference",
+    "address": "Address",
+    "actions": "Actions",
+    "code": "Customer code",
+    "membership": "Membership",
+    "member": "Member",
+    "codeRequired": "Customer code is required for membership.",
+    "unspecifiedGender": "Unspecified",
+    "male": "Male",
+    "female": "Female",
+    "photo": "Photo",
+    "uploadPhoto": "Upload photo",
+    "replacePhoto": "Replace photo",
+    "removePhoto": "Remove photo",
+    "preparingPhoto": "Preparing photo…",
+    "photoLoadFailed": "Could not load the customer photo.",
+    "invalidPhoto": "Choose a valid JPG, PNG, or WebP image up to 8 MB.",
+    "photoPreview": "Customer photo",
+    "deleteGroup": "Delete customer group",
+    "deleteCustomer": "Delete customer",
+    "confirmGroup": "Delete {name}? Its customers will stay in the directory without a group.",
+    "confirmCustomer": "Delete {name} from the customer directory?",
+    "requestFailed": "Could not complete the customer request."
+  },
+  "shiftAudit": {
+    "title": "Shift audit",
+    "empty": "No shift activity yet.",
+    "time": "Time",
+    "action": "Action",
+    "register": "Register",
+    "operator": "Operator",
+    "details": "Details",
+    "originalOperator": "Original operator",
+    "counts": "Closing counts",
+    "expected": "Expected",
+    "counted": "Counted",
+    "variance": "Difference",
+    "event": {
+      "open_day": "Opened day",
+      "close_day": "Closed day",
+      "open_shift": "Opened shift",
+      "close_shift": "Closed shift",
+      "reopen_shift": "Reopened shift",
+      "opening": "Opening float",
+      "cash_in": "Cash in",
+      "cash_out": "Cash out",
+      "recover_sync": "Approved sync recovery"
+    },
+    "reason": {
+      "add_change": "Add change",
+      "safe_drop": "Safe drop",
+      "petty_cash": "Petty cash",
+      "correction": "Correction",
+      "other": "Other"
+    }
+  },
   "selling": {
+    "tablePlanSettings": "Table plan",
+    "promptGuestCover": "Ask for guest count when opening a table",
+    "resetTableColors": "Reset colors",
+    "tableStatuses": {
+      "vacant": "Vacant",
+      "occupied": "Occupied",
+      "bill_requested": "Bill requested",
+      "hold": "Hold",
+      "booked": "Booked"
+    },
     "businessDate": "Business date",
     "completed": "Completed sales today",
     "openBills": "Open bills",
@@ -102,11 +202,20 @@
     "noProfiles": "No POS profiles yet.",
     "pendingProfile": "Settings will apply when open POS activity is resolved.",
     "profileSaved": "POS profile saved.",
+    "profileTabs": {
+      "general": "General Info",
+      "catalog": "Category and Menu",
+      "tables": "Table and Table Group",
+      "payments": "Payment Type",
+      "tax": "Tax Rule",
+      "receipt": "Receipt Setting"
+    },
     "active": "Active",
     "inactive": "Inactive",
     "name": "Name",
     "workingDay": "Use working days",
     "tableMode": "Table selection",
+    "pendingTableMode": "Registers are using {active}. {pending} will apply when any open cashier shift and bills are closed.",
     "tableGroups": "Table groups",
     "tableGroupsHelp": "Select and reorder the groups shown on this register. An empty selection uses all active groups in branch order.",
     "noTableGroups": "This branch has no active table groups.",
@@ -116,14 +225,16 @@
     "categories": "Categories",
     "catalogSelection": "Limit the POS catalog",
     "catalogSelectionHelp": "Selecting a parent includes all its children. Leave the list empty to use the entire catalog source.",
+    "menuSelectionHelp": "Selecting a menu includes its submenus. Leave the list empty to use all menus.",
+    "savedSubmenuLimits": "Changing the menu selection replaces saved submenu limits.",
+    "defaultMenu": "Default menu",
+    "noDefaultMenu": "No default menu",
     "expandCatalogNode": "Expand {name}",
     "collapseCatalogNode": "Collapse {name}",
     "unavailableSelection": "Unavailable selection ({id})",
     "paymentTypes": "Accepted payment types",
-    "allowPaymentType": "Allow payment type",
     "allowCashFloat": "Allow cash float",
-    "removePaymentType": "Remove {name}",
-    "paymentKind": "Payment type",
+    "paymentTypeGroup": "Payment type group",
     "paymentCurrency": "Currency",
     "chooseCurrency": "Choose a currency",
     "currencyFromProfile": "Currency set by POS profile",
@@ -136,8 +247,102 @@
     "defaultCustomer": "Default customer",
     "walkIn": "Walk-in",
     "businessCurrencyRequired": "Choose a payment type that accepts {currency}.",
+    "taxRules": {
+      "defaultRule": "Default Tax Rule",
+      "noDefaultRule": "No default tax rule",
+      "title": "Tax rules",
+      "add": "Add tax rule",
+      "empty": "No tax rules yet.",
+      "rule": "Rule {number}",
+      "name": "Tax rule name",
+      "remove": "Remove rule",
+      "level": "Tax level {number}",
+      "levelName": "Tax name",
+      "afterDiscount": "Calculate after discount",
+      "includeTax": "Include tax {number} in the base",
+      "currentRegisterTax": "Current register tax"
+    },
     "taxMode": "Tax mode",
     "taxRate": "Tax rate (%)",
+    "receipts": {
+      "template": "Receipt template",
+      "addTemplate": "Add template",
+      "templateName": "Template name",
+      "removeTemplate": "Remove template",
+      "noTemplates": "No templates yet",
+      "noDefault": "None",
+      "defaults": "Default templates",
+      "preview": "Preview",
+      "empty": "Add a template to preview it here.",
+      "currentReceipt": "Current register receipt",
+      "language": "Language",
+      "paperWidth": "Paper width (mm)",
+      "textSize": "Text size",
+      "headingAlignment": "Heading alignment",
+      "qrSettings": "QR label settings",
+      "labelHeight": "Label height (mm)",
+      "qrSize": "QR size (mm)",
+      "qrTarget": "QR links to",
+      "customUrl": "Custom URL",
+      "qrCaption": "QR caption",
+      "fieldsTitle": "Fields to print",
+      "qrPreview": "Sample QR code",
+      "qrUnavailable": "This URL could not be encoded as a QR code.",
+      "types": {
+        "receipt": "Receipt",
+        "kitchen_receipt": "Kitchen Receipt",
+        "qr_label": "QR Label"
+      },
+      "defaultNames": {
+        "receipt": "Close-order receipt",
+        "kitchen_receipt": "Kitchen order ticket (KOT)",
+        "qr_label": "QR label"
+      },
+      "languages": {
+        "en": "English",
+        "km": "Khmer",
+        "bilingual": "English and Khmer"
+      },
+      "sizes": {
+        "small": "Small",
+        "normal": "Normal",
+        "large": "Large"
+      },
+      "alignments": {
+        "left": "Left",
+        "center": "Center",
+        "right": "Right"
+      },
+      "targets": {
+        "table_menu": "Table menu",
+        "business_menu": "Business menu",
+        "custom_url": "Custom URL"
+      },
+      "fields": {
+        "logo": "Logo",
+        "business_details": "Business address and phone",
+        "branch": "Branch",
+        "order_number": "Order number",
+        "date_time": "Date and time",
+        "cashier": "Cashier",
+        "customer": "Customer",
+        "table": "Table",
+        "service_type": "Service type",
+        "station": "Kitchen station",
+        "item_codes": "Item codes",
+        "modifiers": "Modifiers",
+        "item_notes": "Item notes",
+        "unit_prices": "Unit prices",
+        "discount": "Discount",
+        "tax": "Tax breakdown",
+        "payments": "Payments",
+        "change": "Change",
+        "order_notes": "Order notes",
+        "signature": "Signature line",
+        "highlight_notes": "Highlight preparation notes",
+        "show_link": "Print URL"
+      }
+    },
     "receiptTitle": "Receipt title",
     "receiptFooter": "Receipt footer",
     "showReceiptTax": "Show tax on receipt",
@@ -149,10 +354,11 @@
       "inclusive": "Tax included",
       "exclusive": "Add tax"
     },
-    "paymentKinds": {
+    "paymentTypeGroups": {
       "cash": "Cash",
-      "card": "Card",
-      "qr": "QR",
+      "credit_card": "Credit Card",
+      "bank": "Bank",
+      "qr_payment": "QR Payment",
       "other": "Other"
     }
   },
@@ -160,7 +366,6 @@
     "branchLoadFailed": "Could not load branches."
   },
   "telegram": {
-    "description": "Route order and booking alerts to Telegram chats and choose what each message says.",
     "new": "New notification",
     "edit": "Edit notification",
     "empty": "Create a notification to send alerts to one or more Telegram chats.",
@@ -261,7 +466,7 @@
     "orderProducts": "Reorder products",
     "sortProductOrder": "Sort product order",
     "sortOrder": "Sort Order",
-    "sortTreeHelp": "Drag the handles or use the arrows to reorder. To change a submenu’s parent, use Move to… or drag it onto a Drop here target.",
+    "sortTreeHelp": "Drag the handles or use the arrows to reorder. To change a submenu’s parent, use Move to… or drop it onto the new parent’s row.",
     "moveTo": "Move to…",
     "moveMenuTo": "Move {name} to…",
     "moveMenuHelp": "Choose a new parent menu. Your change is applied when you save the order.",
@@ -296,6 +501,7 @@
     "allCategories": "All categories",
     "selectAll": "Select all matches",
     "unselectAll": "Unselect all",
+    "viewLayout": "Product layout",
     "gridView": "Grid view",
     "listView": "List view",
     "noAssignedProducts": "No products assigned yet.",
@@ -381,6 +587,9 @@
     "failed": "Sign-in failed."
   },
   "account": {
+    "subscription": "Subscription",
+    "plan": "Plan",
+    "expires": "Expires",
     "title": "Your account",
     "changePassword": "Change password",
     "signOut": "Sign out",
@@ -396,9 +605,6 @@
   "pages": {
     "overview": {
       "title": "Your menu overview",
-      "description": "See what is live, what needs attention, and what guests see today.",
-      "greeting": "Hello {name}",
-      "fallbackName": "there",
       "addDish": "Add dish",
       "dishes": "Dishes",
       "thisWeek": "+2 this week",
@@ -445,9 +651,7 @@
       }
     },
     "business": {
-      "eyebrow": "Settings",
       "title": "Business information",
-      "description": "Information guests see on your menu, social sharing, and contact links.",
       "save": "Save changes",
       "tabs": {
         "label": "Business settings sections",
@@ -476,9 +680,7 @@
       }
     },
     "appearance": {
-      "eyebrow": "QR menu",
       "title": "Menu appearance",
-      "description": "Create a consistent, accessible storefront for every guest. Changes go live only when you publish.",
       "tabs": {
         "label": "Appearance settings sections",
         "style": "Style & background",
@@ -569,19 +771,23 @@
       }
     },
     "priceLists": {
-      "eyebrow": "Pricing",
-      "title": "Price lists",
-      "description": "Create pricing for different occasions and schedule when each price applies to your QR menu."
+      "title": "Price lists"
     },
     "managePrices": {
-      "eyebrow": "Pricing",
-      "title": "Manage prices",
-      "description": "Edit base and portion prices across every active price list. Changes save automatically."
+      "title": "Manage prices"
     },
     "orders": {
-      "eyebrow": "Table service",
+      "filters": "Filter orders",
+      "allStatuses": "All statuses",
+      "tableNumber": "Table number",
+      "allTables": "All tables",
+      "noMatchingTables": "No matching tables",
+      "clearFilters": "Clear filters",
+      "applyFilters": "Apply filters",
+      "filterOptionsFailed": "Couldn’t load the branch and table options.",
+      "noMatchingOrders": "No orders match these filters.",
+      "dateRange": "Date range",
       "title": "Orders",
-      "description": "View orders submitted from your table QR menus.",
       "refresh": "Refresh",
       "empty": "No orders on this page.",
       "reference": "Order reference",
@@ -636,14 +842,10 @@
       "qrReady": "QR link ready to print"
     },
     "banners": {
-      "eyebrow": "Promotions",
-      "title": "Promotional banners",
-      "description": "Promote specials, seasonal menus, events, or important announcements on the public menu."
+      "title": "Promotional banners"
     },
     "qrDesigns": {
-      "eyebrow": "Print & share",
       "title": "QR designs",
-      "description": "Create branded, print-ready QR cards for menus and tables.",
       "showFooterText": "Show footer text",
       "footerText": "Footer text",
       "showTableGroup": "Show table group",
@@ -661,9 +863,8 @@
       "chooseActiveBranch": "Choose an active branch before downloading."
     },
     "reports": {
-      "eyebrow": "Guest insights",
+      "datePresets": "Preset date ranges",
       "title": "Menu analytics",
-      "description": "Understand how anonymous guest sessions use your digital menu. These figures measure interest, not orders or sales.",
       "export": "Export CSV",
       "from": "From",
       "to": "To",

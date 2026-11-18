@@ -5,22 +5,14 @@
         <span class="label !mb-1">{{ label }}</span>
         <p class="m-0 text-xs text-black/40">{{ uploadHint }}</p>
       </div>
-      <label
+      <ImageUploadButton
         v-if="modelValue.length < max"
-        class="btn-soft cursor-pointer whitespace-nowrap"
-        :class="uploading ? 'pointer-events-none opacity-50' : ''"
-      >
-        <Upload :size="16" />{{
-          uploading ? "កំពុងកែសម្រួល និងបង្ហោះ…" : "បង្ហោះ"
-        }}
-        <input
-          class="hidden"
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          :multiple="max > 1"
-          @change="selectFiles"
-        />
-      </label>
+        :loading="uploading"
+        :multiple="max > 1"
+        label="បង្ហោះ"
+        loading-text="កំពុងកែសម្រួល និងបង្ហោះ…"
+        @select="selectFiles"
+      />
     </div>
 
     <div
@@ -63,36 +55,36 @@
             </span>
           </template>
         </FallbackImage>
-        <button
+        <Button variant="ghost"
           type="button"
           class="absolute right-1.5 top-1.5 grid size-7 place-items-center rounded-full bg-white/90 text-red-600 shadow"
           aria-label="លុបរូបភាព"
           @click="remove(image.id)"
         >
-          <X :size="14" />
-        </button>
-        <button
+          <template #icon><X :size="14" /></template>
+        </Button>
+        <Button
           v-if="max > 1"
+          :variant="image.id === primaryId ? 'solid' : 'outline'"
+          size="xs"
           type="button"
           class="absolute inset-x-1.5 bottom-1.5 rounded-full px-2 py-1.5 text-[10px] font-extrabold shadow"
-          :class="
-            image.id === primaryId ? 'bg-mint text-ink' : 'bg-white/90 text-ink'
-          "
+          :aria-pressed="image.id === primaryId"
           @click="$emit('update:primaryId', image.id)"
         >
           {{ image.id === primaryId ? "រូបចម្បង" : "កំណត់ជារូបចម្បង" }}
-        </button>
+        </Button>
       </div>
     </div>
-    <p v-if="error" class="mb-0 mt-2 text-xs font-bold text-red-600">
-      {{ error }}
-    </p>
+    <Alert v-if="error" theme="red" :title="error" class="mb-0 mt-2" />
   </div>
 </template>
 
 <script setup lang="ts">
+import ImageUploadButton from "./ImageUploadButton.vue";
+import { Alert, Button } from "frappe-ui";
 import { computed, ref } from "vue";
-import { ImagePlus, PackageOpen, Upload, X } from "lucide-vue-next";
+import { ImagePlus, PackageOpen, X } from "lucide-vue-next";
 import FallbackImage from "../../../../shared/FallbackImage.vue";
 import { useAdminStore, type MediaImage } from "../stores/admin";
 

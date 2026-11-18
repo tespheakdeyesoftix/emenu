@@ -507,7 +507,7 @@ test("rolls back the header and all lines when a line insert fails", async () =>
   assert.equal((await submit(body)).status, 201);
 });
 
-test("admin orders honor tenant, staff and sidebar access", async () => {
+test("admin orders honor tenant, staff and sidebar access", async (t) => {
   for (const [user, business, role] of [
     ["manager", "biz", "manager"],
     ["editor", "biz", "editor"],
@@ -640,6 +640,86 @@ test("admin orders honor tenant, staff and sidebar access", async () => {
   }
   assert.equal((await get()).status, 200);
   assert.equal((await get(`/${orderId}`)).status, 200);
+
+  await t.test("combines order status, table, branch, and posting date and lists inactive tables for historical orders", async () => {
+    await db.batch([
+      db.prepare(`INSERT INTO restaurant_tables (id,business_id,group_id,code,label,public_token,is_active)
+        VALUES ('order_filter_table','biz','area','T99','Archived table','orders_filter_test',0)`),
+      db.prepare(`INSERT INTO orders
+        (id,business_id,posting_date,table_id,total_quantity,total_amount,currency,submission_id,submission_hash,order_number,status)
+        VALUES ('filter-accepted','biz','1999-11-04','order_filter_table',1,1,'USD','filter-accepted','status-table-filter','991104-001','accepted'),
+          ('filter-submitted','biz','1999-11-04','order_filter_table',1,1,'USD','filter-submitted','status-table-filter','991104-002','submitted'),
+          ('filter-other-table','biz','1999-11-04','table',1,1,'USD','filter-other-table','status-table-filter','991104-003','accepted')`),
+    ]);
+    await setDisabledPages(["tables", "qrDesigns"]);
+
+    try {
+      const optionsResponse = await get("/filters/options");
+      assert.equal(optionsResponse.status, 200);
+      const options = await optionsResponse.json();
+      assert.deepEqual(options.tables.find(({ id }) => id === "order_filter_table"), {
+        id: "order_filter_table", branchId: orders[0].branchId, code: "T99", label: "Archived table", groupName: "Main",
+      });
+      assert.ok(options.branches.some(({ id }) => id === orders[0].branchId));
+      assert.ok(options.tables.every(({ id }) => id !== "foreign_table"));
+      assert.equal((await get("/filters/options", "editor")).status, 403);
+
+      const date = "?from=1999-11-04&to=1999-11-04";
+      const branch = "&branchId=" + orders[0].branchId;
+      const result = await get(date + branch + "&status=accepted&tableId=order_filter_table");
+      assert.equal(result.status, 200);
+      const filtered = await result.json();
+      assert.deepEqual(filtered.orders.map(({ id }) => id), ["filter-accepted"]);
+      assert.equal(filtered.hasMore, false);
+      const statusOnly = await (await get(date + "&status=accepted")).json();
+      assert.deepEqual(statusOnly.orders.map(({ id }) => id), ["filter-other-table", "filter-accepted"]);
+      const tableOnly = await (await get(date + "&tableId=order_filter_table")).json();
+      assert.deepEqual(tableOnly.orders.map(({ id }) => id), ["filter-submitted", "filter-accepted"]);
+      assert.equal((await get("?status=rejected")).status, 400);
+    } finally {
+      await setDisabledPages([]);
+      await db.batch([
+        db.prepare("DELETE FROM orders WHERE submission_hash='status-table-filter' AND business_id='biz'"),
+        db.prepare("DELETE FROM restaurant_tables WHERE id='order_filter_table' AND business_id='biz'"),
+      ]);
+    }
+  });
+
+  await t.test("filters posting dates before pagination and combines with the branch filter", async () => {
+    await db.prepare(`WITH RECURSIVE days(day) AS (
+      VALUES (1) UNION ALL SELECT day + 1 FROM days WHERE day < 29
+    )
+    INSERT INTO orders (id,business_id,posting_date,table_id,total_quantity,total_amount,currency,submission_id,submission_hash,order_number)
+      SELECT 'date-filter-' || day,'biz',printf('2000-11-%02d',day),'table',1,1,'USD',
+        'date-filter-' || day,'date-filter',printf('0011%02d-001',day)
+      FROM days`).run();
+
+    try {
+      const range = "?from=2000-11-02&to=2000-11-28";
+      const first = await get(range + "&branchId=" + orders[0].branchId);
+      assert.equal(first.status, 200);
+      const firstPage = await first.json();
+      assert.equal(firstPage.orders.length, 25);
+      assert.equal(firstPage.orders[0].postingDate, "2000-11-28");
+      assert.equal(firstPage.orders.at(-1).postingDate, "2000-11-04");
+      assert.equal(firstPage.hasMore, true);
+
+      const secondPage = await (await get(range + "&page=2")).json();
+      assert.deepEqual(secondPage.orders.map(({ postingDate }) => postingDate), ["2000-11-03", "2000-11-02"]);
+      assert.equal(secondPage.hasMore, false);
+
+      const wrongBranch = await (await get(range + "&branchId=unknown-branch")).json();
+      assert.deepEqual(wrongBranch.orders, []);
+      const earlier = await (await get("?to=2000-11-02")).json();
+      assert.deepEqual(earlier.orders.map(({ postingDate }) => postingDate), ["2000-11-02", "2000-11-01"]);
+      const newer = await (await get("?from=2000-11-29")).json();
+      assert.ok(newer.orders.every(({ postingDate }) => postingDate >= "2000-11-29"));
+      assert.equal((await get("?from=2000-11-29&to=2000-11-02")).status, 400);
+      assert.equal((await get("?to=2000-02-30")).status, 400);
+    } finally {
+      await db.prepare("DELETE FROM orders WHERE submission_hash='date-filter' AND business_id='biz'").run();
+    }
+  });
 });
 
 test("POS orders list, detail and status changes use the existing business key", async () => {

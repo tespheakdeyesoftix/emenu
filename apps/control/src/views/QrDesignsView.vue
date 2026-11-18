@@ -1,25 +1,16 @@
 <template>
   <div>
-    <PageHeader
-      :eyebrow="$t('pages.qrDesigns.eyebrow')"
-      :title="$t('pages.qrDesigns.title')"
-      :description="$t('pages.qrDesigns.description')"
-    >
-      <button class="btn-primary" @click="openNew">
-        <Plus :size="17" />ការរចនាថ្មី
-      </button>
+    <PageHeader :title="$t('pages.qrDesigns.title')">
+      <Button variant="solid" size="lg" @click="openNew">
+        <template #prefix><Plus :size="17" /></template>ការរចនាថ្មី
+      </Button>
     </PageHeader>
 
     <div v-if="store.loading" class="card grid min-h-80 place-items-center">
-      <LoaderCircle :size="32" class="animate-spin text-black/25" />
+      <Spinner class="!size-[32px] text-black/25" />
     </div>
     <template v-else>
-      <div
-        v-if="error"
-        class="mb-4 rounded-2xl bg-red-50 px-4 py-3 text-sm font-bold text-red-600"
-      >
-        {{ error }}
-      </div>
+      <Alert v-if="error" theme="red" :title="error" class="mb-4" />
       <div class="grid gap-5 md:grid-cols-2 2xl:grid-cols-3">
         <article
           v-for="design in store.designs"
@@ -27,17 +18,10 @@
           class="card overflow-hidden"
         >
           <div class="relative bg-[#e4e7df] p-5">
-            <span
-              v-if="design.isDefault"
-              class="absolute left-4 top-4 z-10 rounded-full bg-mint px-3 py-1 text-[10px] font-extrabold uppercase tracking-wider text-ink"
-              >លំនាំដើម</span
-            >
-            <span
-              class="absolute right-4 top-4 z-10 rounded-full bg-white/90 px-3 py-1 text-[10px] font-bold uppercase text-black/55"
-              >{{
+            <Badge v-if="design.isDefault" theme="green" class="absolute left-4 top-4 z-10 uppercase tracking-wider">លំនាំដើម</Badge>
+            <Badge class="absolute right-4 top-4 z-10 uppercase">{{
                 design.targetType === "table" ? "QR សម្រាប់តុ" : "QR ម៉ឺនុយ"
-              }}</span
-            >
+              }}</Badge>
             <QrDesignPreview
               v-if="store.allowCategoryBrowsing || design.config.menuSlug"
               :input="previewFor(design)"
@@ -57,46 +41,46 @@
                   {{ dimensionLabel(design) }}
                 </p>
               </div>
-              <button
-                class="btn-soft !p-2.5"
+              <Button variant="subtle" size="lg"
+                class="!p-2.5"
                 aria-label="កែសម្រួលការរចនា"
                 @click="openEdit(design)"
               >
-                <Pencil :size="16" />
-              </button>
+                <template #icon><Pencil :size="16" /></template>
+              </Button>
             </div>
             <div class="mt-4 flex flex-wrap gap-2">
-              <button class="btn-soft" @click="openEdit(design)">
-                <Download :size="15" />មើលជាមុន និងទាញយក
-              </button>
-              <button
-                class="btn-soft"
+              <Button variant="subtle" size="lg" @click="openEdit(design)">
+                <template #prefix><Download :size="15" /></template>មើលជាមុន និងទាញយក
+              </Button>
+              <Button variant="subtle" size="lg"
                 :disabled="busy"
                 @click="duplicate(design)"
               >
-                <Copy :size="15" />ចម្លង
-              </button>
-              <button
+                <template #prefix><Copy :size="15" /></template>ចម្លង
+              </Button>
+              <Button variant="subtle" size="lg"
                 v-if="!design.isDefault"
-                class="btn-soft"
                 :disabled="busy"
                 @click="makeDefault(design)"
               >
-                <Star :size="15" />កំណត់ជាលំនាំដើម
-              </button>
-              <button
+                <template #prefix><Star :size="15" /></template>កំណត់ជាលំនាំដើម
+              </Button>
+              <Button variant="subtle" size="lg"
                 v-if="!design.isDefault"
-                class="btn-soft text-red-600"
+                theme="red"
+                :aria-label="$t('common.delete') + ' ' + design.name"
                 :disabled="busy"
-                @click="remove(design)"
+                @click="designToDelete = design; error = ''"
               >
-                <Trash2 :size="15" />
-              </button>
+                <template #icon><Trash2 :size="15" /></template>
+              </Button>
             </div>
           </div>
         </article>
-        <button
-          class="grid min-h-96 place-items-center rounded-3xl border-2 border-dashed border-black/10 bg-white/40 p-8 text-center transition hover:border-black/25 hover:bg-white"
+        <Button
+          variant="outline" size="lg" type="button"
+          class="admin-action-card !justify-center min-h-96 border-dashed !text-center"
           @click="openNew"
         >
           <span
@@ -108,9 +92,19 @@
               >ចាប់ផ្តើមពីទម្រង់បោះពុម្ពដែលបានរៀបចំរួច។</span
             ></span
           >
-        </button>
+        </Button>
       </div>
     </template>
+
+    <ConfirmDialog
+      :open="!!designToDelete"
+      :title="$t('common.delete')"
+      :message="designToDelete ? deleteMessage(designToDelete.name) : ''"
+      :busy="busy"
+      :error="error"
+      @close="designToDelete = null; error = ''"
+      @confirm="remove"
+    />
 
     <QrDesigner
       :open="designerOpen"
@@ -124,16 +118,17 @@
 </template>
 
 <script setup lang="ts">
+import { Badge, Alert, Button, Spinner } from "frappe-ui";
 import { onMounted, ref } from "vue";
 import {
   Copy,
   Download,
-  LoaderCircle,
   Pencil,
   Plus,
   Star,
   Trash2,
 } from "lucide-vue-next";
+import ConfirmDialog from "../components/ConfirmDialog.vue";
 import PageHeader from "../components/PageHeader.vue";
 import QrDesigner from "../components/QrDesigner.vue";
 import QrDesignPreview from "../components/QrDesignPreview.vue";
@@ -146,6 +141,7 @@ const admin = useAdminStore();
 const store = useQrDesignStore();
 const designerOpen = ref(false);
 const selectedDesign = ref<QrDesign | null>(null);
+const designToDelete = ref<QrDesign | null>(null);
 const busy = ref(false);
 const error = ref("");
 
@@ -186,15 +182,17 @@ async function makeDefault(design: QrDesign) {
   await run(() => store.setDefault(design.id));
   admin.notify("បានកែប្រែការរចនា QR លំនាំដើម");
 }
-async function remove(design: QrDesign) {
-  if (
-    !window.confirm(
-      `លុប “${design.name}” មែនទេ? លេខកូដ QR ដែលបានបោះពុម្ពនឹងនៅតែអាចបើកម៉ឺនុយបាន។`,
-    )
-  )
-    return;
-  await run(() => store.deleteDesign(design.id));
-  if (!error.value) admin.notify("បានលុបការរចនា QR");
+function deleteMessage(name: string) {
+  return `លុប “${name}” មែនទេ? លេខកូដ QR ដែលបានបោះពុម្ពនឹងនៅតែអាចបើកម៉ឺនុយបាន។`;
 }
-onMounted(() => store.load(true));
+async function remove() {
+  const design = designToDelete.value;
+  if (!design || busy.value) return;
+  await run(() => store.deleteDesign(design.id));
+  if (!error.value) {
+    designToDelete.value = null;
+    admin.notify("បានលុបការរចនា QR");
+  }
+}
+onMounted(() => run(() => store.load(true)));
 </script>

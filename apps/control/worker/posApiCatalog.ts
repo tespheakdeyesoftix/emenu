@@ -1,10 +1,13 @@
+import type { PosTaxRule } from "../../../shared/posProfile";
 import type { Env } from "./index";
 import {
+  boolean,
   conflict,
   integer,
   invalid,
   list,
   MAX_AMOUNT,
+  missing,
   newId,
   object,
   optionalText,
@@ -73,16 +76,91 @@ export function secondaryToPrimary(
   );
 }
 
-export function saleLineTotals(gross: number, mode: string, bps: number) {
-  const denominator = mode === "inclusive" ? 10_000 + bps : 10_000;
-  const tax =
-    mode === "disabled"
-      ? 0
-      : Number(rounded(BigInt(gross) * BigInt(bps), BigInt(denominator)));
+export function saleLineTotals(
+  gross: number,
+  mode: string,
+  bps: number,
+  rule: PosTaxRule | null = null,
+  discount = 0,
+) {
+  const rates = rule
+    ? [rule.tax_1_rate, rule.tax_2_rate, rule.tax_3_rate].map(ratio)
+    : [[BigInt(bps), 100n], [0n, 1n], [0n, 1n]];
+  const afterDiscount = rule ? [
+    rule.calculate_tax_1_after_discount,
+    rule.calculate_tax_2_after_discount,
+    rule.calculate_tax_3_after_discount,
+  ] : [true, true, true];
+  const parents = [
+    [],
+    rule?.calculate_tax_2_after_adding_tax_1 ? [0] : [],
+    [
+      ...(rule?.calculate_tax_3_after_adding_tax_1 ? [0] : []),
+      ...(rule?.calculate_tax_3_after_adding_tax_2 ? [1] : []),
+    ],
+  ];
+  let subtotal = gross;
+  let taxes = [0n, 0n, 0n];
+  if (mode === "inclusive") {
+    // Express each level as a share of the pretax price with a common
+    // denominator. This allows exact extraction even with compounded rates.
+    const scale = rates.reduce((max, [, d]) => d > max ? d : max, 1n) * 100n;
+    const base = scale ** 3n;
+    const coefficients = (discounted: boolean) => {
+      const parts: bigint[] = [];
+      for (const [i, [n, d]] of rates.entries()) {
+        const input = !discounted || afterDiscount[i] ? base : 0n;
+        const prior = parents[i].reduce((sum, parent) => sum + parts[parent], 0n);
+        parts.push((input + prior) * (n * (scale / (d * 100n))) / scale);
+      }
+      return parts;
+    };
+    const shares = coefficients(false);
+    const denominator = base + shares.reduce((sum, share) => sum + share, 0n);
+    const extract = (amounts: bigint[], divisor: bigint) => {
+      let running = 0n;
+      let prior = 0n;
+      return amounts.map((amount) => {
+        running += amount;
+        const cumulative = rounded(running, divisor);
+        const component = cumulative - prior;
+        prior = cumulative;
+        return component;
+      });
+    };
+    taxes = extract(shares.map((share) => BigInt(gross) * share), denominator);
+    subtotal = gross - Number(taxes.reduce((sum, tax) => sum + tax, 0n));
+    if (discount > subtotal) invalid("The discount exceeds the line subtotal");
+    if (discount) {
+      const grossBase = BigInt(gross) * base;
+      const discountBase = BigInt(discount) * denominator;
+      const applied = discountBase > grossBase ? grossBase : discountBase;
+      const reductions = coefficients(true);
+      taxes = extract(
+        shares.map((share, i) => grossBase * share - applied * reductions[i]),
+        denominator * base,
+      );
+    }
+  } else {
+    if (discount > subtotal) invalid("The discount exceeds the line subtotal");
+    if (mode === "exclusive") {
+      for (const [i, [n, d]] of rates.entries()) {
+        const net = BigInt(subtotal - (afterDiscount[i] ? discount : 0));
+        const prior = parents[i].reduce((sum, parent) => sum + taxes[parent], 0n);
+        taxes[i] = rounded((net + prior) * n, d * 100n);
+      }
+    }
+  }
+  const [tax1, tax2, tax3] = taxes.map(bounded);
+  const tax = bounded(taxes.reduce((sum, amount) => sum + amount, 0n));
   return {
-    subtotal_minor: mode === "inclusive" ? gross - tax : gross,
+    subtotal_minor: subtotal,
+    discount_minor: discount,
+    tax_1_amount: tax1,
+    tax_2_amount: tax2,
+    tax_3_amount: tax3,
     tax_minor: tax,
-    total_minor: mode === "exclusive" ? gross + tax : gross,
+    total_minor: subtotal - discount + tax,
   };
 }
 
@@ -98,7 +176,7 @@ export function activeCatalogNodes(mode: "menu" | "category") {
     )`;
 }
 
-function catalogScope(context: PosContext) {
+function catalogScope(context: PosContext, menuId?: string) {
   const mode = context.config.catalog_mode;
   const isMenu = mode === "menu";
   const table = isMenu ? "menus" : "categories";
@@ -106,13 +184,23 @@ function catalogScope(context: PosContext) {
     context.identity.business_id,
     JSON.stringify(context.config.selected_ids),
   ];
-  const scope = `${activeCatalogNodes(mode)}, selected_nodes(id) AS (
+  let scope = `${activeCatalogNodes(mode)}, selected_nodes(id) AS (
       SELECT id FROM active_nodes
       WHERE CASE WHEN ?2='null' THEN parent_id IS NULL ELSE id IN (SELECT value FROM json_each(?2)) END
       UNION
       SELECT node.id FROM active_nodes node JOIN selected_nodes parent ON node.parent_id=parent.id
     )`;
-  const assignment = `FROM menu_products mp JOIN selected_nodes node ON node.id=mp.menu_id
+  let catalogNodes = "selected_nodes";
+  if (menuId) {
+    params.push(menuId);
+    scope += `, menu_subtree(id) AS (
+      SELECT id FROM selected_nodes WHERE id=?3
+      UNION
+      SELECT node.id FROM active_nodes node JOIN menu_subtree parent ON node.parent_id=parent.id
+    )`;
+    catalogNodes = "menu_subtree";
+  }
+  const assignment = `FROM menu_products mp JOIN ${catalogNodes} node ON node.id=mp.menu_id
       WHERE mp.business_id=p.business_id AND mp.product_id=p.id
       AND NOT EXISTS (SELECT 1 FROM menu_product_exclusions x
         WHERE x.business_id=mp.business_id AND x.menu_id=mp.menu_id AND x.product_id=mp.product_id)`;
@@ -125,13 +213,15 @@ function catalogScope(context: PosContext) {
       AND ${isMenu ? `EXISTS (SELECT 1 ${assignment})` : "p.category_id IN (SELECT id FROM selected_nodes)"}
       AND (json_array_length(p.portions_json)=0 OR EXISTS (
         SELECT 1 FROM json_each(p.portions_json) WHERE json_extract(value,'$.branchId') IS NULL
-          OR json_extract(value,'$.branchId')=?3
+          OR json_extract(value,'$.branchId')=?
       ))`;
   const nodes = `${scope}
-    SELECT node.id,CASE WHEN node.parent_id IN (SELECT id FROM selected_nodes) THEN node.parent_id END AS parent_id,
+    SELECT node.id,CASE WHEN node.parent_id IN (SELECT id FROM ${catalogNodes}) THEN node.parent_id END AS parent_id,
       COALESCE(NULLIF(node.name_km,''),${isMenu ? "NULLIF(node.name_en,''),node.name_zh" : "node.name"}) AS name,
-      node.name_km,node.name_en,node.name_zh,node.sort_order
-    FROM ${table} node JOIN selected_nodes selected ON selected.id=node.id
+      node.name_km,node.name_en,node.name_zh,node.sort_order,
+      node.image_url,node.image_media_id,photo.object_key AS image_object_key
+    FROM ${table} node JOIN ${catalogNodes} selected ON selected.id=node.id
+    LEFT JOIN media photo ON photo.id=node.image_media_id AND photo.business_id=node.business_id
     WHERE node.business_id=?1 ORDER BY node.sort_order,node.id`;
   return { products, nodes, params };
 }
@@ -212,14 +302,19 @@ export async function getCatalog(
   context: PosContext,
   url: URL,
 ) {
-  const { products, nodes, params } = catalogScope(context);
+  const rawMenuId = url.searchParams.get("menu_id");
+  const menuId = rawMenuId === null ? undefined : recordId(rawMenuId, "menu_id");
+  if (menuId && context.config.catalog_mode !== "menu")
+    invalid("menu_id requires a menu-based POS profile");
+
+  const { products, nodes, params } = catalogScope(context, menuId);
   const { limit, offset, page } = pagination(url);
   const [productRows, nodeRows] = await context.db.batch<
     Record<string, unknown>
   >([
     sql(
       context.db,
-      products + " ORDER BY p.sort_order,p.id LIMIT ?4 OFFSET ?5",
+      products + " ORDER BY p.sort_order,p.id LIMIT ? OFFSET ?",
       ...params,
       context.profile.branch_id,
       limit + 1,
@@ -227,7 +322,10 @@ export async function getCatalog(
     ),
     sql(context.db, nodes, ...params),
   ]);
+  if (menuId && !nodeRows.results.length) missing("Menu");
   const { currency, catalog_version } = context.identity;
+  const publicMediaBase = env.PUBLIC_MEDIA_BASE?.trim().replace(/\/$/, "");
+  const publicAssetBase = env.PUBLIC_ASSET_BASE?.trim().replace(/\/$/, "");
   const result = await priced(
     env,
     deps,
@@ -239,7 +337,13 @@ export async function getCatalog(
     currency,
     price_list_id: result.pricing.activeId,
     mode: context.config.catalog_mode,
-    nodes: nodeRows.results,
+    nodes: nodeRows.results.map(({ image_media_id, image_object_key, ...node }) => ({
+      ...node,
+      image_url: publicMediaBase && image_object_key
+        ? `${publicMediaBase}/${String(image_object_key).split("/").map(encodeURIComponent).join("/")}`
+        : node.image_url || (publicAssetBase && image_media_id
+          ? `${publicAssetBase}/${image_media_id}` : null),
+    })),
     page,
     page_size: limit,
     has_more: productRows.results.length > limit,
@@ -275,6 +379,20 @@ export async function getCatalog(
   });
 }
 
+export function saleLineEdits(line: Record<string, unknown>) {
+  const free = line.is_free === undefined ? false : boolean(line.is_free, "is_free");
+  const discount = integer(line.discount_minor ?? 0, "discount_minor", 0);
+  if (free && discount !== 0) invalid("A free item cannot have a line discount");
+  return {
+    base_price_override_minor: line.base_price_override_minor == null
+      ? null
+      : integer(line.base_price_override_minor, "base_price_override_minor", 0),
+    is_free: free,
+    discount_minor: discount,
+    note: optionalText(line.note, "line note"),
+  };
+}
+
 export async function saleLines(
   env: Env,
   deps: PosDependencies,
@@ -283,6 +401,7 @@ export async function saleLines(
   currency: PosCurrency,
   taxMode: string,
   taxRate: number,
+  taxRule: PosTaxRule | null,
 ) {
   const inputs = list(value, "lines", 60).map((entry) => {
     const line = object(entry);
@@ -299,7 +418,7 @@ export async function saleLines(
           : recordId(line.portion_id, "portion_id"),
       modifiers,
       quantity: integer(line.quantity, "quantity", 1, 999),
-      note: optionalText(line.note, "line note"),
+      edits: saleLineEdits(line),
     };
   });
   if (!inputs.length) invalid("A bill needs at least one line");
@@ -351,8 +470,10 @@ export async function saleLines(
       Number(portion?.priceCents ?? product.priceCents),
       currency,
     );
-    const unitPrice =
-      base + modifiers.reduce((sum, option) => sum + option.price_minor, 0);
+    const unitPrice = input.edits.is_free
+      ? 0
+      : (input.edits.base_price_override_minor ?? base) +
+        modifiers.reduce((sum, option) => sum + option.price_minor, 0);
     const gross = unitPrice * input.quantity;
     if (gross < 0)
       conflict(
@@ -384,8 +505,8 @@ export async function saleLines(
       modifiers,
       quantity: input.quantity,
       unit_price_minor: unitPrice,
-      ...saleLineTotals(gross, taxMode, taxRate),
-      note: input.note,
+      ...input.edits,
+      ...saleLineTotals(gross, taxMode, taxRate, taxRule, input.edits.discount_minor),
     };
   });
 }

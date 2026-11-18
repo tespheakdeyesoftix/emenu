@@ -20,7 +20,7 @@ Use an existing eMenu Control owner or manager session for setup. Send its beare
 | `GET /customers`, `POST /customers`                      | List or create customers by name and optional `external_reference`    |
 | `GET /customers/{id}`, `PATCH /customers/{id}`           | Read or edit a customer                                               |
 
-Create payment types first, for example `{"name":"Cash USD","kind":"cash","currency":"USD"}` and `{"name":"Cash Riel","kind":"cash","currency":"KHR"}`. Use their returned IDs in the profile. Valid kinds are `cash`, `card`, `qr`, and `other`. Kind and currency stay fixed after creation. A method created without a currency uses the currencies allowed by its POS profile.
+Create payment types first, for example `{"name":"Cash USD","kind":"cash","currency":"USD"}` and `{"name":"Cash Riel","kind":"cash","currency":"KHR"}`. Use their returned IDs in the profile. Valid kinds are `cash`, `card`, `qr`, and `other`. Each profile entry requires a single `currency` of `USD` or `KHR`. If the payment type has its own currency, the profile must use that currency. Use two payment types to accept both currencies. For existing entries that accepted both, the migration uses the business's primary currency.
 
 ```json
 {
@@ -33,11 +33,12 @@ Create payment types first, for example `{"name":"Cash USD","kind":"cash","curre
     "table_group_ids": null,
     "catalog_mode": "category",
     "selected_ids": null,
+    "default_menu_id": null,
     "payment_types": [
-      { "id": "replace-with-cash-id", "currencies": ["USD", "KHR"] },
-      { "id": "replace-with-qr-id", "currencies": ["USD", "KHR"] }
+      { "id": "replace-with-cash-usd-id", "currency": "USD" },
+      { "id": "replace-with-cash-khr-id", "currency": "KHR" }
     ],
-    "default_payment_type_id": "replace-with-cash-id",
+    "default_payment_type_id": "replace-with-cash-usd-id",
     "default_customer_id": null,
     "receipt_template": {
       "title": "Patio",
@@ -53,11 +54,23 @@ Create payment types first, for example `{"name":"Cash USD","kind":"cash","curre
 
 Omitting or clearing the default customer selects the business’s walk-in record. The default payment type is a preselection for the register. Every checkout entry specifies its payment type and currency. The profile must use the assigned currency for fixed-currency methods. Enable at least one payment type in the business currency and at most one cash type per currency.
 
-Table modes are `disabled`, `optional`, and `required`. Set `table_group_ids` to distinct active group IDs from the profile’s branch in display order. Null or omitted uses all active groups in branch order.
+Table modes are `disabled`, `optional`, and `required`. Set `table_group_ids` to distinct active group IDs from the profile’s branch in display order. Null or omitted uses all active groups in branch order. Set `prompt_guest_cover` to prompt the operator for guest count. The `table_status_colors` object accepts six-digit hex colors for `vacant`, `occupied`, `bill_requested`, `hold`, and `booked`. The profile API supplies defaults for omitted colors.
 
-Use `catalog_mode: "menu"` with menu IDs or `"category"` with category IDs. A null or omitted `selected_ids` includes all active roots and their descendants. An explicit list includes the selected active nodes and descendants. Product availability, branch portions, menu assignments, and price lists come from eMenu’s existing catalog.
+A table sale can save `guest_cover` as an integer from 1 to 1,000. Removing the table clears the count. A confirmed Control booking with an assigned table appears as `booked` from 30 minutes before arrival through two hours after arrival. Table responses include the reservation arrival and party size during that window. An open sale takes priority over a booking. The Flutter register shares held orders and bill requests through the designated store register.
 
-A profile belongs to one branch. A `PATCH` with `config` replaces the full configuration. The API returns `pending_config` while a shift or unpaid bill is open, and promotes it after the last such activity closes. An owner or manager can deactivate an idle profile. Setup changes apply to future bills, and each saved bill keeps the receipt and amounts captured with it.
+Use `catalog_mode: "menu"` with menu IDs or `"category"` with category IDs. A null or omitted `selected_ids` includes all active roots and their descendants. An explicit list includes the selected active nodes and descendants. For menu profiles, set `default_menu_id` to an active top-level menu explicitly listed in `selected_ids`, or `null` for no default. Product availability, branch portions, menu assignments, and price lists come from eMenu’s existing catalog.
+
+Send `config.tax_rules` as an array of named rules. Each rule has three tax levels with percent rates from 0 through 100, discount switches, and switches to include earlier levels in its base. A rate of zero leaves the level inactive for clients that apply the rule. Each rule sets its own `tax_mode` to `disabled`, `inclusive`, or `exclusive`. Rules submitted without `id` receive one from the API. Reuse it when editing that rule.
+
+The setup API and `GET /context` return the array in `config.tax_rules`. Send an empty array to clear the rules.
+
+Save `config.default_tax_rule_id` with the ID of a rule in this profile, or `null` to clear the selection. Profile responses include that ID and the full selected rule as `config.default_tax_rule`. Removing the selected rule clears the default. An omitted array on a profile update retains the saved rules. A new bill uses the selected rule when present and falls back to the profile's `tax_mode` and `tax_rate_bps` otherwise.
+
+Save print layouts in `config.receipt_templates`. Each template has a stable ID and a type of `receipt`, `kitchen_receipt`, or `qr_label`. Templates include the language, paper width, copy count, title, footer, text size, heading alignment, and a list of fields to print. QR labels also include the label height, QR size, menu or custom URL target, and caption.
+
+Set `config.default_receipt_templates` with the template ID for each type. The IDs must belong to matching templates in the profile. Send `null` for a default to clear it. Removing a template clears its default. `GET /context` returns the template list and defaults. Current POS checkout uses the profile’s `receipt_template` and `print_copies` values.
+
+A profile belongs to one branch. A `PATCH` with `config` replaces the full configuration. The API returns `pending_config` while a shift or unpaid bill is open, and promotes it after the last such activity closes. For a profile already using menus, newly selected menus and a valid default menu take effect in `GET /context`, the catalog, and sale pricing while the update is pending. Menu removals and catalog mode changes take effect when the pending profile is promoted. An owner or manager can deactivate an idle profile. Setup changes apply to future bills, and each saved bill keeps the receipt and amounts captured with it.
 
 ## Sign in and start a register
 
@@ -66,7 +79,17 @@ All routes in this section and below use `/api/integrations/pos/v1`.
 1. Send `POST /auth/login` with `business_slug`, `email`, `auth_version`, and `password_proof`. The discovery token is valid for 15 minutes.
 2. Send `GET /profiles` with the discovery token. Owners and managers can select active profiles in their business. Other staff need a profile grant.
 3. Send `POST /sessions` with the discovery token and `{"profile_id":"..."}`. Use the returned profile token for register requests. It expires after 12 hours.
-4. Call `GET /context` to read the selected profile, effective settings, operator, business currency, local date, current working day, and current shift. Call `DELETE /sessions/current` to revoke the bearer token used for that request.
+4. Call `GET /context` to read the selected profile, effective settings, operator, business currency, local date, current working day, and current shift. Read copy counts from `profile.config.receipt_templates` and tax modes from `profile.config.tax_rules`. Call `DELETE /sessions/current` to revoke the bearer token used for that request.
+
+`GET /context` returns one entry per payment type and currency in `profile.config.payment_types`. The `payment_type` field is the configured name. The `allow_cash_float` flag is always a boolean. A payment type that accepts USD and KHR appears twice with the same ID. The response follows the order saved in the profile.
+
+```json
+[
+  { "id": "cash-usd-id", "payment_type": "Cash USD", "currency": "USD", "allow_cash_float": true },
+  { "id": "cash-khr-id", "payment_type": "Cash KHR", "currency": "KHR", "allow_cash_float": true },
+  { "id": "qr-id", "payment_type": "ABA QR", "currency": "USD", "allow_cash_float": false }
+]
+```
 
 Both tokens use `Authorization: Bearer <token>`. Send the exact auth version `client-pbkdf2-sha256-v1`. Derive the password proof with PBKDF2-HMAC-SHA256, 120,000 iterations, and a 32-byte output encoded as lowercase hexadecimal. The UTF-8 salt is `angkor-emenu:client-pbkdf2-sha256-v1:<normalized-email>`, with the email trimmed and lowercased. The [Node smoke example](examples/pos-api-smoke.mjs) includes the derivation. Treat the proof and both tokens as credentials and keep them out of logs.
 
@@ -129,11 +152,15 @@ To release an assignment, close operating activity and drain the register’s jo
 1. If the profile uses working days, a manager opens one with `POST /working-days` and an empty JSON object. Each branch shares one open day across its profiles. The API captures its business date and time zone at opening. For example, a day opened on November 12 in Phnom Penh keeps November 12 for sales completed after local midnight, until the manager closes it. Profiles with working days disabled use the local date at checkout.
 2. If the profile uses cashier shifts, open one with `POST /cashier-shifts`. Supply optional `opening_cash` entries with `payment_type_id`, `currency`, and `amount_minor` for methods that allow cash floats. Omitted opening balances start at zero. Each profile has one open shift at a time.
 3. Load `GET /catalog`, `GET /tables`, and `GET /customers`. The table list shows the open sale ID for this profile, if any. Another profile can have its own bill at the same physical table. Use `page` and `page_size` on paginated routes and follow `has_more`. The catalog page size applies to products. Each page includes the eligible menu or category hierarchy.
+
+For a menu-based profile, send `GET /catalog?menu_id=<menu-or-submenu-id>&page=1&page_size=100` to read one menu and all of its descendants. `nodes` includes the chosen menu with `parent_id: null` and its subtree on each page. `products` includes products assigned anywhere under that menu, including directly to it, and `menu_ids` contains only assignments within that subtree. Omit `menu_id` to load the full profile catalog, or use `profile.config.default_menu_id` from `GET /context` to open the default menu. A menu outside the active profile scope returns `404`. Category-based profiles return `400` if you pass `menu_id`.
 4. Send `POST /sales` with one or more lines. Each line has a `product_id` and `quantity`, plus a `portion_id` or `modifier_ids` when applicable. Supply a `table_id` when using a table and a `customer_id` to override the profile default. The response is the server-priced bill with a revision, line snapshots, and receipt configuration.
 5. Use `PATCH /sales/{id}` with the current `revision` to edit a bill. Supplying `lines` replaces and reprices the entire set. Omit `lines` to keep the saved quote while changing fields such as the note or table. To cancel an unpaid bill, send `POST /sales/{id}/cancel` with `revision` and `reason`.
 6. Send `POST /sales/{id}/checkout` with the saved `revision`, `expected_total_minor`, and all payments. Use the returned sale and its `receipt` object to print the configured number of copies. Store the sale ID and track printing separately so an HTTP retry does not print another copy.
 
 `GET /sales` accepts `status`, `business_date`, `table_id`, `shift_id`, and `working_day_id` filters. Use `GET /sales/{id}` for saved lines, payments, and receipt data. IDs and the optional customer and table labels are historical snapshots. UTC timestamps use ISO 8601 and business dates use `YYYY-MM-DD`.
+
+For POS Sales history, use `GET /sales?history=active` with pagination. It returns `history_scope` with the profile, period kind, period ID, and opening time, plus `item_quantity` on each row. It includes profile bills that are still open, paid sales posted in the active period, and bills cancelled during that period. The period is the current shift, open working day, or current business date, according to the profile settings. When a required period is closed, the scope is null and the list is empty. Use this mode without the other sales filters.
 
 When `GET /context` reports `capabilities.sale_context_guard`, clients can send `expected_context` when creating, editing, or checking out a bill. Include the original `business_date`, `working_day_id`, and `shift_id`. Use JSON null for a disabled day or shift. The server rejects a changed context with `409 SALE_CONTEXT_CHANGED`. A retry with the original idempotency key can still replay an operation that already committed.
 
@@ -141,7 +168,11 @@ When `GET /context` reports `capabilities.sale_context_guard`, clients can send 
 
 Money uses integer POS units. USD uses cents and KHR uses whole riel. A sale stores the primary business currency and its exchange rate. The rate is the secondary currency’s major units per primary major unit. For example, when USD is primary and the rate is `"4000"`, USD 5.00 is KHR 20,000. eMenu nets payments in each currency, converts the total secondary amount once, and rounds half up to the nearest primary POS unit.
 
-Tax is disabled, inclusive, or exclusive. The profile stores the rate in basis points, so `1000` is 10%. After converting unit prices to POS units, eMenu calculates and rounds tax per line. For inclusive tax, it extracts the tax portion from the gross line. For exclusive tax, it adds tax to the line. Bill totals and tax settings are captured with the saved bill.
+Tax is disabled, inclusive, or exclusive. The optional `discount_minor` on each bill line is an amount against its pretax subtotal in the sale's currency units (USD cents or whole KHR). You can discount up to the line subtotal. The selected tax rule controls whether each level uses the discounted base and which earlier taxes it includes. Inclusive prices are split into pretax subtotal and tax, with cumulative rounding so the parts match the listed price before discounts. Exclusive tax is rounded at each level.
+
+When `/context` advertises `capabilities.cart_line_edits`, a line can include a nonnegative `base_price_override_minor` in its currency units. It replaces the product or portion price before modifier prices are added. `is_free: true` makes the whole line free, including the modifiers, and requires a zero line discount. The override, free status, and optional `note` (up to 500 characters) are returned with the saved line. Omit the override to use the catalog price. A zero-total sale can settle with an empty `payments` array.
+
+The sale and every line return `discount_minor`, `tax_1_amount`, `tax_2_amount`, `tax_3_amount`, `total_tax_amount`, and `total_amount` in the same integer currency units. `total_tax_amount` is the sum of the three levels. `total_amount` is `subtotal_minor - discount_minor + total_tax_amount`. The existing `tax_minor` and `total_minor` carry the same totals. The sale sums its line amounts, and a reversal negates them. Sale detail includes the saved `tax_rule` snapshot, which an offline store can also supply with its checkout payload.
 
 Here is a checkout for a USD 10.00 bill at a rate of 4,000 riel per dollar. Cash tender of USD 6.00 with USD 1.00 change leaves USD 5.00. A KHR 20,000 QR payment covers the rest.
 
@@ -175,9 +206,14 @@ An owner or manager can send `POST /sales/{id}/reverse` with a `reason` to recor
 
 - Set `allow_cash_float` on a profile’s payment type to allow or disallow opening balances and cash movements for that method. An explicit `true` enables cashier shifts. Older configurations that omit the field allow floats for cash methods when shifts are enabled.
 - Send `POST /cashier-shifts/{id}/cash-floats` with `kind` of `cash_in` or `cash_out`, `payment_type_id`, `currency`, `amount_minor`, and `reason`. The shift uses the payment settings saved when it opened. Use the same path with `GET` to read the opening balances and recorded movements.
-- Read `GET /cashier-shifts/{id}/reconciliation` to see the expected amount per payment type and currency. Totals include any opening balance and movements recorded for the method, along with net sales and reversals. If the cash payment type changed, reconciliation attributes a historical cash reversal to the current drawer for that currency where available.
+- Read `GET /cashier-shifts/{id}/reconciliation` for the payment rows and their activity revision. Open-shift expected amounts are returned to managers and owners. Completed reconciliations include expected, declared, and variance amounts. Totals include opening cash, movements, payments, and reversals. When a cash payment type changes, historical cash reversals use the current drawer for that currency where available.
+- Send the declarations and activity revision to `POST /cashier-shifts/{id}/reconciliation` to review discrepancies without closing. If activity changed, reload the preview and verify the entries again.
 - Send `POST /cashier-shifts/{id}/close` with the preview’s `activity_revision` and a `counts` array containing one `payment_type_id`, `currency`, and `declared_minor` for each preview row. Send actual counts and settlement totals. Declared cash is zero or positive. Noncash settlement totals can be negative after reversals. The closed shift stores expected and declared amounts and variance as declared minus expected.
 - If the close returns a conflict, reload the reconciliation and verify the count before resubmitting. Open bills can carry into a later shift on the same profile. A manager can close the working day using `POST /working-days/{id}/close` with an empty JSON object once all linked shifts and open bills are resolved.
+- Read `GET /cashier-shifts/{id}/summary` for shift sales, tenders, and cash activity. Managers can request `scope=branch` for a completed shift in their branch. The history list at `GET /cashier-shifts?closed=true` accepts `business_date`. Manager branch history also accepts `profile_id` and `opened_by`.
+- Managers use `GET /working-days/{id}/summary` to see day totals and closing blockers. `POST /cashier-shifts/{id}/reopen` accepts a reason and reopens only the latest eligible shift on the profile. Reopening archives the previous reconciliation in the back-office shift audit. A linked working day must still be open.
+- After an ambiguous write, `GET /commands/{idempotency-key}` returns the saved result for the original operator and profile. A missing result can be retried using the same request and key.
+- Apply migration `0079_pos_shift_management.sql` and update the Worker before rolling out this register version. The Worker advertises `capabilities.shift_management` when it accepts the new store operations.
 
 If cashier shifts are disabled, the profile can still accept cash and other payments. Cash movements and closing counts are associated with cashier shifts.
 

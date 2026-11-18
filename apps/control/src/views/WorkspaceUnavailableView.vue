@@ -1,15 +1,17 @@
 <template>
+  <PageHeader :title="$t('shell.pageUnavailable')" />
   <section class="card grid min-h-80 place-items-center p-8 text-center">
-    <div>
-      <LockKeyhole :size="32" class="mx-auto text-black/35" />
-      <h1 class="display mb-2 mt-4 text-2xl font-extrabold">
-        {{ $t("shell.pageUnavailable") }}
-      </h1>
-      <p class="m-0 text-sm text-black/55">{{ $t("shell.pageUnavailableDetail") }}</p>
+    <div class="w-full max-w-lg text-start">
+      <Alert
+        icon="lucide-lock-keyhole"
+        :title="$t('shell.pageUnavailable')"
+        :description="$t('shell.pageUnavailableDetail')"
+      />
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { LockKeyhole } from "lucide-vue-next";
+import { Alert } from "frappe-ui";
+import PageHeader from "../components/PageHeader.vue";
 </script>

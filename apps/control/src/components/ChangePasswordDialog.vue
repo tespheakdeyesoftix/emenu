@@ -8,10 +8,8 @@
     <form id="change-password-form" class="grid gap-4" @submit.prevent="submit">
       <label>
         <span class="label">{{ t("account.currentPassword") }}</span>
-        <input
+        <Password size="lg" variant="outline"
           v-model="form.currentPassword"
-          class="input"
-          type="password"
           autocomplete="current-password"
           minlength="8"
           required
@@ -19,10 +17,8 @@
       </label>
       <label>
         <span class="label">{{ t("account.newPassword") }}</span>
-        <input
+        <Password size="lg" variant="outline"
           v-model="form.newPassword"
-          class="input"
-          type="password"
           autocomplete="new-password"
           minlength="8"
           :placeholder="t('account.minimum')"
@@ -31,10 +27,8 @@
       </label>
       <label>
         <span class="label">{{ t("account.confirmPassword") }}</span>
-        <input
+        <Password size="lg" variant="outline"
           v-model="form.confirmPassword"
-          class="input"
-          type="password"
           autocomplete="new-password"
           minlength="8"
           required
@@ -49,24 +43,25 @@
     </form>
 
     <template #footer>
-      <button
+      <Button variant="solid" size="lg"
         type="submit"
         form="change-password-form"
-        class="btn-primary w-full"
+        class="w-full"
         :disabled="saving"
       >
-        <LoaderCircle v-if="saving" :size="17" class="animate-spin" />
-        <KeyRound v-else :size="17" />
+        <template #prefix><Spinner v-if="saving" class="!size-[17px]" />
+        <KeyRound v-else :size="17" /></template>
         {{ saving ? t("account.changing") : t("account.changePassword") }}
-      </button>
+      </Button>
     </template>
   </ModalPanel>
 </template>
 
 <script setup lang="ts">
+import { Password, Button, Spinner } from "frappe-ui";
 import { computed, reactive, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { KeyRound, LoaderCircle } from "lucide-vue-next";
+import { KeyRound } from "lucide-vue-next";
 import ModalPanel from "./ModalPanel.vue";
 const { t } = useI18n();
 

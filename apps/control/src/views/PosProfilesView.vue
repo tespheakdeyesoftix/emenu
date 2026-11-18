@@ -1,33 +1,31 @@
 <template>
-  <PageHeader :eyebrow="t('nav.groups.selling')" :title="t('nav.posProfiles')">
-    <button
+  <PageHeader :title="t('nav.posProfiles')">
+    <Button variant="solid" size="lg"
       v-if="options"
       type="button"
-      class="btn-primary"
       :disabled="store.isReadOnly || !options.branches.length"
       @click="editor = { profile: null }"
     >
-      <Plus :size="16" />{{ t("selling.newProfile") }}
-    </button>
+      <template #prefix><Plus :size="16" /></template>{{ t("selling.newProfile") }}
+    </Button>
   </PageHeader>
   <section class="card overflow-hidden" :aria-busy="loading">
-    <p v-if="loading" class="p-6 text-sm text-black/55" role="status">
-      {{ t("common.loading") }}
-    </p>
-    <div v-else-if="error" class="p-6" role="alert">
-      <p class="mb-3 text-sm text-red-700">{{ error }}</p>
-      <button type="button" class="btn-soft" @click="load(page)">
-        {{ t("common.tryAgain") }}
-      </button>
-    </div>
+    <LoadingText v-if="loading" :text="t('common.loading')" role="status" class="p-6" />
+    <Alert v-else-if="error" theme="red" :title="error" class="m-4">
+      <template #actions>
+        <Button variant="subtle" size="lg" type="button" @click="load(page)">
+          {{ t("common.tryAgain") }}
+        </Button>
+      </template>
+    </Alert>
     <p v-else-if="!profiles.length" class="p-6 text-sm text-black/55">
       {{ t("selling.noProfiles") }}
     </p>
-    <ul v-else class="divide-y divide-black/10">
-      <li
+    <List divider="none" v-else class="divide-y divide-black/10">
+      <ListRow
         v-for="profile in profiles"
         :key="profile.id"
-        class="flex flex-wrap items-center justify-between gap-3 p-4"
+        class="!flex flex-wrap items-center justify-between gap-3 p-4"
       >
         <div>
           <h2 class="font-bold">{{ profile.name }}</h2>
@@ -42,39 +40,36 @@
             {{ t("selling.pendingProfile") }}
           </p>
         </div>
-        <button
+        <Button variant="subtle" size="lg"
           type="button"
-          class="btn-soft"
           :disabled="store.isReadOnly || !options"
           @click="editor = { profile }"
         >
           {{ t("common.edit") }}
-        </button>
-      </li>
-    </ul>
+        </Button>
+      </ListRow>
+    </List>
     <div
       v-if="page > 1 || hasMore"
       class="flex flex-wrap items-center justify-between gap-2 border-t border-black/10 p-4"
     >
-      <button
+      <Button variant="subtle" size="lg"
         type="button"
-        class="btn-soft"
         :disabled="loading || page === 1"
         @click="load(page - 1)"
       >
         {{ t("pages.orders.previous") }}
-      </button>
+      </Button>
       <span class="text-sm text-black/60">{{
         t("pages.orders.page", { page })
       }}</span>
-      <button
+      <Button variant="subtle" size="lg"
         type="button"
-        class="btn-soft"
         :disabled="loading || !hasMore"
         @click="load(page + 1)"
       >
         {{ t("pages.orders.next") }}
-      </button>
+      </Button>
     </div>
   </section>
 
@@ -88,6 +83,8 @@
 </template>
 
 <script setup lang="ts">
+import { List, ListRow } from "frappe-ui/list";
+import { LoadingText, Alert, Button } from "frappe-ui";
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Plus } from "lucide-vue-next";

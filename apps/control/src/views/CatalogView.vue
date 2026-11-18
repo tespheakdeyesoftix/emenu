@@ -1,40 +1,85 @@
 <template>
   <div>
-    <header class="mb-4">
-      <h1 class="display m-0 text-2xl">{{ t("pages.catalog.title") }}</h1>
-    </header>
+    <PageHeader :title="t('pages.catalog.title')">
+      <div class="flex flex-wrap items-center gap-2">
+        <MenuActionPopover v-slot="{ close }" :label="t('common.moreActions')">
+          <div class="p-2">
+            <p class="label !mb-2">តម្រៀបបញ្ជីមុខម្ហូប</p>
+            <div class="space-y-2">
+              <Select
+                size="lg"
+                variant="outline"
+                v-model="sortBy"
+                aria-label="តម្រៀបមុខម្ហូបតាម"
+                :options="[...catalogSortOptions.map(option => ({ label: option.label, value: option.value }))]"
+              />
+              <Select
+                size="lg"
+                variant="outline"
+                v-model="sortDirection"
+                aria-label="ទិសតម្រៀប"
+                :options="[
+                  { label: 'ឡើង (A–Z / ចាស់–ថ្មី)', value: 'asc' },
+                  { label: 'ចុះ (Z–A / ថ្មី–ចាស់)', value: 'desc' },
+                ]"
+              />
+            </div>
+          </div>
+          <template v-if="!store.isReadOnly">
+            <Divider class="my-1" />
+            <Button variant="ghost" type="button" @click="close(); openCategoryManager()">
+              <template #prefix><FolderPlus :size="16" aria-hidden="true" /></template>{{ t("pages.catalog.categoryManager.manage") }}
+            </Button>
+            <Button variant="ghost" type="button" @click="close(); openNewCategory()">
+              <template #prefix><FolderPlus :size="16" aria-hidden="true" /></template>{{ t("pages.catalog.categoryManager.add") }}
+            </Button>
+            <Button variant="ghost" type="button" @click="close(); openSortCategories()">
+              <template #prefix><ArrowUpDown :size="16" aria-hidden="true" /></template>{{ t("pages.catalog.categoryManager.reorder") }}
+            </Button>
+            <Button variant="ghost" type="button" @click="close(); openSortProducts()">
+              <template #prefix><ListOrdered :size="16" aria-hidden="true" /></template>{{ t("menus.orderProducts") }}
+            </Button>
+            <Button variant="ghost" type="button" @click="close(); openBulkEdit()">
+              <template #prefix><PencilLine :size="16" aria-hidden="true" /></template>{{ t("pages.catalog.bulkEdit.title") }}
+            </Button>
+            <Button variant="ghost" v-if="canStartBulkDelete" type="button" class="text-red-700" @click="close(); bulkDeleteSelecting = true">
+              <template #prefix><Trash2 :size="16" aria-hidden="true" /></template>{{ t("bulkProductDelete.action") }}
+            </Button>
+          </template>
+        </MenuActionPopover>
+        <Button variant="solid" size="lg" v-if="!store.isReadOnly" type="button" :aria-label="t('menus.addProduct')" @click="openNewProduct">
+          <template #prefix><Plus :size="16" aria-hidden="true" /></template>
+          <span class="hidden min-[460px]:inline">{{ t("menus.addProduct") }}</span>
+        </Button>
+      </div>
+    </PageHeader>
     <div
-      class="sticky top-[76px] z-10 -mx-5 mb-4 border-y border-black/[.06] bg-[#f4f5f0]/95 px-5 py-3 shadow-[0_10px_30px_rgba(24,32,28,.06)] backdrop-blur-xl xl:hidden"
+      class="sticky top-[var(--workspace-header-height,72px)] z-10 -mx-5 mb-4 border-y border-black/[.06] bg-[#f4f5f0]/95 px-5 py-3 shadow-[0_10px_30px_rgba(24,32,28,.06)] backdrop-blur-xl xl:hidden"
     >
       <div class="relative">
-        <Search
-          class="absolute left-3 top-1/2 -translate-y-1/2 text-black/30"
-          :size="17"
-        />
-        <input
+        <TextInput size="lg" variant="outline"
           v-model="query"
           type="search"
-          class="input !rounded-xl !py-2.5 !pl-10 !text-left !text-sm"
           placeholder="ស្វែងរកមុខម្ហូប..."
-          aria-label="ស្វែងរកមុខម្ហូប"
-        />
+          aria-label="ស្វែងរកមុខម្ហូប">
+          <template #prefix>
+            <Search :size="17" aria-hidden="true" />
+          </template>
+        </TextInput>
       </div>
       <div class="mt-2.5 flex items-center gap-2">
         <span class="mr-auto whitespace-nowrap text-xs font-bold text-black/40">
           {{ store.catalogPagination.total }} មុខ
         </span>
-        <button
+        <Button
           type="button"
-          class="relative inline-flex min-h-11 min-w-11 max-w-[8.5rem] items-center justify-center gap-2 rounded-full border px-3 text-xs font-bold transition"
-          :class="
-            hasActiveFilter
-              ? 'border-ink bg-ink text-white'
-              : 'border-black/[.08] bg-white text-ink'
-          "
+          size="lg"
+          :variant="hasActiveFilter ? 'solid' : 'outline'"
+          class="relative min-w-11 max-w-[8.5rem] !px-2.5"
           :aria-label="`តម្រង៖ ${activeFilterLabel}`"
           @click="mobileFiltersOpen = true"
         >
-          <SlidersHorizontal :size="17" class="shrink-0" aria-hidden="true" />
+          <template #prefix><SlidersHorizontal :size="17" class="shrink-0" aria-hidden="true" /></template>
           <span class="hidden truncate min-[370px]:inline">{{
             activeFilterLabel
           }}</span>
@@ -42,115 +87,36 @@
             v-if="hasActiveFilter"
             class="absolute -right-1 -top-1 size-2.5 rounded-full border-2 border-[#f4f5f0] bg-mint"
           />
-        </button>
-        <MenuActionPopover v-if="!store.isReadOnly" v-slot="{ close }" :label="t('common.moreActions')">
-          <button type="button" @click="close(); openCategoryManager()">
-            <FolderPlus :size="16" aria-hidden="true" />{{ t("pages.catalog.categoryManager.manage") }}
-          </button>
-          <button type="button" @click="close(); openSortProducts()">
-            <ListOrdered :size="16" aria-hidden="true" />{{ t("menus.orderProducts") }}
-          </button>
-          <button type="button" @click="close(); openBulkEdit()">
-            <PencilLine :size="16" aria-hidden="true" />{{ t("pages.catalog.bulkEdit.title") }}
-          </button>
-          <button v-if="canStartBulkDelete" type="button" class="text-red-700" @click="close(); bulkDeleteSelecting = true">
-            <Trash2 :size="16" aria-hidden="true" />{{ t("bulkProductDelete.action") }}
-          </button>
-        </MenuActionPopover>
-        <button
-          v-if="!store.isReadOnly"
-          type="button"
-          class="btn-primary min-h-11 min-w-11 shrink-0 !px-3 min-[460px]:!px-4"
-          :aria-label="t('menus.addProduct')"
-          @click="openNewProduct"
-        >
-          <Plus :size="18" aria-hidden="true" />
-          <span class="hidden min-[460px]:inline">{{ t("menus.addProduct") }}</span>
-        </button>
+        </Button>
       </div>
     </div>
 
     <div class="card mb-5 hidden flex-wrap items-center gap-3 p-3 xl:flex">
       <div class="relative w-full sm:w-72">
-        <Search
-          class="absolute left-3 top-1/2 -translate-y-1/2 text-black/30"
-          :size="15"
-        /><input
+        <TextInput size="lg" variant="outline"
           v-model="query"
-          class="input !rounded-xl !py-2.5 !pl-9 !text-left !text-xs"
-          placeholder="ស្វែងរកជាភាសាខ្មែរ អង់គ្លេស ឬចិន..."
-        />
+          placeholder="ស្វែងរកជាភាសាខ្មែរ អង់គ្លេស ឬចិន...">
+          <template #prefix>
+            <Search :size="15" aria-hidden="true" />
+          </template>
+        </TextInput>
       </div>
-      <select
+      <Select
+        size="lg"
+        variant="outline"
         v-model="category"
-        class="input !w-auto max-w-64"
+        class="!w-auto max-w-64"
         :aria-label="t('pages.catalog.categoryFilterLabel')"
-        @change="quickFilter = 'all'"
-      >
-        <option value="">គ្រប់ប្រភេទ</option>
-        <option
-          v-for="{ item, depth } in categoryRows"
-          :key="item.id"
-          :value="item.id"
-        >
-          {{ "\u00a0\u00a0".repeat(depth) }}{{ item.nameKm || item.name }} /
-          {{ item.nameEn }}
-        </option>
-      </select>
+        @update:model-value="quickFilter = 'all'"
+        :options="[
+          { label: 'គ្រប់ប្រភេទ', value: '' },
+          ...categoryRows.map(({ item, depth }) => ({ label: ['  '.repeat(depth), item.nameKm || item.name, ' / ', item.nameEn].join(''), value: item.id })),
+        ]"
+      />
       <span class="px-3 text-sm font-bold text-black/35"
         >{{ store.catalogPagination.total }} មុខ</span
       >
-      <div class="ml-auto flex flex-wrap justify-end gap-2">
-        <MenuActionPopover v-slot="{ close }" :label="t('common.moreActions')">
-          <div class="p-2">
-            <p class="label !mb-2">តម្រៀបបញ្ជីមុខម្ហូប</p>
-            <div class="space-y-2">
-              <select
-                v-model="sortBy"
-                class="input"
-                aria-label="តម្រៀបមុខម្ហូបតាម"
-              >
-                <option
-                  v-for="option in catalogSortOptions"
-                  :key="option.value"
-                  :value="option.value"
-                >
-                  {{ option.label }}
-                </option>
-              </select>
-              <select
-                v-model="sortDirection"
-                class="input"
-                aria-label="ទិសតម្រៀប"
-              >
-                <option value="asc">ឡើង (A–Z / ចាស់–ថ្មី)</option>
-                <option value="desc">ចុះ (Z–A / ថ្មី–ចាស់)</option>
-              </select>
-            </div>
-          </div>
-          <template v-if="!store.isReadOnly">
-            <hr class="my-1 border-black/[.08]" />
-            <button type="button" @click="close(); openNewCategory()">
-              <FolderPlus :size="16" aria-hidden="true" />{{ t("pages.catalog.categoryManager.add") }}
-            </button>
-            <button type="button" @click="close(); openSortCategories()">
-              <ArrowUpDown :size="16" aria-hidden="true" />{{ t("pages.catalog.categoryManager.reorder") }}
-            </button>
-            <button type="button" @click="close(); openSortProducts()">
-              <ListOrdered :size="16" aria-hidden="true" />{{ t("menus.orderProducts") }}
-            </button>
-            <button type="button" @click="close(); openBulkEdit()">
-              <PencilLine :size="16" aria-hidden="true" />{{ t("pages.catalog.bulkEdit.title") }}
-            </button>
-            <button v-if="canStartBulkDelete" type="button" class="text-red-700" @click="close(); bulkDeleteSelecting = true">
-              <Trash2 :size="16" aria-hidden="true" />{{ t("bulkProductDelete.action") }}
-            </button>
-          </template>
-        </MenuActionPopover>
-        <button v-if="!store.isReadOnly" type="button" class="btn-primary" @click="openNewProduct">
-          <Plus :size="16" aria-hidden="true" />{{ t("menus.addProduct") }}
-        </button>
-      </div>
+
     </div>
 
     <div class="grid items-start gap-5 xl:grid-cols-[300px_minmax(0,1fr)]">
@@ -162,119 +128,41 @@
               ភាសាខ្មែរ · EN · 中文
             </p>
           </div>
-          <button
+          <Button variant="ghost"
             v-if="!store.isReadOnly"
             type="button"
             class="grid size-8 place-items-center rounded-full bg-cream"
             :aria-label="t('pages.catalog.categoryManager.add')"
             @click="openNewCategory()"
           >
-            <Plus :size="15" />
-          </button>
+            <template #icon><Plus :size="15" /></template>
+          </Button>
         </div>
-        <button
-          class="mb-1 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-bold transition"
-          :class="
-            quickFilter === 'all' && !category
-              ? 'bg-ink text-white'
-              : 'text-black/55 hover:bg-cream'
-          "
-          @click="showAllProducts"
-        >
-          មុខម្ហូបទាំងអស់
-          <span
-            class="ml-auto rounded-full px-2 py-0.5 text-xs"
-            :class="
-              quickFilter === 'all' && !category
-                ? 'bg-white/10'
-                : 'bg-black/[.06]'
-            "
-            >{{ store.catalogCounts.all }}</span
+        <div class="mb-3 space-y-1">
+          <Button
+            v-for="{ value, count, label, icon } in catalogQuickFilters"
+            :key="value"
+            size="lg"
+            :variant="isQuickFilterActive(value) ? 'solid' : 'ghost'"
+            class="w-full !justify-start text-start [&>span.truncate]:mr-auto"
+            :aria-pressed="isQuickFilterActive(value)"
+            @click="setQuickFilter(value)"
           >
-        </button>
-        <button
-          class="mb-1 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-bold transition"
-          :class="
-            quickFilter === 'published'
-              ? 'bg-ink text-white'
-              : 'text-black/55 hover:bg-cream'
-          "
-          @click="showPublishedProducts"
-        >
-          <Eye :size="17" />បានផ្សាយ
-          <span
-            class="ml-auto rounded-full px-2 py-0.5 text-xs"
-            :class="
-              quickFilter === 'published' ? 'bg-white/10' : 'bg-black/[.06]'
-            "
-            >{{ store.catalogCounts.published }}</span
-          >
-        </button>
-        <button
-          class="mb-1 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-bold transition"
-          :class="
-            quickFilter === 'unpublished'
-              ? 'bg-ink text-white'
-              : 'text-black/55 hover:bg-cream'
-          "
-          @click="showUnpublishedProducts"
-        >
-          <EyeOff :size="17" />មិនបានផ្សាយ
-          <span
-            class="ml-auto rounded-full px-2 py-0.5 text-xs"
-            :class="
-              quickFilter === 'unpublished' ? 'bg-white/10' : 'bg-black/[.06]'
-            "
-            >{{ store.catalogCounts.unpublished }}</span
-          >
-        </button>
-        <button
-          class="mb-1 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-bold transition"
-          :class="
-            quickFilter === 'featured'
-              ? 'bg-ink text-white'
-              : 'text-black/55 hover:bg-cream'
-          "
-          @click="showFeaturedProducts"
-        >
-          <Sparkles :size="17" />មុខម្ហូបពិសេស
-          <span
-            class="ml-auto rounded-full px-2 py-0.5 text-xs"
-            :class="
-              quickFilter === 'featured' ? 'bg-white/10' : 'bg-black/[.06]'
-            "
-            >{{ store.catalogCounts.featured }}</span
-          >
-        </button>
-        <button
-          class="mb-3 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-bold transition"
-          :class="
-            quickFilter === 'missing-photos'
-              ? 'bg-ink text-white'
-              : 'text-black/55 hover:bg-cream'
-          "
-          @click="showMissingPhotos"
-        >
-          <ImageOff :size="17" />មិនទាន់មានរូបថត
-          <span
-            class="ml-auto rounded-full px-2 py-0.5 text-xs"
-            :class="
-              quickFilter === 'missing-photos'
-                ? 'bg-white/10'
-                : 'bg-black/[.06]'
-            "
-            >{{ store.catalogCounts.missingPhotos }}</span
-          >
-        </button>
+            <template v-if="icon" #prefix><component :is="icon" :size="17" aria-hidden="true" /></template>
+            {{ t(label) }}
+            <template #suffix><Badge :label="store.catalogCounts[count]" /></template>
+          </Button>
+        </div>
         <CatalogCategoryFilters
-          :rows="visibleCategoryRows"
+          :categories="orderedCategories"
+          :expanded-ids="[...expandedCategoryIds]"
           :counts="categoryFilterCounts"
           :selected-id="category"
           :enable-en="store.business.enableEn"
           :enable-zh="store.business.enableZh"
           :editable="!store.isReadOnly"
           @select="showCategory"
-          @toggle="toggleCategory"
+          @update:expanded-ids="setExpandedCategories"
           @edit="openEditCategory"
           @add-subcategory="openNewCategory"
           @delete="requestDeleteCategory"
@@ -303,15 +191,10 @@
           <span
             class="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-bold shadow-lg"
           >
-            <LoaderCircle :size="15" class="animate-spin" />កំពុងផ្ទុក…
+            <Spinner class="!size-[15px]" />កំពុងផ្ទុក…
           </span>
         </div>
-        <div
-          v-if="catalogError"
-          class="rounded-2xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700"
-        >
-          {{ catalogError }}
-        </div>
+        <Alert v-if="catalogError" theme="red" :title="catalogError" />
         <article
           v-for="product in filtered"
           :key="product.id"
@@ -335,12 +218,11 @@
           <div class="min-w-0 flex-1">
             <div class="mb-1 flex min-w-0 items-start gap-2">
               <label v-if="bulkDeleteSelecting && !store.isReadOnly" class="grid size-6 shrink-0 place-items-center">
-                <input
-                  v-model="bulkDeleteIds"
-                  type="checkbox"
-                  :value="product.id"
-                  class="size-4 accent-red-600"
+                <Checkbox
+                  :model-value="bulkDeleteIds.includes(product.id)"
+                  class="shrink-0"
                   :aria-label="t('bulkProductDelete.selectProduct', { name: product.nameKm || product.name })"
+                  @update:model-value="bulkDeleteIds = setIdSelected(bulkDeleteIds, product.id, Boolean($event))"
                 />
               </label>
               <h3
@@ -348,11 +230,7 @@
               >
                 {{ product.nameKm || product.name }}
               </h3>
-              <span
-                v-if="product.isFeatured"
-                class="shrink-0 rounded-full bg-mint px-2 py-0.5 text-[10px] font-extrabold"
-                >ពិសេស</span
-              >
+              <Badge v-if="product.isFeatured" theme="green" class="shrink-0">ពិសេស</Badge>
             </div>
             <p
               v-if="store.business.enableEn"
@@ -443,12 +321,12 @@
             compact
             :label="t('common.actionsFor', { name: product.nameKm || product.name })"
           >
-            <button type="button" @click="close(); openEditProduct(product)">
-              <Pencil :size="16" aria-hidden="true" />{{ t("common.edit") }}
-            </button>
-            <button type="button" class="text-red-700" @click="close(); requestDeleteProduct(product)">
-              <Trash2 :size="16" aria-hidden="true" />{{ t("common.delete") }}
-            </button>
+            <Button variant="ghost" type="button" @click="close(); openEditProduct(product)">
+              <template #prefix><Pencil :size="16" aria-hidden="true" /></template>{{ t("common.edit") }}
+            </Button>
+            <Button variant="ghost" type="button" class="text-red-700" @click="close(); requestDeleteProduct(product)">
+              <template #prefix><Trash2 :size="16" aria-hidden="true" /></template>{{ t("common.delete") }}
+            </Button>
           </MenuActionPopover>
         </article>
         <div
@@ -472,23 +350,21 @@
             {{ store.catalogPagination.total }} មុខ
           </p>
           <div class="flex items-center gap-2">
-            <button
-              class="btn-soft"
+            <Button variant="subtle" size="lg"
               :disabled="currentPage <= 1 || catalogBusy"
               @click="loadPage(currentPage - 1)"
             >
-              <ChevronLeft :size="16" />មុន
-            </button>
+              <template #prefix><ChevronLeft :size="16" /></template>មុន
+            </Button>
             <span class="px-2 text-xs font-bold text-black/45">
               ទំព័រ {{ currentPage }} / {{ totalPages }}
             </span>
-            <button
-              class="btn-soft"
+            <Button variant="subtle" size="lg"
               :disabled="currentPage >= totalPages || catalogBusy"
               @click="loadPage(currentPage + 1)"
             >
               បន្ទាប់<ChevronRight :size="16" />
-            </button>
+            </Button>
           </div>
         </div>
       </section>
@@ -501,135 +377,76 @@
     >
       <div class="space-y-2">
         <p class="label !mb-2">តម្រៀបបញ្ជីមុខម្ហូប</p>
-        <select v-model="sortBy" class="input" aria-label="តម្រៀបមុខម្ហូបតាម">
-          <option
-            v-for="option in catalogSortOptions"
-            :key="option.value"
-            :value="option.value"
-          >
-            {{ option.label }}
-          </option>
-        </select>
-        <select v-model="sortDirection" class="input" aria-label="ទិសតម្រៀប">
-          <option value="asc">ឡើង (A–Z / ចាស់–ថ្មី)</option>
-          <option value="desc">ចុះ (Z–A / ថ្មី–ចាស់)</option>
-        </select>
+        <Select
+          size="lg"
+          variant="outline"
+          v-model="sortBy"
+          aria-label="តម្រៀបមុខម្ហូបតាម"
+          :options="[...catalogSortOptions.map(option => ({ label: option.label, value: option.value }))]"
+        />
+        <Select
+          size="lg"
+          variant="outline"
+          v-model="sortDirection"
+          aria-label="ទិសតម្រៀប"
+          :options="[
+            { label: 'ឡើង (A–Z / ចាស់–ថ្មី)', value: 'asc' },
+            { label: 'ចុះ (Z–A / ថ្មី–ចាស់)', value: 'desc' },
+          ]"
+        />
       </div>
 
       <div class="mt-7 space-y-2">
         <p class="label !mb-2">ស្ថានភាពមុខម្ហូប</p>
-        <button
-          type="button"
-          class="flex min-h-12 w-full items-center gap-3 rounded-2xl px-4 text-left text-sm font-bold transition"
-          :class="
-            quickFilter === 'all' && !category
-              ? 'bg-ink text-white'
-              : 'bg-cream text-ink'
-          "
-          @click="applyMobileQuickFilter('all')"
+        <Button
+          v-for="{ value, count, label, icon } in catalogQuickFilters"
+          :key="value"
+          size="lg"
+          :variant="isQuickFilterActive(value) ? 'solid' : 'subtle'"
+          class="min-h-11 w-full !justify-start text-start [&>span.truncate]:mr-auto"
+          :aria-pressed="isQuickFilterActive(value)"
+          @click="applyMobileQuickFilter(value)"
         >
-          <PackageOpen :size="18" />មុខម្ហូបទាំងអស់
-          <span class="ml-auto text-xs opacity-65">{{
-            store.catalogCounts.all
-          }}</span>
-          <Check v-if="quickFilter === 'all' && !category" :size="18" />
-        </button>
-        <button
-          type="button"
-          class="flex min-h-12 w-full items-center gap-3 rounded-2xl px-4 text-left text-sm font-bold transition"
-          :class="
-            quickFilter === 'published'
-              ? 'bg-ink text-white'
-              : 'bg-cream text-ink'
-          "
-          @click="applyMobileQuickFilter('published')"
-        >
-          <Eye :size="18" />បានផ្សាយ
-          <span class="ml-auto text-xs opacity-65">{{
-            store.catalogCounts.published
-          }}</span>
-          <Check v-if="quickFilter === 'published'" :size="18" />
-        </button>
-        <button
-          type="button"
-          class="flex min-h-12 w-full items-center gap-3 rounded-2xl px-4 text-left text-sm font-bold transition"
-          :class="
-            quickFilter === 'unpublished'
-              ? 'bg-ink text-white'
-              : 'bg-cream text-ink'
-          "
-          @click="applyMobileQuickFilter('unpublished')"
-        >
-          <EyeOff :size="18" />មិនបានផ្សាយ
-          <span class="ml-auto text-xs opacity-65">{{
-            store.catalogCounts.unpublished
-          }}</span>
-          <Check v-if="quickFilter === 'unpublished'" :size="18" />
-        </button>
-        <button
-          type="button"
-          class="flex min-h-12 w-full items-center gap-3 rounded-2xl px-4 text-left text-sm font-bold transition"
-          :class="
-            quickFilter === 'featured'
-              ? 'bg-ink text-white'
-              : 'bg-cream text-ink'
-          "
-          @click="applyMobileQuickFilter('featured')"
-        >
-          <Sparkles :size="18" />មុខម្ហូបពិសេស
-          <span class="ml-auto text-xs opacity-65">{{
-            store.catalogCounts.featured
-          }}</span>
-          <Check v-if="quickFilter === 'featured'" :size="18" />
-        </button>
-        <button
-          type="button"
-          class="flex min-h-12 w-full items-center gap-3 rounded-2xl px-4 text-left text-sm font-bold transition"
-          :class="
-            quickFilter === 'missing-photos'
-              ? 'bg-ink text-white'
-              : 'bg-cream text-ink'
-          "
-          @click="applyMobileQuickFilter('missing-photos')"
-        >
-          <ImageOff :size="18" />មិនទាន់មានរូបថត
-          <span class="ml-auto text-xs opacity-65">{{
-            store.catalogCounts.missingPhotos
-          }}</span>
-          <Check v-if="quickFilter === 'missing-photos'" :size="18" />
-        </button>
+          <template #prefix><component :is="icon || PackageOpen" :size="17" aria-hidden="true" /></template>
+          {{ t(label) }}
+          <template #suffix>
+            <Badge :label="store.catalogCounts[count]" />
+            <Check v-if="isQuickFilterActive(value)" :size="16" aria-hidden="true" />
+          </template>
+        </Button>
       </div>
 
       <div class="mt-7 space-y-2">
         <div class="mb-2 flex min-h-11 items-center justify-between gap-3">
           <p class="label !mb-0">ប្រភេទមុខម្ហូប</p>
-          <button
+          <Button
             type="button"
-            class="min-h-11 rounded-full px-3 text-xs font-extrabold text-ink hover:bg-cream"
+            size="lg" variant="ghost"
             @click="openCategoryManagerFromFilters"
           >
             {{ t("pages.catalog.categoryManager.manageShort") }}
-          </button>
+          </Button>
         </div>
         <CatalogCategoryFilters
-          :rows="visibleCategoryRows"
+          :categories="orderedCategories"
+          :expanded-ids="[...expandedCategoryIds]"
           :counts="categoryFilterCounts"
           :selected-id="category"
           :enable-en="store.business.enableEn"
           :enable-zh="store.business.enableZh"
           @select="applyMobileCategoryFilter"
-          @toggle="toggleCategory"
+          @update:expanded-ids="setExpandedCategories"
         />
       </div>
 
       <template v-if="hasActiveFilter" #footer>
-        <button
+        <Button variant="subtle" size="lg"
           type="button"
-          class="btn-soft min-h-11 w-full"
+          class="min-h-11 w-full"
           @click="clearMobileFilter"
         >
           សម្អាតតម្រង
-        </button>
+        </Button>
       </template>
     </ModalPanel>
 
@@ -662,18 +479,16 @@
       >
         <label
           ><span class="label">ឈ្មោះប្រភេទ · ខ្មែរ</span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model="newCategory.nameKm"
-            class="input"
             required
             lang="km"
             placeholder="ឧ. ប៊ឺហ្គឺ"
         /></label>
         <label v-if="store.business.enableEn"
           ><span class="label">ឈ្មោះប្រភេទ · អង់គ្លេស </span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model="newCategory.nameEn"
-            class="input"
             placeholder="e.g. Burgers"
           /><small class="mt-1 block text-xs text-black/40"
             >ទុកទទេ ដើម្បីប្រើឈ្មោះខ្មែរ។</small
@@ -681,9 +496,8 @@
         >
         <label v-if="store.business.enableZh"
           ><span class="label">ឈ្មោះប្រភេទ · ចិន </span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model="newCategory.nameZh"
-            class="input"
             lang="zh"
             placeholder="例如：汉堡"
           /><small class="mt-1 block text-xs text-black/40"
@@ -692,28 +506,24 @@
         >
         <label
           ><span class="label">ប្រភេទមេ </span
-          ><select v-model="newCategory.parentId" class="input" :disabled="!!subcategoryParentId">
-            <option value="">ប្រភេទកម្រិតលើ</option>
-            <option
-              v-for="item in availableParentCategories"
-              :key="item.id"
-              :value="item.id"
-            >
-              {{ item.nameKm || item.name }}
-              <template v-if="store.business.enableEn && item.nameEn">
-                / {{ item.nameEn }}</template
-              >
-            </option>
-          </select></label
+          ><Select
+            size="lg"
+            variant="outline"
+            v-model="newCategory.parentId"
+            :disabled="!!subcategoryParentId"
+            :options="[
+              { label: 'ប្រភេទកម្រិតលើ', value: '' },
+              ...availableParentCategories.map(item => ({ label: [item.nameKm || item.name, ' ', (store.business.enableEn && item.nameEn ? [' / ', item.nameEn].join('') : '')].join(''), value: item.id })),
+            ]"
+          /></label
         >
         <label
           ><span class="label">លំដាប់បង្ហាញ</span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model.number="newCategory.sortOrder"
             type="number"
             min="0"
             step="1"
-            class="input"
         /></label>
         <ImageUploader
           v-model="newCategory.images"
@@ -724,7 +534,7 @@
         <label
           class="flex items-center gap-3 rounded-2xl bg-cream p-4 text-sm font-bold"
         >
-          <input
+          <Checkbox
             v-model="newCategory.isActive"
             type="checkbox"
             class="size-4 accent-black"
@@ -746,26 +556,24 @@
           <p class="mb-3 mt-1 text-xs leading-5 text-red-900/65">
             {{ categoryDeleteHelp }}
           </p>
-          <button
+          <Button
             type="button"
-            class="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-red-600 px-5 text-sm font-bold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-red-200 disabled:text-red-800/50"
+            size="lg" theme="red" variant="solid" class="w-full"
             :disabled="!canDeleteEditingCategory || saving || deletingCategory"
             @click="editingCategory && requestDeleteCategory(editingCategory)"
           >
-            <Trash2 :size="16" />
+            <template #prefix><Trash2 :size="16" /></template>
             {{ t("pages.catalog.categoryManager.deleteAction") }}
-          </button>
+          </Button>
         </section>
-        <p v-if="formError" class="m-0 text-xs font-bold text-red-600">
-          {{ formError }}
-        </p>
+        <Alert v-if="formError" theme="red" :title="formError" />
       </form>
 
       <template #footer>
-        <button
+        <Button variant="solid" size="lg"
           type="submit"
           form="catalog-category-form"
-          class="btn-primary w-full"
+          class="w-full"
           :disabled="saving"
         >
           {{
@@ -775,7 +583,7 @@
                 ? "រក្សាទុកប្រភេទ"
                 : "បង្កើតប្រភេទ"
           }}
-        </button>
+        </Button>
       </template>
     </ModalPanel>
 
@@ -788,6 +596,7 @@
     />
 
     <BulkEditProductsDialog
+      ref="bulkEditDialog"
       :open="bulkEditOpen"
       :products="bulkEditProducts"
       :categories="store.categories"
@@ -846,6 +655,9 @@
 </template>
 
 <script setup lang="ts">
+import PageHeader from "../components/PageHeader.vue";
+import { setIdSelected } from "../utils/selection";
+import { Divider, Alert, Badge, Button, Checkbox, Select, TextInput, Spinner } from "frappe-ui";
 import {
   computed,
   onBeforeUnmount,
@@ -871,7 +683,6 @@ import {
   EyeOff,
   ChevronLeft,
   ChevronRight,
-  LoaderCircle,
   Check,
   SlidersHorizontal,
   PencilLine,
@@ -980,12 +791,24 @@ restoreCatalogSort();
 type CatalogQuickFilter =
   "all" | "published" | "unpublished" | "featured" | "missing-photos";
 const quickFilter = ref<CatalogQuickFilter>("all");
+const catalogQuickFilters = [
+  { value: "all", count: "all", label: "menus.allProducts", icon: undefined },
+  { value: "published", count: "published", label: "menus.publishedProducts", icon: Eye },
+  { value: "unpublished", count: "unpublished", label: "menus.unpublishedProduct", icon: EyeOff },
+  { value: "featured", count: "featured", label: "menus.featuredProducts", icon: Sparkles },
+  { value: "missing-photos", count: "missingPhotos", label: "menus.missingPhotos", icon: ImageOff },
+] as const;
+
+function isQuickFilterActive(filter: CatalogQuickFilter) {
+  return quickFilter.value === filter && (filter !== "all" || !category.value);
+}
 const mobileFiltersOpen = ref(false);
 const categoryManagerOpen = ref(false);
 const categoryManagerError = ref("");
 const categoryVisibilitySavingId = ref("");
 const categoryOpen = ref(false);
 const productEditor = ref<InstanceType<typeof ProductEditorDialog>>();
+const bulkEditDialog = ref<InstanceType<typeof BulkEditProductsDialog>>();
 const bulkEditOpen = ref(false);
 const bulkEditLoading = ref(false);
 const bulkEditSaving = ref(false);
@@ -1139,33 +962,17 @@ const categoryRows = computed(() => {
     );
   }
 
-  const rows: {
-    item: Category;
-    depth: number;
-    visible: boolean;
-    hasChildren: boolean;
-    expanded: boolean;
-  }[] = [];
-  function append(items: Category[], depth: number, visible: boolean) {
+  const rows: { item: Category; depth: number }[] = [];
+  function append(items: Category[], depth: number) {
     for (const item of items) {
-      const children = childrenByParent.get(item.id) ?? [];
-      const expanded = expandedCategoryIds.has(item.id);
-      rows.push({
-        item,
-        depth,
-        visible,
-        hasChildren: children.length > 0,
-        expanded,
-      });
-      append(children, depth + 1, visible && expanded);
+      rows.push({ item, depth });
+      append(childrenByParent.get(item.id) ?? [], depth + 1);
     }
   }
-  append(store.topCategories, 0, true);
+  append(store.topCategories, 0);
   return rows;
 });
-const visibleCategoryRows = computed(() =>
-  categoryRows.value.filter((row) => row.visible),
-);
+const orderedCategories = computed(() => categoryRows.value.map(({ item }) => item));
 const categoryFilterCounts = computed(() => {
   const counts = { ...store.catalogCounts.byCategory };
   const rows = categoryRows.value;
@@ -1238,29 +1045,9 @@ function absoluteProductTime(product: Product) {
   }).format(date);
 }
 
-function showAllProducts() {
+function setQuickFilter(filter: CatalogQuickFilter) {
   category.value = "";
-  quickFilter.value = "all";
-}
-
-function showFeaturedProducts() {
-  category.value = "";
-  quickFilter.value = "featured";
-}
-
-function showPublishedProducts() {
-  category.value = "";
-  quickFilter.value = "published";
-}
-
-function showUnpublishedProducts() {
-  category.value = "";
-  quickFilter.value = "unpublished";
-}
-
-function showMissingPhotos() {
-  category.value = "";
-  quickFilter.value = "missing-photos";
+  quickFilter.value = filter;
 }
 
 function showCategory(categoryId: string) {
@@ -1268,15 +1055,13 @@ function showCategory(categoryId: string) {
   quickFilter.value = "all";
 }
 
-function toggleCategory(categoryId: string) {
-  if (expandedCategoryIds.has(categoryId))
-    expandedCategoryIds.delete(categoryId);
-  else expandedCategoryIds.add(categoryId);
+function setExpandedCategories(ids: string[]) {
+  expandedCategoryIds.clear();
+  for (const id of ids) expandedCategoryIds.add(id);
 }
 
 function applyMobileQuickFilter(filter: CatalogQuickFilter) {
-  category.value = "";
-  quickFilter.value = filter;
+  setQuickFilter(filter);
   mobileFiltersOpen.value = false;
 }
 
@@ -1286,7 +1071,7 @@ function applyMobileCategoryFilter(categoryId: string) {
 }
 
 function clearMobileFilter() {
-  showAllProducts();
+  setQuickFilter("all");
   mobileFiltersOpen.value = false;
 }
 
@@ -1379,7 +1164,7 @@ async function saveBulkEdit(items: BulkProductInfoUpdate[]) {
 onBeforeRouteLeave(() => {
   if (!bulkEditOpen.value || bulkEditSaving.value || !bulkEditDirty.value)
     return true;
-  return window.confirm(t("pages.catalog.bulkEdit.unsavedMessage"));
+  return bulkEditDialog.value?.confirmDiscard() ?? false;
 });
 
 const catalogFilters = computed(() => ({
@@ -1437,9 +1222,7 @@ onBeforeUnmount(() => {
 watch(
   () => route.query.filter,
   (filter) => {
-    if (filter === "missing-photos") showMissingPhotos();
-    else if (filter === "published") showPublishedProducts();
-    else if (filter === "unpublished") showUnpublishedProducts();
+    if (filter === "missing-photos" || filter === "published" || filter === "unpublished") setQuickFilter(filter);
     else if (quickFilter.value !== "all") quickFilter.value = "all";
   },
   { immediate: true },

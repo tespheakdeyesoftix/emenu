@@ -49,6 +49,9 @@
         Categories include products. Products and menus include their related prices, image links, or menu assignments
         where applicable. Saved orders can block menu removal.
       </p>
+      <p v-if="selection.includes('sales')" class="m-0 text-sm leading-6 text-black/55">
+        POS sales include their line items and payments. Removing sales changes the totals for any open cashier shifts they belong to.
+      </p>
       <button type="button" class="btn-soft justify-self-start" :disabled="!branchId || !selection.length" @click="prepare">
         {{ busy && !backup ? "Preparing…" : "Prepare backup" }}
       </button>
@@ -115,8 +118,8 @@ const scope = ref<ResetScope>("branch");
 const branchId = ref("");
 const selection = ref<string[]>([]);
 const sendDeletedWebhooks = ref(false);
-const canNotify = computed(() => scope.value === "branch" &&
-  selection.value.some(key => ["orders", "bookings", "tables", "tableGroups"].includes(key)));
+const canNotify = computed(() => selection.value.includes("orders") || (scope.value === "branch" &&
+  selection.value.some(key => ["bookings", "tables", "tableGroups"].includes(key))));
 const options = computed(() => scope.value === "branch" ? branchResetOptions : businessResetOptions);
 const backup = shallowRef<ResetBackup | null>(null);
 const hasRows = computed(() => backup.value?.tables.some(({ rows }) => rows.length > 0));
@@ -228,7 +231,7 @@ async function remove() {
     });
     const count = result.tables.reduce((total, table) => total + table.count, 0);
     clearBackup();
-    message.value = `Reset complete. Deleted ${count} ${count === 1 ? "row" : "rows"}.`;
+    message.value = `Reset complete. ${count} ${count === 1 ? "row" : "rows"} affected.`;
     emit("reset");
   } catch (cause) {
     if (cause instanceof ApiError && cause.code === "RESET_BACKUP_STALE") clearBackup();

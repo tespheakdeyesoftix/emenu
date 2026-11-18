@@ -4,9 +4,21 @@ import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 import 'package:http/http.dart' as http;
 
+import 'api_endpoint.dart';
+
 typedef Json = Map<String, dynamic>;
 
+/// Category catalogs do not accept menu_id.
+String? defaultCatalogMenuId(Json context) {
+  final config = jsonObject(jsonObject(context['profile'])['config'] ?? {});
+  final id = config['default_menu_id'];
+  return config['catalog_mode'] == 'menu' && id is String && id.isNotEmpty
+      ? id
+      : null;
+}
+
 Json jsonObject(Object? value) => Map<String, dynamic>.from(value as Map);
+Json jsonObjectFromString(String value) => jsonObject(jsonDecode(value));
 List<Json> jsonRows(Object? value) =>
     (value as List? ?? const []).map(jsonObject).toList(growable: false);
 
@@ -36,7 +48,6 @@ class PosApi {
     : origin = parseOrigin(origin),
       _client = client ?? http.Client();
 
-  static const _prefix = '/api/integrations/pos/v1';
   static const authVersion = 'client-pbkdf2-sha256-v1';
   final Uri origin;
   final http.Client _client;
@@ -80,7 +91,7 @@ class PosApi {
   }) async {
     final normalizedEmail = email.trim().toLowerCase();
     return request(
-      '/auth/login',
+      ApiEndpoint.login,
       method: 'POST',
       body: {
         'business_slug': slug,
@@ -94,7 +105,7 @@ class PosApi {
 
   Future<String> resolveUsername(String username, String managerToken) async {
     final resolved = await request(
-      '/auth/resolve-username',
+      ApiEndpoint.resolveUsername,
       method: 'POST',
       token: managerToken,
       body: {'username': username},
@@ -103,7 +114,7 @@ class PosApi {
   }
 
   Future<Json> startSession(String token, String profileId) => request(
-    '/sessions',
+    ApiEndpoint.sessions,
     method: 'POST',
     token: token,
     body: {'profile_id': profileId},
@@ -122,13 +133,13 @@ class PosApi {
     }
   }
 
-  Future<Json> catalog(String token) async {
+  Future<Json> catalog(String token, {String? menuId}) async {
     final products = <Json>[];
     for (var page = 1; ; page++) {
       final result = await request(
-        '/catalog',
+        ApiEndpoint.catalog,
         token: token,
-        query: {'page': '$page', 'page_size': '100'},
+        query: {'page': '$page', 'page_size': '100', 'menu_id': ?menuId},
       );
       products.addAll(jsonRows(result['products']));
       if (result['has_more'] != true) {
@@ -136,6 +147,12 @@ class PosApi {
       }
     }
   }
+
+  Future<Json> activeSalesPage(String token, int page) => request(
+    ApiEndpoint.sales,
+    token: token,
+    query: {'history': 'active', 'page': '$page', 'page_size': '100'},
+  );
 
   Future<Json> request(
     String path, {
@@ -147,7 +164,10 @@ class PosApi {
   }) async {
     final request = http.Request(
       method,
-      origin.replace(path: '$_prefix$path', queryParameters: query),
+      origin.replace(
+        path: '${ApiEndpoint.prefix}$path',
+        queryParameters: query,
+      ),
     )..followRedirects = false;
     request.headers['Accept'] = 'application/json';
     if (token != null) request.headers['Authorization'] = 'Bearer $token';

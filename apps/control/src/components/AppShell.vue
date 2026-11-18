@@ -7,137 +7,81 @@
       :role-label="roleLabel"
       @open-account="accountOpen = true"
     />
-    <div class="min-w-0 flex-1">
-      <header
-        class="sticky top-0 z-20 flex h-[72px] items-center justify-between border-b border-black/[0.07] bg-[#f3f1eb]/90 px-5 backdrop-blur-xl lg:px-9"
-      >
-        <button
-          type="button"
-          class="-ml-2 rounded-xl p-2 hover:bg-black/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink lg:hidden"
-          :aria-label="t('shell.openNavigation')"
-          :aria-expanded="mobile"
-          aria-controls="workspace-navigation-drawer"
-          aria-haspopup="dialog"
-          @click="mobile = true"
-        >
-          <Menu :size="22" aria-hidden="true" />
-        </button>
-        <div class="hidden lg:block">
-          <p class="m-0 text-[11px] font-medium tracking-normal text-black/45">
-            {{ t("shell.workspace") }}
-          </p>
-          <p class="m-0 mt-0.5 text-sm font-semibold">
-            {{ store.business.name || t("shell.loadingBusiness") }}
-          </p>
-        </div>
-        <div class="ml-auto flex items-center gap-2">
-          <span
-            v-if="store.loaded"
-            class="hidden rounded-lg border border-black/[0.06] bg-white px-3 py-1.5 text-xs font-medium text-black/55 xl:block"
-          >
-            {{
-              store.subscription.expiresOn
-                ? `${subscriptionPlanName} · ${store.subscription.expiresOn}`
-                : `${subscriptionPlanName} · ${t("shell.noExpiry")}`
-            }}
-          </span>
-          <a
-            v-if="store.loaded && store.publicMenuUrl"
-            :href="store.publicMenuUrl"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="btn-soft"
-            ><ExternalLink :size="16" /><span class="hidden sm:inline">{{
-              t("common.viewMenu")
-            }}</span></a
-          ><button v-else type="button" class="btn-soft opacity-50" disabled>
-            <ExternalLink :size="16" /><span class="hidden sm:inline">{{
-              t("common.viewMenu")
-            }}</span></button
-          ><LanguageSwitcher class="hidden sm:inline-flex" /><button
-            class="grid size-10 place-items-center rounded-xl border border-black/[0.06] bg-white"
-          >
-            <Bell :size="17" />
-          </button>
-          <button
-            type="button"
-            class="grid size-10 place-items-center rounded-full bg-[#ffd8b5] text-xs font-extrabold lg:hidden"
-            :disabled="!store.loaded"
-            :aria-label="t('shell.openAccountMenu')"
-            @click="accountOpen = true"
-          >
-            {{ userInitials }}
-          </button>
-        </div>
-      </header>
+    <div class="min-w-0 flex-1" :style="{ '--workspace-header-height': headerHeight + 'px' }">
       <div
-        v-if="store.supportSession"
-        class="flex flex-col gap-3 border-b border-amber-300 bg-amber-100 px-5 py-3 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between lg:px-9"
+        ref="workspaceHeader"
+        data-workspace-header
+        class="sticky top-0 z-20 border-b border-outline-gray-1 bg-surface-base"
       >
-        <div class="flex min-w-0 items-start gap-3 sm:items-center">
-          <ShieldAlert :size="19" class="mt-0.5 shrink-0 sm:mt-0" />
-          <p class="m-0 leading-5">
-            <strong>{{ t("shell.support.title") }}</strong>
-            {{
-              t("shell.support.message", {
-                business: store.business.name,
-                email: store.supportSession.actorEmail,
-                time: supportExpiry,
-              })
-            }}
-          </p>
+        <div class="relative mx-auto max-w-[1560px] px-5 lg:px-9">
+          <Button
+            id="workspace-navigation-trigger"
+            variant="ghost"
+            size="lg"
+            icon="lucide-menu"
+            class="absolute left-3 top-4 z-20 lg:!hidden"
+            :aria-label="t('shell.openNavigation')"
+            :aria-expanded="mobile"
+            :aria-controls="mobile ? 'workspace-navigation-drawer' : undefined"
+            aria-haspopup="dialog"
+            @click="mobile = true"
+          />
+          <PageHeaderTarget />
+          <div v-if="!store.loaded" class="flex min-h-[71px] items-center pl-11 lg:pl-0">
+            <h1 class="min-w-0 text-2xl-semibold text-ink-gray-9 [overflow-wrap:anywhere]">
+              {{ currentPage ? t(`nav.${currentPage}`) : t("shell.workspace") }}
+            </h1>
+          </div>
         </div>
-        <button
-          type="button"
-          class="shrink-0 rounded-full bg-amber-950 px-4 py-2 text-xs font-bold text-white disabled:opacity-60"
-          :disabled="signingOut"
-          @click="signOut"
-        >
-          {{
-            signingOut ? t("shell.support.leaving") : t("shell.support.leave")
-          }}
-        </button>
       </div>
-      <div
-        v-else-if="store.isReadOnly || store.subscription.status === 'trialing'"
-        class="flex items-start gap-3 border-b px-5 py-3 text-sm lg:px-9"
-        :class="
-          store.isReadOnly
-            ? 'border-red-200 bg-red-50 text-red-900'
-            : 'border-amber-200 bg-amber-50 text-amber-950'
+      <Alert
+        v-if="store.supportSession"
+        class="mx-5 mt-3 lg:mx-9"
+        theme="amber"
+        icon="lucide-shield-alert"
+        :title="t('shell.support.title')"
+        :description="
+          t('shell.support.message', {
+            business: store.business.name,
+            email: store.supportSession.actorEmail,
+            time: supportExpiry,
+          })
         "
-      >
-        <CalendarClock :size="19" class="mt-0.5 shrink-0" />
-        <p class="m-0 leading-5">
-          <template v-if="store.isReadOnly">
-            <strong>{{ t("shell.subscription.expiredTitle") }}</strong>
-            {{ t("shell.subscription.expiredMessage") }}
-          </template>
-          <template v-else>
-            <strong>{{
-              t("shell.subscription.trialTitle", {
-                plan: subscriptionPlanName,
-              })
-            }}</strong>
-            {{
-              t("shell.subscription.trialMessage", {
+        :primary-action="{
+          label: t(
+            signingOut ? 'shell.support.leaving' : 'shell.support.leave',
+          ),
+          variant: 'solid',
+          disabled: signingOut,
+          onClick: signOut,
+        }"
+      />
+      <Alert
+        v-else-if="store.isReadOnly || store.subscription.status === 'trialing'"
+        class="mx-5 mt-3 lg:mx-9"
+        :theme="store.isReadOnly ? 'red' : 'amber'"
+        icon="lucide-calendar-clock"
+        :title="
+          store.isReadOnly
+            ? t('shell.subscription.expiredTitle')
+            : t('shell.subscription.trialTitle', { plan: subscriptionPlanName })
+        "
+        :description="
+          store.isReadOnly
+            ? t('shell.subscription.expiredMessage')
+            : t('shell.subscription.trialMessage', {
                 days: store.subscription.daysRemaining,
                 date: store.subscription.expiresOn,
               })
-            }}
-          </template>
-        </p>
-      </div>
+        "
+      />
       <main class="mx-auto max-w-[1560px] p-5 lg:p-9">
         <div
           v-if="store.loading"
           class="card grid min-h-[420px] place-items-center p-8 text-center"
         >
           <div>
-            <LoaderCircle
-              :size="38"
-              class="mx-auto animate-spin text-black/30"
-            />
+            <Spinner size="lg" class="mx-auto !size-9 text-ink-gray-5" />
             <p class="mb-0 mt-4 text-sm font-bold text-black/50">
               {{ t("shell.loadingWorkspace") }}
             </p>
@@ -149,15 +93,16 @@
         >
           <div class="max-w-md">
             <AlertTriangle :size="38" class="mx-auto text-red-500" />
-            <h1 class="display mb-2 mt-4 text-2xl font-extrabold">
+            <h2 class="display mb-2 mt-4 text-2xl font-extrabold">
               {{ t("shell.loadFailed") }}
-            </h1>
+            </h2>
             <p class="text-sm leading-6 text-black/50">
               {{ store.loadError }} {{ t("shell.loadFailedDetail") }}
             </p>
-            <button class="btn-primary mt-3" @click="store.load">
-              <RefreshCw :size="16" />{{ t("common.tryAgain") }}
-            </button>
+            <Button variant="solid" size="lg" class="mt-3" @click="store.load">
+              <template #prefix><RefreshCw :size="16" /></template
+              >{{ t("common.tryAgain") }}
+            </Button>
           </div>
         </div>
         <div
@@ -177,6 +122,8 @@
       :email="store.user.email"
       :role="store.role"
       :initials="userInitials"
+      :plan-name="subscriptionPlanName"
+      :expires-on="store.subscription.expiresOn"
       :signing-out="signingOut"
       @close="accountOpen = false"
       @change-password="openPasswordDialog"
@@ -189,56 +136,54 @@
       @close="passwordOpen = false"
       @submit="changePassword"
     />
-    <Transition
-      enter-active-class="transition"
-      enter-from-class="translate-y-3 opacity-0"
-      leave-active-class="transition"
-      leave-to-class="translate-y-3 opacity-0"
-      ><div
-        v-if="store.toast"
-        class="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-ink px-5 py-3 text-sm font-semibold text-white shadow-xl"
-      >
-        <CheckCircle2 class="mr-2 inline" :size="17" />{{ store.toast }}
-      </div></Transition
-    >
   </div>
 </template>
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from "vue";
+import { computed, onMounted, onUnmounted, provide, ref, useTemplateRef, watch } from "vue";
+import { Alert, Button, PageHeaderTarget, Spinner, toast } from "frappe-ui";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
-import {
-  ExternalLink,
-  Bell,
-  Menu,
-  CheckCircle2,
-  LoaderCircle,
-  AlertTriangle,
-  RefreshCw,
-  ShieldAlert,
-  CalendarClock,
-} from "lucide-vue-next";
+import { AlertTriangle, RefreshCw } from "lucide-vue-next";
 import AccountDialog from "./AccountDialog.vue";
 import ChangePasswordDialog from "./ChangePasswordDialog.vue";
-import LanguageSwitcher from "./LanguageSwitcher.vue";
 import WorkspaceNavigation from "./WorkspaceNavigation.vue";
 import WorkspaceUnavailableView from "../views/WorkspaceUnavailableView.vue";
 import { useAdminStore } from "../stores/admin";
-import { controlPageIds, sellingControlPages } from "../../../../shared/controlPages";
+import { workspaceActionsDisabled } from "../utils/workspaceHeader";
+import {
+  controlPageIds,
+  sellingControlPages,
+} from "../../../../shared/controlPages";
 const { t, locale } = useI18n();
 const store = useAdminStore();
+watch(
+  () => store.toast,
+  (message) => {
+    if (message) toast(message);
+  },
+);
 const route = useRoute();
 const mobile = ref(false);
+const workspaceHeader = useTemplateRef<HTMLElement>("workspaceHeader");
+const headerHeight = ref(72);
+let headerObserver: ResizeObserver | undefined;
 const accountOpen = ref(false);
 const passwordOpen = ref(false);
 const signingOut = ref(false);
 const passwordSaving = ref(false);
 const passwordError = ref("");
-const currentPage = computed(() => controlPageIds.find((page) => page === route.name));
+const currentPage = computed(() =>
+  controlPageIds.find((page) => page === route.name),
+);
 const contentReadOnly = computed(
-  () => store.isReadOnly && route.name !== "reports" && route.name !== "orders" && route.name !== "bookings" &&
+  () =>
+    store.isReadOnly &&
+    route.name !== "reports" &&
+    route.name !== "orders" &&
+    route.name !== "bookings" &&
     !(currentPage.value && sellingControlPages.includes(currentPage.value)),
 );
+provide(workspaceActionsDisabled, contentReadOnly);
 const userName = computed(
   () =>
     store.user.displayName ||
@@ -305,7 +250,17 @@ function refreshAccessOnFocus() {
 
 onMounted(() => {
   void store.load();
+  const header = workspaceHeader.value;
+  if (header) {
+    headerObserver = new ResizeObserver(() => {
+      headerHeight.value = header.offsetHeight;
+    });
+    headerObserver.observe(header);
+  }
   window.addEventListener("focus", refreshAccessOnFocus);
 });
-onUnmounted(() => window.removeEventListener("focus", refreshAccessOnFocus));
+onUnmounted(() => {
+  headerObserver?.disconnect();
+  window.removeEventListener("focus", refreshAccessOnFocus);
+});
 </script>

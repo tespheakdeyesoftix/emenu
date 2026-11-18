@@ -7,50 +7,39 @@
     :title="editingProductId ? 'កែសម្រួលមុខម្ហូប' : 'បន្ថែមមុខម្ហូប'"
     @close="!saving && dismissProduct()"
   >
-    <SettingsTabs
-      v-model="productTab"
-      :tabs="productTabs"
-      :label="t('pages.catalog.productTabs.label')"
-      id-prefix="catalog-product"
-    />
+
     <form id="catalog-product-form" novalidate @submit.prevent="submitProduct">
-      <section
-        v-show="productTab === 'details'"
-        id="catalog-product-panel-details"
-        role="tabpanel"
-        aria-labelledby="catalog-product-tab-details"
+      <SettingsTabs v-model="productTab" :tabs="productTabs" :label="t('pages.catalog.productTabs.label')">
+      <TabPanel as="section" :force-mount="true" value="details"
         data-product-tab="details"
-        class="grid gap-4 sm:grid-cols-2"
+        class="data-[state=inactive]:hidden grid gap-4 sm:grid-cols-2"
       >
         <label class="sm:col-span-2"
           ><span class="label">ឈ្មោះមុខម្ហូប · ខ្មែរ</span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model="newProduct.nameKm"
-            class="input"
             required
             lang="km"
             placeholder="ឧ. ប៊ឺហ្គឺសាច់គោ"
         /></label>
         <label v-if="store.business.enableEn"
           ><span class="label">ឈ្មោះមុខម្ហូប · អង់គ្លេស </span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model="newProduct.nameEn"
-            class="input"
             placeholder="e.g. Beef burger"
         /></label>
         <label v-if="store.business.enableZh"
           ><span class="label">ឈ្មោះមុខម្ហូប · ចិន </span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model="newProduct.nameZh"
-            class="input"
             lang="zh"
             placeholder="例如：牛肉汉堡"
         /></label>
         <label class="sm:col-span-2"
           ><span class="label">លេខកូដមុខម្ហូប </span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model.trim="newProduct.code"
-            class="input uppercase"
+            class="uppercase"
             maxlength="64"
             autocomplete="off"
             placeholder="ឧ. BURGER-001"
@@ -60,11 +49,12 @@
             {{ t("pages.catalog.productCategory.label") }}
             <span class="text-red-600" aria-hidden="true">*</span>
           </label>
-          <button
+          <Button
+            variant="outline" size="lg"
             id="catalog-product-category"
             ref="categoryButton"
             type="button"
-            class="input flex items-center justify-between gap-2 text-left"
+            class="w-full !justify-between text-start"
             aria-haspopup="dialog"
             :aria-expanded="categoryPickerOpen"
             @click="openCategoryPicker"
@@ -76,39 +66,37 @@
                   : t("pages.catalog.productCategory.choose")
               }}
             </span>
-            <ChevronDown :size="16" class="shrink-0" aria-hidden="true" />
-          </button>
+            <template #suffix><ChevronDown :size="16" class="shrink-0" aria-hidden="true" /></template>
+          </Button>
         </div>
         <div v-if="store.canAccessPage('menus')">
           <span class="label">{{ t('nav.menus') }}</span>
-          <button
+          <Button
+            variant="subtle" size="lg"
             ref="menuButton"
             type="button"
-            class="btn-soft"
             aria-haspopup="dialog"
             :aria-expanded="menuPickerOpen"
             @click="menuPickerOpen = true"
           >
             {{ t("menus.choose") }} · {{ t("menus.selected", { count: productMenuIds.length }) }}
-          </button>
+          </Button>
         </div>
         <label
           ><span class="label">ឯកតា </span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model.trim="newProduct.unit"
-            class="input"
             maxlength="40"
             placeholder="ឧ. ចាន កែវ នាក់"
         /></label>
         <label
           ><span class="label">{{ t("pages.catalog.productRating") }}</span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model.number="newProduct.rating"
             type="number"
             min="0"
             max="5"
             step="0.1"
-            class="input"
             placeholder="4.9"
           />
           <small class="mt-1 block text-xs text-black/40">
@@ -117,20 +105,19 @@
         >
         <label class="sm:col-span-2"
           ><span class="label">លំដាប់បង្ហាញ</span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model.number="newProduct.sortOrder"
             type="number"
             min="0"
             step="1"
-            class="input"
         /></label>
         <label class="sm:col-span-2"
           ><span class="label">ការពិពណ៌នា</span
-          ><textarea
+          ><Textarea size="lg" variant="outline"
             v-model="newProduct.description"
-            class="input resize-none"
-            rows="3"
-          ></textarea>
+            class="resize-none"
+            :rows="3"
+          ></Textarea>
         </label>
         <div class="sm:col-span-2">
           <ImageUploader
@@ -142,7 +129,7 @@
         </div>
         <label
           class="sm:col-span-2 flex items-center gap-3 rounded-2xl bg-cream p-4 text-sm font-bold"
-          ><input
+          ><Checkbox
             v-model="newProduct.isFeatured"
             type="checkbox"
             class="size-4 accent-black"
@@ -151,21 +138,17 @@
         <label
           class="sm:col-span-2 flex items-center gap-3 rounded-2xl bg-cream p-4 text-sm font-bold"
         >
-          <input
+          <Checkbox
             v-model="newProduct.isAvailable"
             type="checkbox"
             class="size-4 accent-black"
           />
           បង្ហាញមុខម្ហូបនេះលើម៉ឺនុយ QR
         </label>
-      </section>
-      <section
-        v-show="productTab === 'prices'"
-        id="catalog-product-panel-prices"
-        role="tabpanel"
-        aria-labelledby="catalog-product-tab-prices"
+      </TabPanel>
+      <TabPanel as="section" :force-mount="true" value="prices"
         data-product-tab="prices"
-        class="space-y-4"
+        class="data-[state=inactive]:hidden space-y-4"
       >
         <label class="block sm:max-w-md"
           ><span class="label">{{
@@ -173,12 +156,11 @@
               ? "តម្លៃទាបបំផុត · ស្វ័យប្រវត្តិ"
               : "តម្លៃ"
           }}</span
-          ><input
+          ><TextInput size="lg" variant="outline"
             v-model.number="newProduct.priceCents"
             type="number"
             min="0"
             :step="store.business.currency === 'USD' ? '0.01' : '1'"
-            class="input"
             required
             :disabled="newProduct.portions.length > 0"
           />
@@ -205,39 +187,28 @@
             <span>
               បង្កើតបញ្ជីតម្លៃបន្ថែម ដើម្បីកំណត់តម្លៃពិសេសសម្រាប់មុខម្ហូបនេះ។
             </span>
-            <RouterLink
-              to="/price-lists"
-              class="shrink-0 font-extrabold text-tomato"
+            <Button
+              route="/price-lists"
+              variant="outline"
+              class="shrink-0"
               @click="closeProduct"
             >
               បង្កើតបញ្ជីតម្លៃ
-            </RouterLink>
+            </Button>
           </div>
-          <table class="min-w-full border-collapse text-sm">
-            <thead>
-              <tr class="text-left text-xs text-black/40">
-                <th class="min-w-40 p-2">គោលដៅតម្លៃ</th>
-                <th
-                  v-for="list in activePriceLists"
-                  :key="list.id"
-                  class="min-w-40 p-2"
-                >
+          <List class="w-full [--list-gap:0px] rounded-4 border border-outline-gray-1 bg-surface-base" :columns="priceColumns" :style="{ minWidth: (10 + activePriceLists.length * 11) + 'rem' }">
+            <ListHeader class="!h-auto min-h-9 bg-surface-gray-1 py-2 text-ink-gray-7">
+
+                <ListHeaderCell class="px-2">គោលដៅតម្លៃ</ListHeaderCell>
+                <ListHeaderCell v-for="list in activePriceLists" :key="list.id" class="px-2">
                   {{ displayPriceListName(list.name) }}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in productPricingRows"
-                :key="row.targetKey"
-                class="border-t border-black/[.06]"
-              >
-                <th class="p-2 text-left">{{ row.label }}</th>
-                <td
-                  v-for="list in activePriceLists"
-                  :key="list.id"
-                  class="p-2"
-                >
+                </ListHeaderCell>
+
+            </ListHeader>
+
+              <ListRow v-for="row in productPricingRows" :key="row.targetKey">
+                <ListCell role="rowheader" class="px-2 font-medium">{{ row.label }}</ListCell>
+                <ListCell v-for="list in activePriceLists" :key="list.id" class="!block px-2 py-2">
                   <div
                     v-if="list.isNormal"
                     class="rounded-xl bg-white px-3 py-2 font-bold"
@@ -248,24 +219,24 @@
                     <label
                       class="mb-2 flex cursor-pointer items-center gap-2 text-[11px] font-bold text-black/55"
                     >
-                      <input
+                      <Checkbox
                         type="checkbox"
                         class="size-4 accent-black"
-                        :checked="
+                        :model-value="
                           priceOverrideEnabled(list.id, row.targetKey)
                         "
                         @change="togglePriceOverride(list.id, row, $event)"
                       />
                       ប្រើតម្លៃផ្ទាល់ខ្លួន
                     </label>
-                    <input
-                      v-model="
+                    <TextInput size="lg" variant="outline"
+                      v-model.number="
                         priceDrafts[priceDraftKey(list.id, row.targetKey)]
                       "
                       type="number"
                       min="0"
                       :step="store.business.currency === 'USD' ? '0.01' : '1'"
-                      class="input !rounded-xl !px-3 !py-2"
+                      class="!rounded-xl !px-3 !py-2"
                       :disabled="
                         !priceOverrideEnabled(list.id, row.targetKey)
                       "
@@ -277,19 +248,15 @@
                       >ប្រើតម្លៃធម្មតា {{ money(row.normalPrice) }}</small
                     >
                   </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                </ListCell>
+              </ListRow>
+
+          </List>
         </div>
-      </section>
-      <section
-        v-show="productTab === 'modifiers'"
-        id="catalog-product-panel-modifiers"
-        role="tabpanel"
-        aria-labelledby="catalog-product-tab-modifiers"
+      </TabPanel>
+      <TabPanel as="section" :force-mount="true" value="modifiers"
         data-product-tab="modifiers"
-        class="rounded-2xl border border-black/[.08] bg-cream p-4"
+        class="data-[state=inactive]:hidden rounded-2xl border border-black/[.08] bg-cream p-4"
       >
         <ModifierGroupEditor
           v-model="newProduct.modifierGroups"
@@ -297,31 +264,30 @@
           :enable-zh="store.business.enableZh"
           :currency="store.business.currency"
         />
-      </section>
+      </TabPanel>
+      </SettingsTabs>
     </form>
 
     <template #footer>
-      <p v-if="formError" class="mb-2 mt-0 text-xs font-bold text-red-600" role="alert">
-        {{ formError }}
-      </p>
+      <Alert v-if="formError" theme="red" :title="formError" class="mb-2 mt-0" />
       <div :class="editingProductId ? '' : 'grid gap-2 sm:grid-cols-2'">
-        <button
+        <Button variant="subtle" size="lg"
           v-if="!editingProductId"
           type="submit"
           form="catalog-product-form"
           name="submitAction"
           value="save-and-new"
-          class="btn-soft w-full"
+          class="w-full"
           :disabled="saving"
         >
           {{ saving ? "កំពុងរក្សាទុក…" : "រក្សាទុក និងបន្ថែមថ្មី" }}
-        </button>
-        <button
+        </Button>
+        <Button variant="solid" size="lg"
           type="submit"
           form="catalog-product-form"
           name="submitAction"
           value="save"
-          class="btn-primary w-full"
+          class="w-full"
           :disabled="saving"
         >
           {{
@@ -331,7 +297,7 @@
                 ? "រក្សាទុកមុខម្ហូប"
                 : "បន្ថែមមុខម្ហូប"
           }}
-        </button>
+        </Button>
       </div>
     </template>
   </ModalPanel>
@@ -342,30 +308,28 @@
   >
     <label class="mb-3 block">
       <span class="sr-only">{{ t("pages.catalog.productCategory.search") }}</span>
-      <input
+      <TextInput size="lg" variant="outline"
         ref="categorySearchInput"
         v-model="categorySearch"
         type="search"
-        class="input"
         :placeholder="t('pages.catalog.productCategory.search')"
       />
     </label>
-    <p v-if="!matchingCategories.length" class="text-sm text-black/55" role="status">
-      {{ t("pages.catalog.productCategory.noMatches") }}
-    </p>
+    <Alert v-if="!matchingCategories.length" :title="t('pages.catalog.productCategory.noMatches')" />
     <div v-else class="space-y-1">
-      <button
+      <Button
         v-for="item in matchingCategories"
         :key="item.id"
         type="button"
-        class="flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-left text-sm"
-        :class="item.id === newProduct.categoryId ? 'bg-ink text-white' : 'hover:bg-cream'"
+        size="lg"
+        class="w-full !justify-between text-start"
+        :variant="item.id === newProduct.categoryId ? 'solid' : 'ghost'"
         :aria-pressed="item.id === newProduct.categoryId"
         @click="chooseCategory(item.id)"
       >
         <span>{{ categoryLabel(item) }}</span>
-        <Check v-if="item.id === newProduct.categoryId" :size="16" aria-hidden="true" />
-      </button>
+        <template #suffix><Check v-if="item.id === newProduct.categoryId" :size="16" aria-hidden="true" /></template>
+      </Button>
     </div>
   </ModalPanel>
   <ProductMenuPicker
@@ -377,6 +341,8 @@
 </template>
 
 <script setup lang="ts">
+import { List, ListCell, ListHeader, ListHeaderCell, ListRow } from "frappe-ui/list";
+import { Alert, Button, Checkbox, TabPanel, TextInput, Textarea } from "frappe-ui";
 import { computed, nextTick, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Check, ChevronDown } from "lucide-vue-next";
@@ -419,11 +385,11 @@ const productTabs = computed(() => [
 const productMenuIds = ref<string[]>([]);
 const localMenuDraft = ref<string[]>();
 const menuPickerOpen = ref(false);
-const menuButton = ref<HTMLButtonElement>();
+const menuButton = ref<InstanceType<typeof Button>>();
 
 function closeMenuPicker() {
   menuPickerOpen.value = false;
-  menuButton.value?.focus();
+  (menuButton.value?.$el as HTMLButtonElement | undefined)?.focus();
 }
 function applyMenuPicker(ids: string[], localIds: string[]) {
   productMenuIds.value = ids;
@@ -453,8 +419,8 @@ const newProduct = reactive({
 });
 const categoryPickerOpen = ref(false);
 const categorySearch = ref("");
-const categoryButton = ref<HTMLButtonElement>();
-const categorySearchInput = ref<HTMLInputElement>();
+const categoryButton = ref<InstanceType<typeof Button>>();
+const categorySearchInput = ref<InstanceType<typeof TextInput>>();
 const selectedCategory = computed(() =>
   props.categories.find(({ id }) => id === newProduct.categoryId),
 );
@@ -485,7 +451,7 @@ async function openCategoryPicker() {
 
 function closeCategoryPicker() {
   categoryPickerOpen.value = false;
-  categoryButton.value?.focus();
+  (categoryButton.value?.$el as HTMLButtonElement | undefined)?.focus();
 }
 
 function chooseCategory(id: string) {
@@ -537,6 +503,7 @@ function rememberProductFields() {
     // Product creation still succeeds when browser storage is unavailable.
   }
 }
+const priceColumns = computed(() => ["minmax(10rem,1fr)", ...activePriceLists.value.map(() => "minmax(11rem,1fr)")]);
 const priceDrafts = reactive<Record<string, string>>(Object.create(null));
 type ProductPricingRow = {
   targetKey: string;
@@ -767,7 +734,7 @@ async function submitProduct(event: SubmitEvent) {
     productTab.value = "details";
     formError.value = t("pages.catalog.productCategory.required");
     await nextTick();
-    categoryButton.value?.focus();
+    (categoryButton.value?.$el as HTMLButtonElement | undefined)?.focus();
     return;
   }
 

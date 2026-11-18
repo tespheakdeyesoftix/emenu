@@ -22,10 +22,11 @@ function targetsFor(scope: string, selections: Set<unknown>) {
   const selected = (key: string) => selections.has(key);
   const targets: Target[] = [];
   const add = (name: string, where = own) => targets.push({ name, where });
+  const resetScope = scope === "business" ? own : branchOnly;
   const orders = selected("orders");
   const tables = selected("tables") || selected("tableGroups");
   const bookings = selected("bookings");
-  const ordersWhere = orders ? branchOnly : `${branchOnly} AND table_id IN (
+  const ordersWhere = orders ? resetScope : `${branchOnly} AND table_id IN (
     SELECT id FROM restaurant_tables WHERE ${branchOnly})`;
   const orderIds = `${sourceOrders} WHERE ${ordersWhere}`;
   const bookingIds = `${sourceBookings} WHERE ${branchOnly}`;
@@ -47,6 +48,17 @@ function targetsFor(scope: string, selections: Set<unknown>) {
   if (orders || tables) {
     add("order_products", `order_id IN (${orderIds})`);
     add("orders", ordersWhere);
+  }
+  if (selected("sales")) {
+    const saleIds = `SELECT id FROM sales WHERE ${resetScope}`;
+    add("pos_commands", `${own} AND EXISTS (
+      SELECT 1 FROM sales WHERE ${resetScope} AND sales.profile_id=pos_commands.profile_id
+        AND sales.id=json_extract(pos_commands.response_json,'$.id')
+        AND json_type(pos_commands.response_json,'$.lines')='array'
+    )`);
+    add("sale_products", `sale_id IN (${saleIds})`);
+    add("sale_payments", `sale_id IN (${saleIds})`);
+    add("sales", resetScope);
   }
   if (bookings) add("bookings", branchOnly);
   if (tables) add("restaurant_tables", branchOnly);
@@ -131,8 +143,9 @@ async function snapshotSignature(secret: string, metadata: unknown[], snapshots:
   return Array.from(new Uint8Array(signed), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-const menuOrderReference = `EXISTS (
+const menuOrderReference = (resettingBusinessOrders: boolean) => `EXISTS (
   SELECT 1 FROM orders WHERE menu_id IN (SELECT id FROM menus WHERE ${own})
+  ${resettingBusinessOrders ? "AND business_id<>?1" : ""}
 )`;
 
 function tenantChecks(targets: Target[]) {
@@ -182,12 +195,14 @@ export async function resetBusinessData(
 
   const selected = new Set<unknown>(selection);
   const menus = selected.has("menus");
+  const remainingMenuOrders = menuOrderReference(scope === "business" && selected.has("orders"));
   const targets = targetsFor(scope, selected);
+  const sales = targets.find(({ name }) => name === "sales");
   if (sendDeletedWebhooks && !targets.some(({ name }) => name === "orders" || name === "bookings"))
     return fail(400, "Select a reset that removes orders or bookings to send Deleted webhooks.");
   const ownership = tenantChecks(targets);
-  const blockers = menus && await db.prepare(`SELECT ${menuOrderReference} AS inUse`).bind(businessId).first<number>("inUse")
-    ? ["Saved orders still reference these menus. Reset those orders in their branches before removing the menus."]
+  const blockers = menus && await db.prepare(`SELECT ${remainingMenuOrders} AS inUse`).bind(businessId).first<number>("inUse")
+    ? ["Saved orders outside this reset still reference these menus."]
     : [];
   if (ownership.length) {
     const sql = `SELECT (${ownership.join(" AND ")}) AS valid`;
@@ -234,7 +249,7 @@ export async function resetBusinessData(
   const audit = db.prepare(`INSERT INTO super_admin_audit_log (id,actor_email,action,business_id,details_json)
     SELECT ?3,?4,'business.data_reset',?1,?5
     WHERE EXISTS (SELECT 1 FROM branches WHERE business_id=?1 AND id=?2 AND name=?6 COLLATE BINARY)
-    ${menus ? `AND NOT ${menuOrderReference}` : ""}
+    ${menus ? `AND NOT ${remainingMenuOrders}` : ""}
     AND ${checks.join(" AND ")}`).bind(businessId, branchId, auditId, actor,
     JSON.stringify({ branchId, branchName: branch.name, scope, selection, tables: counts,
       ...(sendDeletedWebhooks ? { sendDeletedWebhooks } : {}) }),
@@ -246,8 +261,18 @@ export async function resetBusinessData(
         name === "orders" || name === "bookings"
           ? [captureWebhook(db, name, "deleted", `(${where}) AND ${guarded}`, [businessId, branchId, auditId])]
           : []) : []),
-      ...snapshots.map(({ name, where }) => db.prepare(`DELETE FROM ${name} WHERE (${where}) AND ${guarded}`)
-        .bind(businessId, branchId, auditId)),
+      ...(sales ? [db.prepare(`UPDATE cashier_shifts SET activity_revision=activity_revision+1
+        WHERE business_id=?1 AND closed_at IS NULL AND id IN (
+          SELECT shift_id FROM sales WHERE ${sales.where}
+        ) AND ${guarded}`).bind(businessId, branchId, auditId)] : []),
+      ...snapshots.map(({ name, where }) => {
+        // Retain the idempotency key so retries cannot recreate a deleted sale.
+        const statement = name === "pos_commands"
+          ? `UPDATE pos_commands SET response_status=410,
+              response_json='{"code":"SALE_RESET","error":"This POS sale was cleared by an administrator."}'`
+          : `DELETE FROM ${name}`;
+        return db.prepare(`${statement} WHERE (${where}) AND ${guarded}`).bind(businessId, branchId, auditId);
+      }),
       db.prepare(`UPDATE businesses SET menu_cache_version=menu_cache_version+1,updated_at=CURRENT_TIMESTAMP
         WHERE id=?1 AND ?2 IS NOT NULL AND ${guarded}`).bind(businessId, branchId, auditId),
     ]);

@@ -1,13 +1,9 @@
 <template>
   <div>
-    <PageHeader
-      :eyebrow="$t('pages.banners.eyebrow')"
-      :title="$t('pages.banners.title')"
-      :description="$t('pages.banners.description')"
-    >
-      <button class="btn-primary" @click="openNew">
-        <Plus :size="17" />បដាថ្មី
-      </button>
+    <PageHeader :title="$t('pages.banners.title')">
+      <Button variant="solid" size="lg" @click="openNew">
+        <template #prefix><Plus :size="17" /></template>បដាថ្មី
+      </Button>
     </PageHeader>
 
     <div class="grid gap-5 lg:grid-cols-2">
@@ -25,12 +21,7 @@
           <div
             class="absolute inset-0 flex max-w-sm flex-col justify-end p-6 text-white"
           >
-            <span
-              class="mb-auto w-fit rounded-full px-2.5 py-1 text-[10px] font-extrabold"
-              :class="bannerStatus(banner).overlayClass"
-            >
-              {{ bannerStatus(banner).label.toUpperCase() }}
-            </span>
+            <Badge :theme="bannerStatus(banner).theme" :label="bannerStatus(banner).label" class="mb-auto w-fit" />
             <h2 class="display mb-1 text-2xl font-extrabold">
               {{ banner.title }}
             </h2>
@@ -41,12 +32,7 @@
         <div class="flex items-start gap-3 p-4">
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-2">
-              <span
-                class="rounded-full px-3 py-1 text-xs font-bold"
-                :class="bannerStatus(banner).className"
-              >
-                {{ bannerStatus(banner).label }}
-              </span>
+              <Badge :theme="bannerStatus(banner).theme" :label="bannerStatus(banner).label" />
               <span
                 v-if="banner.detailText"
                 class="inline-flex items-center gap-1 text-xs font-bold text-black/45"
@@ -58,25 +44,26 @@
               {{ bannerStatus(banner).description }}
             </p>
           </div>
-          <button
+          <Button variant="ghost"
             class="grid size-9 shrink-0 place-items-center rounded-full hover:bg-cream"
             :aria-label="`កែសម្រួល ${banner.title}`"
             @click="openEdit(banner)"
           >
-            <Pencil :size="16" />
-          </button>
-          <button
+            <template #icon><Pencil :size="16" /></template>
+          </Button>
+          <Button variant="ghost"
             class="grid size-9 shrink-0 place-items-center rounded-full hover:bg-red-50 hover:text-red-600"
             :aria-label="`លុប ${banner.title}`"
             @click="requestDeleteBanner(banner)"
           >
-            <Trash2 :size="16" />
-          </button>
+            <template #icon><Trash2 :size="16" /></template>
+          </Button>
         </div>
       </article>
 
-      <button
-        class="grid min-h-72 place-items-center rounded-3xl border-2 border-dashed border-black/10 bg-white/50 p-10 text-center transition hover:border-black/25"
+      <Button
+        variant="outline" size="lg" type="button"
+        class="admin-action-card !justify-center min-h-72 border-dashed !text-center"
         @click="openNew"
       >
         <div>
@@ -92,7 +79,7 @@
             ប្រើរូបភាពទទឹងធំ និងភ្លឺ ដើម្បីទទួលបានលទ្ធផលល្អបំផុត។
           </p>
         </div>
-      </button>
+      </Button>
     </div>
 
     <ModalPanel
@@ -110,22 +97,21 @@
         <div class="space-y-4">
           <label>
             <span class="label">ចំណងជើង</span>
-            <input
+            <TextInput size="lg" variant="outline"
               v-model.trim="form.title"
               required
-              class="input"
               maxlength="160"
               placeholder="អាហារថ្ងៃត្រង់ដ៏ឆ្ងាញ់"
             />
           </label>
           <label>
             <span class="label">សារបន្ថែម</span>
-            <textarea
+            <Textarea size="lg" variant="outline"
               v-model.trim="form.subtitle"
-              class="input resize-none"
+              class="resize-none"
               maxlength="500"
-              rows="3"
-            ></textarea>
+              :rows="3"
+            ></Textarea>
           </label>
           <ImageUploader
             v-model="form.images"
@@ -137,7 +123,7 @@
           <label
             class="flex items-start gap-3 rounded-2xl border border-black/10 p-4 text-sm"
           >
-            <input
+            <Checkbox
               v-model="form.isActive"
               type="checkbox"
               class="mt-0.5 size-4 accent-black"
@@ -154,7 +140,7 @@
         <div class="space-y-4">
           <section class="rounded-3xl bg-cream p-4">
             <label class="flex items-start gap-3 text-sm">
-              <input
+              <Checkbox
                 v-model="form.scheduleEnabled"
                 type="checkbox"
                 class="mt-0.5 size-4 accent-black"
@@ -170,24 +156,8 @@
               v-if="form.scheduleEnabled"
               class="mt-4 grid gap-4 sm:grid-cols-2"
             >
-              <label>
-                <span class="label">ចាប់ផ្តើម</span>
-                <input
-                  v-model="form.startsAt"
-                  type="datetime-local"
-                  class="input"
-                  required
-                />
-              </label>
-              <label>
-                <span class="label">បញ្ចប់</span>
-                <input
-                  v-model="form.endsAt"
-                  type="datetime-local"
-                  class="input"
-                  required
-                />
-              </label>
+              <ScheduleDateTimePicker v-model="form.startsAt" label="ចាប់ផ្តើម" />
+              <ScheduleDateTimePicker v-model="form.endsAt" label="បញ្ចប់" />
               <p class="m-0 text-xs leading-5 text-black/45 sm:col-span-2">
                 ម៉ោងប្រើតំបន់ {{ store.business.timezone }}។
                 ម៉ោងបញ្ចប់មិនត្រូវបានរាប់បញ្ចូលទេ។
@@ -197,7 +167,7 @@
 
           <section class="rounded-3xl bg-cream p-4">
             <label class="flex items-start gap-3 text-sm">
-              <input
+              <Checkbox
                 v-model="form.detailsEnabled"
                 type="checkbox"
                 class="mt-0.5 size-4 accent-black"
@@ -212,30 +182,28 @@
             <div v-if="form.detailsEnabled" class="mt-4 space-y-4">
               <label>
                 <span class="label">ព័ត៌មានលម្អិតព្រឹត្តិការណ៍</span>
-                <textarea
+                <Textarea size="lg" variant="outline"
                   v-model.trim="form.detailText"
-                  class="input resize-none"
+                  class="resize-none"
                   maxlength="10000"
-                  rows="5"
+                  :rows="5"
                   required
                   placeholder="បញ្ចូលកាលបរិច្ឆេទព្រឹត្តិការណ៍ លក្ខខណ្ឌប្រូម៉ូសិន ឬព័ត៌មានមានប្រយោជន៍ផ្សេងទៀត។"
-                ></textarea>
+                ></Textarea>
               </label>
               <div class="grid gap-4 sm:grid-cols-2">
                 <label>
                   <span class="label">អក្សរលើប៊ូតុង (មិនចាំបាច់)</span>
-                  <input
+                  <TextInput size="lg" variant="outline"
                     v-model.trim="form.ctaLabel"
-                    class="input"
                     maxlength="80"
                     placeholder="មើលបន្ថែម"
                   />
                 </label>
                 <label>
                   <span class="label">តំណខាងក្រៅ (មិនចាំបាច់)</span>
-                  <input
+                  <TextInput size="lg" variant="outline"
                     v-model.trim="form.ctaUrl"
-                    class="input"
                     type="url"
                     placeholder="https://..."
                   />
@@ -245,19 +213,14 @@
           </section>
         </div>
 
-        <p
-          v-if="formError"
-          class="m-0 rounded-2xl bg-red-50 p-3 text-sm font-bold text-red-700 lg:col-span-2"
-        >
-          {{ formError }}
-        </p>
+        <Alert v-if="formError" theme="red" :title="formError" class="lg:col-span-2" />
       </form>
 
       <template #footer>
-        <button
+        <Button variant="solid" size="lg"
           type="submit"
           form="banner-editor-form"
-          class="btn-primary w-full"
+          class="w-full"
           :disabled="saving"
         >
           {{
@@ -267,7 +230,7 @@
                 ? "រក្សាទុកការកែប្រែ"
                 : "ផ្សព្វផ្សាយបដា"
           }}
-        </button>
+        </Button>
       </template>
     </ModalPanel>
 
@@ -285,6 +248,7 @@
 </template>
 
 <script setup lang="ts">
+import { Badge, Alert, Button, Checkbox, TextInput, Textarea } from "frappe-ui";
 import { onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import {
   ImagePlus,
@@ -293,6 +257,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-vue-next";
+import ScheduleDateTimePicker from "../components/ScheduleDateTimePicker.vue";
 import PageHeader from "../components/PageHeader.vue";
 import ModalPanel from "../components/ModalPanel.vue";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
@@ -368,35 +333,30 @@ function bannerStatus(banner: Banner) {
     return {
       label: "មិនសកម្ម",
       description: "បានលាក់ពីម៉ឺនុយសាធារណៈ",
-      className: "bg-slate-100 text-slate-600",
-      overlayClass: "bg-white/85 text-ink",
+      theme: "gray" as const,
     };
   if (!banner.startsAt || !banner.endsAt)
     return {
       label: "បង្ហាញជានិច្ច",
       description: "បង្ហាញគ្រប់ពេលដែលម៉ឺនុយសាធារណៈដំណើរការ",
-      className: "bg-emerald-50 text-emerald-700",
-      overlayClass: "bg-mint text-ink",
+      theme: "green" as const,
     };
   if (nowLocal.value < banner.startsAt)
     return {
       label: "បានកំណត់ពេល",
       description: `ចាប់ផ្តើម ${formatSchedule(banner.startsAt)} (${store.business.timezone})`,
-      className: "bg-blue-50 text-blue-700",
-      overlayClass: "bg-blue-100 text-blue-800",
+      theme: "blue" as const,
     };
   if (nowLocal.value >= banner.endsAt)
     return {
       label: "បានបញ្ចប់",
       description: `បានបញ្ចប់ ${formatSchedule(banner.endsAt)} (${store.business.timezone})`,
-      className: "bg-amber-50 text-amber-700",
-      overlayClass: "bg-amber-100 text-amber-800",
+      theme: "amber" as const,
     };
   return {
     label: "កំពុងផ្សាយ",
     description: `បង្ហាញរហូតដល់ ${formatSchedule(banner.endsAt)} (${store.business.timezone})`,
-    className: "bg-emerald-50 text-emerald-700",
-    overlayClass: "bg-mint text-ink",
+    theme: "green" as const,
   };
 }
 

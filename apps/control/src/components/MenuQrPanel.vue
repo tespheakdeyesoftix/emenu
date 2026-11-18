@@ -2,10 +2,7 @@
   <section class="card mt-5 overflow-hidden bg-ink text-white">
     <div class="grid md:grid-cols-[1fr_300px]">
       <div class="p-7 lg:p-9">
-        <span
-          class="rounded-full bg-mint px-3 py-1 text-xs font-extrabold text-ink"
-          >{{ t("pages.overview.qrPanel.live") }}</span
-        >
+        <Badge theme="green" variant="solid">{{ t("pages.overview.qrPanel.live") }}</Badge>
         <h2 class="display mb-2 mt-5 text-2xl font-extrabold lg:text-3xl">
           {{ t("pages.overview.qrPanel.title") }}
         </h2>
@@ -13,22 +10,23 @@
           {{ t("pages.overview.qrPanel.description", { url: menuUrl }) }}
         </p>
         <div class="mt-5 flex flex-wrap gap-3">
-          <button
-            type="button"
-            class="rounded-full bg-white px-5 py-3 text-sm font-bold text-ink disabled:cursor-wait disabled:opacity-60"
-            @click="$router.push('/qr-designs')"
+          <Button
+            variant="outline"
+            size="lg"
+            route="/qr-designs"
           >
-            <Download :size="16" class="mr-2 inline" />{{
+            <template #prefix><Download :size="16" aria-hidden="true" /></template>{{
               t("pages.overview.qrPanel.design")
             }}
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="subtle" size="lg"
             type="button"
-            class="rounded-full border border-white/15 px-5 py-3 text-sm font-bold"
+
             @click="$emit('copy')"
           >
             {{ t("pages.overview.qrPanel.copy") }}
-          </button>
+          </Button>
         </div>
       </div>
       <div
@@ -43,7 +41,7 @@
             :alt="t('pages.overview.qrPanel.alt', { business: businessName })"
             class="size-full"
           />
-          <LoaderCircle v-else :size="36" class="animate-spin text-ink/40" />
+          <Spinner v-else class="!size-[36px] text-ink/40" />
         </div>
         <div
           class="absolute -right-8 -top-8 size-24 rounded-full border-[18px] border-black/10"
@@ -54,9 +52,10 @@
 </template>
 
 <script setup lang="ts">
+import { Badge, Button, Spinner } from "frappe-ui";
 import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { Download, LoaderCircle } from "lucide-vue-next";
+import { Download } from "lucide-vue-next";
 import { createMenuQrCode } from "../utils/qrCode";
 const { t } = useI18n();
 

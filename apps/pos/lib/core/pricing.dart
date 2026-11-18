@@ -2,16 +2,26 @@ import 'pos_api.dart';
 
 const maxPosAmount = 100000000000;
 
+Json legacyTaxSettings(Json config) =>
+    config['legacy_tax'] is Map ? jsonObject(config['legacy_tax']) : config;
+
 class BillTotals {
   const BillTotals({
     required this.subtotal,
-    required this.tax,
+    required this.discount,
+    required this.tax1,
+    required this.tax2,
+    required this.tax3,
     required this.total,
   });
 
   final int subtotal;
-  final int tax;
+  final int discount;
+  final int tax1;
+  final int tax2;
+  final int tax3;
   final int total;
+  int get tax => tax1 + tax2 + tax3;
 }
 
 int _round(BigInt numerator, BigInt denominator) {
@@ -24,15 +34,32 @@ int _round(BigInt numerator, BigInt denominator) {
   return (numerator.isNegative ? -rounded : rounded).toInt();
 }
 
+(BigInt, BigInt) _taxRate(num value) {
+  if (!value.isFinite || value < 0 || value > 100) {
+    throw const FormatException('Invalid tax rate.');
+  }
+  final match = RegExp(r'^(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$')
+      .firstMatch(value.toString())!;
+  final fraction = match.group(2) ?? '';
+  final digits = BigInt.parse(match.group(1)! + fraction);
+  final scale = fraction.length - int.parse(match.group(3) ?? '0');
+  return scale < 0
+      ? (digits * BigInt.from(10).pow(-scale), BigInt.one)
+      : (digits, BigInt.from(10).pow(scale));
+}
+
 BillTotals lineTotals({
   required int unitPrice,
   required int quantity,
   required String taxMode,
   required int taxRateBps,
+  int discount = 0,
+  Json? taxRule,
 }) {
   if (unitPrice < 0 ||
       quantity < 1 ||
       quantity > 999 ||
+      discount < 0 ||
       taxRateBps < 0 ||
       taxRateBps > 10000) {
     throw const FormatException('Invalid quantity, price, or tax.');
@@ -41,22 +68,114 @@ BillTotals lineTotals({
   if (gross > maxPosAmount) {
     throw const FormatException('The amount exceeds the register limit.');
   }
-  final tax = switch (taxMode) {
-    'disabled' => 0,
-    'inclusive' => _round(
-      BigInt.from(gross) * BigInt.from(taxRateBps),
-      BigInt.from(10000 + taxRateBps),
-    ),
-    'exclusive' => _round(
-      BigInt.from(gross) * BigInt.from(taxRateBps),
-      BigInt.from(10000),
-    ),
-    _ => throw const FormatException('Invalid tax setting.'),
-  };
+  final mode = taxRule?['tax_mode'] ?? taxMode;
+  final hundred = BigInt.from(100);
+  final rates = taxRule == null
+      ? [
+          (BigInt.from(taxRateBps), hundred),
+          (BigInt.zero, BigInt.one),
+          (BigInt.zero, BigInt.one),
+        ]
+      : [
+          for (var i = 1; i <= 3; i++)
+            _taxRate(taxRule['tax_${i}_rate'] as num),
+        ];
+  final afterDiscount = [
+    for (var i = 1; i <= 3; i++)
+      taxRule?['calculate_tax_${i}_after_discount'] ?? true,
+  ];
+  final parents = [
+    <int>[],
+    [if (taxRule?['calculate_tax_2_after_adding_tax_1'] == true) 0],
+    [
+      if (taxRule?['calculate_tax_3_after_adding_tax_1'] == true) 0,
+      if (taxRule?['calculate_tax_3_after_adding_tax_2'] == true) 1,
+    ],
+  ];
+  var subtotal = gross;
+  var taxes = [0, 0, 0];
+  if (mode == 'inclusive') {
+    final scale =
+        rates.fold(BigInt.one, (max, rate) => rate.$2 > max ? rate.$2 : max) *
+        hundred;
+    final base = scale.pow(3);
+    List<BigInt> coefficients(bool discounted) {
+      final parts = <BigInt>[];
+      for (final (i, (numerator, denominator)) in rates.indexed) {
+        final input = !discounted || afterDiscount[i] == true
+            ? base
+            : BigInt.zero;
+        final prior = parents[i].fold(
+          BigInt.zero,
+          (sum, parent) => sum + parts[parent],
+        );
+        parts.add(
+          (input + prior) *
+              (numerator * (scale ~/ (denominator * hundred))) ~/
+              scale,
+        );
+      }
+      return parts;
+    }
+
+    List<int> extract(Iterable<BigInt> amounts, BigInt divisor) {
+      var running = BigInt.zero;
+      var prior = 0;
+      return amounts.map((amount) {
+        running += amount;
+        final cumulative = _round(running, divisor);
+        final part = cumulative - prior;
+        prior = cumulative;
+        return part;
+      }).toList();
+    }
+
+    final shares = coefficients(false);
+    final denominator = shares.fold(base, (sum, share) => sum + share);
+    taxes = extract(
+      shares.map((share) => BigInt.from(gross) * share),
+      denominator,
+    );
+    subtotal = gross - taxes.reduce((sum, amount) => sum + amount);
+    if (discount > subtotal) {
+      throw const FormatException('The discount exceeds the line subtotal.');
+    }
+    if (discount > 0) {
+      final grossBase = BigInt.from(gross) * base;
+      final discountBase = BigInt.from(discount) * denominator;
+      final applied = discountBase > grossBase ? grossBase : discountBase;
+      final reductions = coefficients(true);
+      taxes = extract(
+        shares.indexed.map(
+          (pair) => grossBase * pair.$2 - applied * reductions[pair.$1],
+        ),
+        denominator * base,
+      );
+    }
+  } else {
+    if (discount > subtotal) {
+      throw const FormatException('The discount exceeds the line subtotal.');
+    }
+    if (mode == 'exclusive') {
+      for (final (i, (numerator, denominator)) in rates.indexed) {
+        final net = subtotal - (afterDiscount[i] == true ? discount : 0);
+        final prior = parents[i].fold(0, (sum, parent) => sum + taxes[parent]);
+        taxes[i] = _round(
+          BigInt.from(net + prior) * numerator,
+          denominator * hundred,
+        );
+      }
+    } else if (mode != 'disabled') {
+      throw const FormatException('Invalid tax setting.');
+    }
+  }
   return BillTotals(
-    subtotal: taxMode == 'inclusive' ? gross - tax : gross,
-    tax: tax,
-    total: taxMode == 'exclusive' ? gross + tax : gross,
+    subtotal: subtotal,
+    discount: discount,
+    tax1: taxes[0],
+    tax2: taxes[1],
+    tax3: taxes[2],
+    total: subtotal - discount + taxes.reduce((sum, amount) => sum + amount),
   );
 }
 
@@ -66,7 +185,7 @@ int _units(String currency) => switch (currency) {
   _ => throw const FormatException('Unsupported currency.'),
 };
 
-int secondaryToPrimary(int amount, String primary, String exchangeRate) {
+(BigInt, BigInt) _exchangeRatio(String exchangeRate) {
   final rate = RegExp(r'^(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$')
       .firstMatch(exchangeRate);
   if (rate == null) throw const FormatException('Invalid exchange rate.');
@@ -78,10 +197,24 @@ int secondaryToPrimary(int amount, String primary, String exchangeRate) {
   }
   final denominator = scale > 0 ? BigInt.from(10).pow(scale) : BigInt.one;
   if (scale < 0) numerator *= BigInt.from(10).pow(-scale);
+  return (numerator, denominator);
+}
+
+int secondaryToPrimary(int amount, String primary, String exchangeRate) {
+  final (numerator, denominator) = _exchangeRatio(exchangeRate);
   final secondary = primary == 'USD' ? 'KHR' : 'USD';
   return _round(
     BigInt.from(amount) * BigInt.from(_units(primary)) * denominator,
     BigInt.from(_units(secondary)) * numerator,
+  );
+}
+
+int primaryToSecondary(int amount, String primary, String exchangeRate) {
+  final (numerator, denominator) = _exchangeRatio(exchangeRate);
+  final secondary = primary == 'USD' ? 'KHR' : 'USD';
+  return _round(
+    BigInt.from(amount) * BigInt.from(_units(secondary)) * numerator,
+    BigInt.from(_units(primary)) * denominator,
   );
 }
 
@@ -113,6 +246,13 @@ int? parseAmount(String input, String currency, {bool signed = false}) {
   return negative ? -amount : amount;
 }
 
+List<String> paymentCurrencies(Json type) {
+  final currency = type['currency'];
+  if (currency is String) return [currency];
+  // An offline register may still have a pre-migration payment snapshot.
+  return (type['currencies'] as List?)?.whereType<String>().toList() ?? [];
+}
+
 int paymentTotal({
   required List<Json> entries,
   required List<Json> paymentTypes,
@@ -128,7 +268,7 @@ int paymentTotal({
     final amount = entry['amount_minor'];
     final kind = entry['entry_type'] ?? 'tender';
     if (type == null ||
-        !(type['currencies'] as List).contains(currency) ||
+        !paymentCurrencies(type).contains(currency) ||
         !net.containsKey(currency) ||
         amount is! int ||
         amount < 1 ||

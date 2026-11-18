@@ -1,22 +1,19 @@
 <template>
-  <div class="mb-7 flex flex-wrap items-end justify-between gap-4">
-    <div>
-      <p class="eyebrow mb-2">
-        {{ eyebrow }}
-      </p>
-      <h1 class="display m-0 max-w-3xl text-[1.75rem] lg:text-[2.15rem]">
-        {{ title }}
-      </h1>
-      <p
-        v-if="description"
-        class="mb-0 mt-2.5 max-w-2xl text-[15px] leading-7 text-black/55"
-      >
-        {{ description }}
-      </p>
+  <FrappePageHeader class="min-h-[71px] !border-0 !px-0 py-3">
+    <div class="flex min-w-0 w-full flex-wrap items-center justify-between gap-3">
+      <h1 class="min-w-0 pl-11 text-2xl-semibold text-ink-gray-9 [overflow-wrap:anywhere] lg:pl-0">{{ title }}</h1>
+      <div v-if="$slots.default" :inert="actionsDisabled" class="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
+        <slot />
+      </div>
     </div>
-    <slot />
-  </div>
+  </FrappePageHeader>
 </template>
+
 <script setup lang="ts">
-defineProps<{ eyebrow: string; title: string; description?: string }>();
+import { PageHeader as FrappePageHeader } from "frappe-ui";
+import { inject } from "vue";
+import { workspaceActionsDisabled } from "../utils/workspaceHeader";
+
+defineProps<{ title: string }>();
+const actionsDisabled = inject(workspaceActionsDisabled);
 </script>

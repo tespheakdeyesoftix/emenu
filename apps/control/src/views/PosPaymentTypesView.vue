@@ -1,77 +1,69 @@
 <template>
-  <PageHeader
-    :eyebrow="t('nav.groups.selling')"
-    :title="t('nav.posPaymentTypes')"
-  >
-    <button
+  <PageHeader :title="t('nav.posPaymentTypes')">
+    <Button variant="solid" size="lg"
       type="button"
-      class="btn-primary"
       :disabled="store.isReadOnly"
       @click="edit()"
     >
-      <Plus :size="16" />{{ t("selling.addPaymentType") }}
-    </button>
+      <template #prefix><Plus :size="16" /></template>{{ t("selling.addPaymentType") }}
+    </Button>
   </PageHeader>
 
   <section class="card overflow-hidden" :aria-busy="loading">
-    <p v-if="loading" class="p-6 text-sm text-black/55" role="status">
-      {{ t("common.loading") }}
-    </p>
-    <div v-else-if="error" class="p-6" role="alert">
-      <p class="mb-3 text-sm text-red-700">{{ error }}</p>
-      <button type="button" class="btn-soft" @click="load(page)">
-        {{ t("common.tryAgain") }}
-      </button>
-    </div>
+    <LoadingText v-if="loading" :text="t('common.loading')" role="status" class="p-6" />
+    <Alert v-else-if="error" theme="red" :title="error" class="m-4">
+      <template #actions>
+        <Button variant="subtle" size="lg" type="button" @click="load(page)">
+          {{ t("common.tryAgain") }}
+        </Button>
+      </template>
+    </Alert>
     <p v-else-if="!payments.length" class="p-6 text-sm text-black/55">
       {{ t("selling.emptyPaymentTypes") }}
     </p>
-    <ul v-else class="divide-y divide-black/10">
-      <li
+    <List divider="none" v-else class="divide-y divide-black/10">
+      <ListRow
         v-for="payment in payments"
         :key="payment.id"
-        class="flex items-center justify-between gap-3 p-4"
+        class="!flex items-center justify-between gap-3 p-4"
       >
         <div class="min-w-0 break-words">
           <h2 class="font-bold">{{ payment.name }}</h2>
           <p class="mt-1 text-sm text-black/60">
-            {{ t(`selling.paymentKinds.${payment.kind}`) }} ·
+            {{ groupLabel(payment.payment_type_group ?? defaultPaymentGroup[payment.kind]) }} ·
             {{ payment.currency || t("selling.currencyFromProfile") }}
           </p>
         </div>
-        <button
+        <Button variant="subtle" size="lg"
           type="button"
-          class="btn-soft"
           :disabled="store.isReadOnly"
           @click="edit(payment)"
         >
           {{ t("common.edit") }}
-        </button>
-      </li>
-    </ul>
+        </Button>
+      </ListRow>
+    </List>
     <div
       v-if="page > 1 || hasMore"
       class="flex flex-wrap items-center justify-between gap-2 border-t border-black/10 p-4"
     >
-      <button
+      <Button variant="subtle" size="lg"
         type="button"
-        class="btn-soft"
         :disabled="loading || page === 1"
         @click="load(page - 1)"
       >
         {{ t("pages.orders.previous") }}
-      </button>
+      </Button>
       <span class="text-sm text-black/60">{{
         t("pages.orders.page", { page })
       }}</span>
-      <button
+      <Button variant="subtle" size="lg"
         type="button"
-        class="btn-soft"
         :disabled="loading || !hasMore"
         @click="load(page + 1)"
       >
         {{ t("pages.orders.next") }}
-      </button>
+      </Button>
     </div>
   </section>
 
@@ -89,101 +81,77 @@
     >
       <label>
         <span class="label">{{ t("selling.name") }}</span>
-        <input
+        <TextInput size="lg" variant="outline"
           v-model.trim="draft.name"
           required
           maxlength="120"
-          class="input"
           :disabled="saving"
         />
       </label>
-      <label>
-        <span class="label">{{ t("selling.paymentKind") }}</span>
-        <input
-          v-if="draft.id"
-          :value="t(`selling.paymentKinds.${draft.kind}`)"
-          class="input"
-          readonly
-        />
-        <select v-else v-model="draft.kind" class="input" :disabled="saving">
-          <option v-for="kind in paymentKinds" :key="kind" :value="kind">
-            {{ t(`selling.paymentKinds.${kind}`) }}
-          </option>
-        </select>
-      </label>
-      <label>
-        <span class="label">{{ t("selling.paymentCurrency") }}</span>
-        <input
-          v-if="draft.id"
-          :value="draft.currency || t('selling.currencyFromProfile')"
-          class="input"
-          readonly
-        />
-        <select
-          v-else
-          v-model="draft.currency"
-          class="input"
-          required
-          :disabled="saving"
-        >
-          <option value="" disabled>{{ t("selling.chooseCurrency") }}</option>
-          <option
-            v-for="currency in currencies"
-            :key="currency"
-            :value="currency"
-          >
-            {{ currency }}
-          </option>
-        </select>
-      </label>
-      <p v-if="saveError" class="text-sm text-red-700" role="alert">
-        {{ saveError }}
-      </p>
+      <Select
+        v-model="draft.payment_type_group"
+        size="lg"
+        variant="outline"
+        :label="t('selling.paymentTypeGroup')"
+        required
+        :disabled="saving"
+        :options="paymentTypeGroups.map(group => ({ label: groupLabel(group), value: group }))"
+      />
+      <Select
+        size="lg"
+        variant="outline"
+        :label="t('selling.paymentCurrency')"
+        v-model="draft.currency"
+        :placeholder="t('selling.chooseCurrency')"
+        :required="!draft.id"
+        :disabled="saving"
+        :options="[...currencies]"
+      />
+      <Alert v-if="saveError" theme="red" :title="saveError" />
     </form>
     <template #footer>
       <div class="flex justify-end gap-2">
-        <button
+        <Button variant="subtle" size="lg"
           type="button"
-          class="btn-soft"
           :disabled="saving"
           @click="close"
         >
           {{ t("common.cancel") }}
-        </button>
-        <button
+        </Button>
+        <Button variant="solid" size="lg"
           type="submit"
-          class="btn-primary"
           form="pos-payment-type-form"
-          :disabled="saving || store.isReadOnly"
+          :disabled="saving || store.isReadOnly || (!draft?.id && !draft?.currency)"
         >
           {{ t(saving ? "common.saving" : "common.save") }}
-        </button>
+        </Button>
       </div>
     </template>
   </ModalPanel>
 </template>
 
 <script setup lang="ts">
+import { List, ListRow } from "frappe-ui/list";
+import { LoadingText, Alert, Button, Select, TextInput } from "frappe-ui";
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Plus } from "lucide-vue-next";
-import type { PaymentKind, PosCurrency } from "../../../../shared/posProfile";
+import { defaultPaymentGroup, paymentTypeGroups, type PaymentTypeGroup, type PosCurrency } from "../../../../shared/posProfile";
 import ModalPanel from "../components/ModalPanel.vue";
 import PageHeader from "../components/PageHeader.vue";
-import { useAdminStore } from "../stores/admin";
+import { ControlRequestError, useAdminStore } from "../stores/admin";
 import type { PosPaymentOption } from "../types/posProfile";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const store = useAdminStore();
 const endpoint = "/api/admin/pos/payment-types";
-const paymentKinds: PaymentKind[] = ["cash", "card", "qr", "other"];
 const currencies = ["USD", "KHR"] as const;
 const payments = ref<PosPaymentOption[]>([]);
 const page = ref(1);
 const hasMore = ref(false);
 const loading = ref(true);
 const error = ref("");
-const draft = ref<(Omit<PosPaymentOption, "currency"> & { currency: PosCurrency | "" }) | null>(null);
+const draft = ref<{ id: string; name: string; payment_type_group: PaymentTypeGroup; currency: PosCurrency | "" } | null>(null);
 const saving = ref(false);
 const saveError = ref("");
 
@@ -203,10 +171,19 @@ async function load(nextPage: number) {
   }
 }
 
+function groupLabel(group: PaymentTypeGroup) {
+  return t("selling.paymentTypeGroups." + group.toLowerCase().replaceAll(" ", "_"));
+}
+
 function edit(payment?: PosPaymentOption) {
   draft.value = payment
-    ? { ...payment, currency: payment.currency ?? "" }
-    : { id: "", name: "", kind: "cash", currency: "" };
+    ? {
+      id: payment.id,
+      name: payment.name,
+      payment_type_group: payment.payment_type_group ?? defaultPaymentGroup[payment.kind],
+      currency: payment.currency ?? "",
+    }
+    : { id: "", name: "", payment_type_group: "Cash", currency: "" };
   saveError.value = "";
 }
 
@@ -216,7 +193,7 @@ function close() {
 
 async function save() {
   if (saving.value || store.isReadOnly || !draft.value?.name) return;
-  const { id, name, kind, currency } = draft.value;
+  const { id, name, payment_type_group, currency } = draft.value;
   if (!id && !currency) return;
   saving.value = true;
   saveError.value = "";
@@ -225,14 +202,15 @@ async function save() {
       id ? `${endpoint}/${encodeURIComponent(id)}` : endpoint,
       {
         method: id ? "PATCH" : "POST",
-        body: JSON.stringify(id ? { name } : { name, kind, currency }),
+        body: JSON.stringify({ name, payment_type_group, ...(currency ? { currency } : {}) }),
       },
     );
     draft.value = null;
     await load(page.value);
   } catch (cause) {
-    saveError.value =
-      cause instanceof Error ? cause.message : t("selling.saveFailed");
+    saveError.value = cause instanceof ControlRequestError && cause.serverMessage && locale.value === "en"
+      ? cause.serverMessage
+      : cause instanceof Error ? cause.message : t("selling.saveFailed");
   } finally {
     saving.value = false;
   }
