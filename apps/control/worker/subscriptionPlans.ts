@@ -13,7 +13,7 @@ export const planOfferJoin = `
   )`;
 export const planOfferFields = `
   plan.id,plan.code,plan.name,plan.description,plan.features_json AS featuresJson,
-  plan.max_branches AS maxBranches,plan.max_menus AS maxMenus,
+  plan.max_users AS maxUsers,plan.max_branches AS maxBranches,plan.max_menus AS maxMenus,
   plan.max_products AS maxProducts,plan.max_daily_orders AS maxDailyOrders,
   plan.pos_enabled AS posEnabled,plan.max_pos_profiles AS maxPosProfiles,
   plan.max_daily_pos_sales AS maxDailyPosSales,
@@ -30,6 +30,7 @@ export const planFeatures = (value: string) => {
 
 export type PlanOfferRow = Omit<PlanOffer, "features" | "limits" | "pos"> & {
   featuresJson: string;
+  maxUsers: number | null;
   maxBranches: number | null;
   maxMenus: number | null;
   maxProducts: number | null;
@@ -41,13 +42,13 @@ export type PlanOfferRow = Omit<PlanOffer, "features" | "limits" | "pos"> & {
 
 export const serializePlan = <T extends PlanOfferRow>(
   {
-    featuresJson, maxBranches, maxMenus, maxProducts, maxDailyOrders,
+    featuresJson, maxUsers, maxBranches, maxMenus, maxProducts, maxDailyOrders,
     posEnabled, maxPosProfiles, maxDailyPosSales, ...row
   }: T,
 ) => ({
   ...row,
   features: planFeatures(featuresJson),
-  limits: { branches: maxBranches, menus: maxMenus, products: maxProducts, dailyOrders: maxDailyOrders },
+  limits: { users: maxUsers, branches: maxBranches, menus: maxMenus, products: maxProducts, dailyOrders: maxDailyOrders },
   pos: { enabled: Boolean(posEnabled), profiles: maxPosProfiles, dailySales: maxDailyPosSales },
 });
 
@@ -56,10 +57,15 @@ const isLimit = (input: unknown, minimum: number, maximum = Number.MAX_SAFE_INTE
 
 export function parsePlanLimits(value: unknown): PlanLimits | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const { branches, menus, products, dailyOrders } = value as Record<string, unknown>;
-  if (Object.keys(value).length !== 4 || !isLimit(branches, 1) || !isLimit(menus, 0) ||
+  const input = value as Record<string, unknown>;
+  const { branches, menus, products, dailyOrders } = input;
+  // Older clients send the original four limits. An omitted user limit is
+  // preserved on updates and defaults to unlimited for new plans.
+  const users = Object.hasOwn(input, "users") ? input.users : null;
+  if (Object.keys(input).some(key => !["users", "branches", "menus", "products", "dailyOrders"].includes(key)) ||
+    !isLimit(users, 1) || !isLimit(branches, 1) || !isLimit(menus, 0) ||
     !isLimit(products, 0) || !isLimit(dailyOrders, 0, MAX_DAILY_ORDERS)) return null;
-  return { branches, menus, products, dailyOrders };
+  return { users, branches, menus, products, dailyOrders };
 }
 
 export function parsePlanPos(value: unknown): PlanPos | null {
@@ -77,6 +83,7 @@ export const posPlanEnabled = (businessId: string) => `NOT EXISTS (
 )`;
 
 const limitErrors = {
+  PLAN_USER_LIMIT: { code: "PLAN_USER_LIMIT", error: "This business has reached its subscription plan’s user limit, including the owner. Remove a user or upgrade the plan to add another account." },
   PLAN_BRANCH_LIMIT: { code: "PLAN_BRANCH_LIMIT", error: "This business has reached its subscription plan’s branch limit." },
   PLAN_MENU_LIMIT: { code: "PLAN_MENU_LIMIT", error: "This business has reached its subscription plan’s menu limit." },
   PLAN_PRODUCT_LIMIT: { code: "PLAN_PRODUCT_LIMIT", error: "This business has reached its subscription plan’s product limit." },

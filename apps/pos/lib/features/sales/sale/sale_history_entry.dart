@@ -122,7 +122,7 @@ List<SaleHistoryEntry> buildSalesHistory(
         ),
         data: saved,
         bill: bill,
-        orderSyncStatus: saved['status'] == 'submitted'
+        orderSyncStatus: const ['submitted', 'bill_requested'].contains(saved['status'])
             ? local.orderSyncStatuses[bill.id] ?? 'synced'
             : null,
       ),
@@ -199,7 +199,7 @@ List<SaleHistoryEntry> buildSalesHistory(
         customer: saved['customer_name'] as String?,
         operatorName: bill.operatorName,
         data: saved,
-        orderSyncStatus: saved['status'] == 'submitted'
+        orderSyncStatus: const ['submitted', 'bill_requested'].contains(saved['status'])
             ? local.orderSyncStatuses[bill.billId] ?? 'synced'
             : null,
       ),
@@ -207,7 +207,7 @@ List<SaleHistoryEntry> buildSalesHistory(
   }
 
   for (final row in hosted.values) {
-    final open = const ['open', 'submitted'].contains(row['status']);
+    final open = const ['open', 'submitted', 'bill_requested'].contains(row['status']);
     if (open && local.knownServerDraftIds.contains(row['id'])) continue;
     final carryover =
         open &&
@@ -232,6 +232,8 @@ SaleHistoryEntry _serverEntry(Json row, bool carryover) {
         ? SaleHistoryStatus.voided
         : paid
         ? SaleHistoryStatus.closed
+        : row['status'] == 'bill_requested'
+        ? SaleHistoryStatus.billRequested
         : SaleHistoryStatus.submitted,
     activity: DateTime.parse(
       ((paid ? row['settled_at'] : row['updated_at']) ?? row['created_at'])

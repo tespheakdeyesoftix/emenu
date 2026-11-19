@@ -308,6 +308,7 @@ class StoreHost {
   Future<Json> _grant(String device, String profileId, Json actor) async {
     final grant = storeSecret();
     final id = actor['id'] as String;
+    await _db.saveOperatorPermissions(profileId, actor);
     await _db
         .into(_db.storeStaffGrants)
         .insertOnConflictUpdate(
@@ -380,6 +381,7 @@ class StoreHost {
         'id': actor.operatorId,
         'name': actor.displayName,
         'role': actor.role,
+        'permissions': await _db.operatorPermissions(profileId, actor.operatorId),
       },
     };
     final version =

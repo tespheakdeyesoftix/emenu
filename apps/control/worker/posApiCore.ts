@@ -1,3 +1,5 @@
+import { permissionSql } from "./posPermissions";
+import type { UserPermission } from "../../../shared/userPermissions";
 import { emptyPosReceiptDefaults } from "../../../shared/posReceipts";
 import type { Env } from "./index";
 import { planLimitError, posPlanEnabled } from "./subscriptionPlans";
@@ -29,6 +31,7 @@ export type PosIdentity = {
   business_name: string;
   user_id: string;
   display_name: string;
+  permissions?: string;
   role: string;
   profile_id: string | null;
   timezone: string;
@@ -59,6 +62,7 @@ export type PosContext = {
   config: ProfileConfig;
   now: string;
   localDate: string;
+  requiredPermissions?: Set<UserPermission>;
   localDateStart?: string | null;
   storeImport?: {
     epoch: string;
@@ -420,7 +424,7 @@ export type Guard = {
 export const idleProfile = `NOT EXISTS (
     SELECT 1 FROM cashier_shifts shift WHERE shift.profile_id=pos_profiles.id AND shift.closed_at IS NULL
   ) AND NOT EXISTS (
-    SELECT 1 FROM sales sale WHERE sale.profile_id=pos_profiles.id AND sale.status IN ('open','submitted')
+    SELECT 1 FROM sales sale WHERE sale.profile_id=pos_profiles.id AND sale.status IN ('open','submitted','bill_requested')
   )`;
 
 export function promoteProfile(context: PosContext) {
@@ -575,6 +579,7 @@ export class Command {
             WHERE authority.business_id=p.business_id AND authority.branch_id=p.branch_id
           )`
         }
+        AND ${[...(this.context.requiredPermissions ?? [])].map(key => permissionSql(key)).join(" AND ") || "1"}
         AND (m.role IN ('owner','manager') ${
           guard.manager
             ? ""

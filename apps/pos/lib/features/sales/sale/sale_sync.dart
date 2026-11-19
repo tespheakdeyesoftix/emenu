@@ -129,6 +129,10 @@ class SaleSync {
             body: {'reason': payload['reason'], 'revision': saved['revision']},
           );
         } else {
+          if (payload['cancel_print_bill'] == true) {
+            final saved = await api.request(ApiEndpoint.saleById(job.saleId), token: token);
+            payload['revision'] = saved['revision'];
+          }
           result = await api.request(
             ApiEndpoint.submitSaleFor(job.saleId),
             method: 'POST',
@@ -138,7 +142,7 @@ class SaleSync {
           );
         }
         if (result['id'] != job.saleId ||
-            result['status'] != (job.cancel ? 'cancelled' : 'submitted') ||
+            result['status'] != (job.cancel ? 'cancelled' : payload['request_bill'] == true ? 'bill_requested' : 'submitted') ||
             (!job.cancel && payload.containsKey('note') &&
                 result['note'] != payload['note'])) {
           throw const PosApiError(
@@ -311,7 +315,7 @@ class SaleSync {
               : null;
           if (result['id'] != event.resourceId ||
               (event.kind == 'submit_sale' &&
-                  result['status'] != 'submitted') ||
+                  result['status'] != (payload['request_bill'] == true ? 'bill_requested' : 'submitted')) ||
               (event.kind == 'cancel_sale' &&
                   result['status'] != 'cancelled') ||
               (isSale && payload.containsKey('note') &&
@@ -427,13 +431,15 @@ class SaleSync {
       );
     }
     final draft = job.serverDraft == null
-        ? await api.request(
-            submitted ? ApiEndpoint.submitSaleFor(sale.id) : ApiEndpoint.sales,
-            method: 'POST',
-            token: token,
-            commandId: '${sale.id}_draft',
-            body: jsonObject(request['draft']),
-          )
+        ? request['bill_requested'] == true
+          ? await api.request(ApiEndpoint.saleById(sale.id), token: token)
+          : await api.request(
+              submitted ? ApiEndpoint.submitSaleFor(sale.id) : ApiEndpoint.sales,
+              method: 'POST',
+              token: token,
+              commandId: '${sale.id}_draft',
+              body: jsonObject(request['draft']),
+            )
         : jsonObject(jsonDecode(job.serverDraft!));
     if (job.serverDraft == null) await database.saveServerDraft(sale.id, draft);
     final quoted = jsonRows(request['quote']);

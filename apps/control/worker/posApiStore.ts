@@ -74,7 +74,7 @@ function ownsAuthority(
 const branchIsIdle = `
   NOT EXISTS (SELECT 1 FROM working_days WHERE business_id=?1 AND branch_id=?2 AND closed_at IS NULL)
   AND NOT EXISTS (SELECT 1 FROM cashier_shifts WHERE business_id=?1 AND branch_id=?2 AND closed_at IS NULL)
-  AND NOT EXISTS (SELECT 1 FROM sales WHERE business_id=?1 AND branch_id=?2 AND status IN ('open','submitted'))`;
+  AND NOT EXISTS (SELECT 1 FROM sales WHERE business_id=?1 AND branch_id=?2 AND status IN ('open','submitted','bill_requested'))`;
 
 const ownerSession = `EXISTS (
   SELECT 1 FROM pos_sessions s
@@ -347,6 +347,7 @@ async function importOperation(
     "cash_movement",
     "checkout",
     "submit_sale",
+    "cancel_print_bill",
     "cancel_sale",
     "reversal",
   ] as const);
@@ -472,6 +473,8 @@ async function importOperation(
           command,
           await savedTenderTypes(imported, body.payment_types),
         );
+      case "cancel_print_bill":
+        return await saleAction(imported, command, resourceId, "cancel-print-bill");
       case "submit_sale":
         return await importStoreSale(imported, command, [], "submitted");
       case "cancel_sale":

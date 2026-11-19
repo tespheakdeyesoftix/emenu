@@ -402,7 +402,7 @@ test("POS subscription limits apply across branches and use the paid sale date",
     assert.deepEqual(await checkout(first, 200, checkoutKey), paid);
     assert.deepEqual(
       (await status(await request("/api/admin/workspace-access", admin), 200)).accessibleControlPages,
-      ["sellingOverview", "posProfiles", "posPaymentTypes", "posCustomers", "salesList"],
+      ["users", "sellingOverview", "posProfiles", "posPaymentTypes", "posCustomers", "salesList"],
     );
     const choices = await adminWrite("/profile-options", "GET", undefined, 200);
     assert.ok(choices.branches.some((branch) => branch.id === main));
@@ -435,7 +435,7 @@ test("POS subscription limits apply across branches and use the paid sale date",
     await prepare("UPDATE subscription_plans SET pos_enabled=0 WHERE id='pos-test'").run();
     assert.equal((await read(otherBranchToken, "/context", 403)).code, "PLAN_POS_DISABLED");
     assert.equal((await adminWrite("/profiles", "GET", undefined, 403)).code, "PLAN_POS_DISABLED");
-    assert.deepEqual((await status(await request("/api/admin/workspace-access", admin), 200)).accessibleControlPages, []);
+    assert.deepEqual((await status(await request("/api/admin/workspace-access", admin), 200)).accessibleControlPages, ["users"]);
     assert.equal((await adminWrite("/sales", "GET", undefined, 403)).code, "PLAN_POS_DISABLED");
     const loginResult = await status(await request(prefix + "/auth/login", null, "POST", {
       business_slug: "cafe", email: emailFor("owner"), password_proof: proofFor(emailFor("owner")),
@@ -2838,4 +2838,144 @@ test("POS profile staff can manage customers and safely retry directory writes",
   assert.deepEqual(await write(token, path, {}, 200, deleteKey, "DELETE"), { success: true });
   await read(token, path, 404);
   assert.equal((await read(token, `/sales/${sale.id}`)).customer_name, fields.name);
+});
+
+test("owners manage additional users and POS permissions take effect on existing sessions", async () => {
+  const keys = [
+    "allow_start_working_day","allow_close_working_day","allow_start_cashier_shift","allow_close_cashier_shift",
+    "allow_change_product_price","allow_free_item","allow_discount_on_item","allow_discount_on_bill",
+    "allow_process_payment","allow_cancel_print_bill",
+  ];
+  const permissions = Object.fromEntries(keys.map(key => [key,false]));
+  const profile = await newProfile("Permission test register", {
+    table_mode:"disabled", cashier_shift_enabled:false, working_day_enabled:false,
+  });
+  const user = {
+    name:"Managed staff",email:"managed-staff@example.test",role:"editor",username:"managed.staff",
+    permissions,profile_ids:[profile.id],passwordProof:proofFor(emailFor("managed-staff")),authVersion:version,
+  };
+  const manage = (path="", method="GET", body, code=200, token=admin) =>
+    request("/api/admin/users"+path,token,method,body).then(response=>status(response,code));
+  const created = await manage("","POST",user,201);
+  const records = await manage();
+  const saved = records.users.find(row=>row.id===created.id);
+  assert.deepEqual(saved.permissions,permissions);
+  assert.deepEqual(saved.profile_ids,[profile.id]);
+  assert.equal(saved.username,"managed.staff");
+  assert.equal(saved.password_hash,undefined);
+  const grant = await prepare("SELECT id FROM pos_device_credentials WHERE user_id=?",created.id).first();
+  assert.equal(grant,null);
+  await manage("","POST",user,409);
+  const session = await start(profile,await login("managed-staff"));
+  await manage("","GET",undefined,401,session);
+  const memberAdmin = (await status(await request("/api/auth/login",null,"POST",{
+    email:user.email,passwordProof:user.passwordProof,authVersion:version,
+  }),200)).token;
+  await manage("","GET",undefined,403,memberAdmin);
+  const access = await status(await request("/api/admin/workspace-access",memberAdmin),200);
+  assert.equal(access.accessibleControlPages.includes("users"),false);
+  const update = changes => manage("/"+created.id,"PATCH",{
+    name:user.name,role:"editor",username:user.username,profile_ids:[profile.id],permissions:{...permissions,...changes},
+  });
+  assert.deepEqual((await read(session,"/context")).operator.permissions,permissions);
+  for(const line of [
+    coffee(1,{base_price_override_minor:150}),
+    coffee(1,{is_free:true}),
+    coffee(1,{discount_minor:50}),
+  ]) {
+    const denied=await write(session,"/sales",{lines:[line]},403);
+    assert.equal(denied.code,"PERMISSION_DENIED");
+  }
+  const sale=await write(session,"/sales",{lines:[coffee()]});
+  const bill=await write(session,"/sales/"+sale.id+"/request-bill",{revision:sale.revision},200);
+  assert.equal(bill.status,"bill_requested");
+  assert.equal(bill.lines[0].status,"submitted");
+  await write(session,"/sales/"+sale.id,{revision:bill.revision,lines:[coffee(2)]},409,randomUUID(),"PATCH");
+  const unlockDenied=await write(session,"/sales/"+sale.id+"/cancel-print-bill",{revision:bill.revision},403);
+  assert.equal(unlockDenied.code,"PERMISSION_DENIED");
+  await update({allow_cancel_print_bill:true});
+  const unlocked=await write(session,"/sales/"+sale.id+"/cancel-print-bill",{revision:bill.revision},200);
+  assert.equal(unlocked.status,"submitted");
+  await write(session,"/sales/"+sale.id+"/checkout",{
+    revision:unlocked.revision,expected_total_minor:unlocked.total_minor,payments:[cashPayment(unlocked.total_minor)],
+  },403);
+  await update({allow_cancel_print_bill:true,allow_process_payment:true});
+  const paid=await write(session,"/sales/"+sale.id+"/checkout",{
+    revision:unlocked.revision,expected_total_minor:unlocked.total_minor,payments:[cashPayment(unlocked.total_minor)],
+  },200);
+  assert.equal(paid.status,"paid");
+
+  const next=await write(session,"/sales",{lines:[coffee()]});
+  const requested=await write(session,"/sales/"+next.id+"/request-bill",{revision:next.revision},200);
+  const settlement=await write(session,"/sales/"+next.id+"/checkout",{
+    revision:requested.revision,expected_total_minor:requested.total_minor,payments:[cashPayment(requested.total_minor)],
+  },200);
+  assert.equal(settlement.status,"paid");
+  await manage("/owner","PATCH",{...user,permissions},403);
+  await manage("/stranger","PATCH",{...user,permissions},404);
+  await manage("/"+created.id,"DELETE");
+  await read(session,"/context",401);
+});
+
+test("explicit working day and shift grants allow staff to operate without manager access",async()=>{
+  const profile=await newProfile("Delegated operations",{working_day_enabled:true,cashier_shift_enabled:true,table_mode:"disabled"});
+  const fields={
+    name:"Shift staff",email:"shift-staff@example.test",role:"editor",username:"",
+    profile_ids:[profile.id],
+    permissions:Object.fromEntries([
+      "allow_start_working_day","allow_close_working_day","allow_start_cashier_shift","allow_close_cashier_shift",
+      "allow_change_product_price","allow_free_item","allow_discount_on_item","allow_discount_on_bill",
+      "allow_process_payment","allow_cancel_print_bill",
+    ].map(key=>[key,false])),
+    passwordProof:proofFor(emailFor("shift-staff")),authVersion:version,
+  };
+  const created=await status(await request("/api/admin/users",admin,"POST",fields),201);
+  const token=await start(profile,await login("shift-staff"));
+  await write(token,"/working-days",{},403);
+  await status(await request("/api/admin/users/"+created.id,admin,"PATCH",{
+    ...fields, passwordProof:undefined,
+    permissions:{...fields.permissions,allow_start_working_day:true,allow_close_working_day:true,
+      allow_start_cashier_shift:true,allow_close_cashier_shift:true},
+  }),200);
+  const day=await write(token,"/working-days",{});
+  const shift=await write(token,"/cashier-shifts",{});
+  const preview=await reconciliation(token,shift);
+  await closeShift(token,shift,{...preview, counts:preview.counts.map(row=>({...row,expected_minor:0}))});
+  await write(token,"/working-days/"+day.id+"/close",{},200);
+});
+
+test("store imports lock requested bills, preserve their quote, and support Cancel Print Bill", async () => {
+  const branch="bill-lock-store";
+  await prepare("INSERT INTO branches(id,business_id,slug,name) VALUES (?,'cafe',?,'Bill lock store')",branch,branch).run();
+  const profile=await newProfile("Bill lock store",{table_mode:"disabled",working_day_enabled:false,cashier_shift_enabled:false},branch);
+  const token=await start(profile);
+  const key=generateKeyPairSync("ed25519").publicKey.export({format:"jwk"}).x;
+  await write(token,"/devices",{device_id:randomUUID(),device_name:"Bill lock store",public_key:Buffer.from(key,"base64url").toString("hex")});
+  const {epoch}=await write(token,"/store-authority",{});
+  const context=await read(token,"/context");
+  const id=randomUUID();
+  const payload={
+    currency:"USD",exchange_rate:"4000",tax_mode:"disabled",tax_rate_bps:0,
+    table_mode:"disabled",customer_id:"walkin_cafe",customer_name:"Walk-in",
+    expected_context:{business_date:context.local_date,working_day_id:null,shift_id:null},
+    lines:[{line_key:"locked-line",product_id:"coffee",product_name:"Coffee",price_list_id:"",
+      quantity:1,unit_price_minor:200,base_price_override_minor:200,
+      subtotal_minor:200,discount_minor:0,tax_minor:0,total_minor:200}],
+    total_minor:200,request_bill:true,payment_types:context.payment_types,
+    receipt:{business_name:"Cafe",template:{show_tax:false},copies:1},
+  };
+  const event=(sequence,kind,body=payload)=>({epoch,sequence,kind,resource_id:id,
+    occurred_at:new Date().toISOString(),
+    settings:{working_day_enabled:false,cashier_shift_enabled:false},payload:body});
+  const requested=await write(token,"/store-operations",event(1,"submit_sale"));
+  assert.equal(requested.status,"bill_requested");
+  const changed=await write(token,"/store-operations",event(2,"checkout",{...payload,note:"Changed after print",payments:[cashPayment(200)]}),409);
+  assert.equal(changed.code,"BILL_REQUESTED");
+  assert.equal((await read(token,"/store-authority")).authority.last_sequence,1);
+  const unlocked=await write(token,"/store-operations",event(2,"cancel_print_bill",{}),200);
+  assert.equal(unlocked.status,"submitted");
+  assert.equal((await write(token,"/store-operations",event(3,"submit_sale"))).status,"bill_requested");
+  const paid=await write(token,"/store-operations",event(4,"checkout",{...payload,payments:[cashPayment(200)]}));
+  assert.equal(paid.status,"paid");
+  assert.equal(paid.lines[0].base_price_override_minor,200);
 });

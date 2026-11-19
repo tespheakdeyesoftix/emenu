@@ -1445,6 +1445,87 @@ void main() {
     },
   );
 
+  test('per-user grants protect a requested bill and allow unchanged discounted payment', () async {
+    final database = RegisterDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    await prepare(database);
+    final authority = RegisterAuthority(database, now: () => overnight);
+    final permissions = {
+      'allow_start_working_day': false,
+      'allow_close_working_day': false,
+      'allow_start_cashier_shift': false,
+      'allow_close_cashier_shift': false,
+      'allow_change_product_price': false,
+      'allow_free_item': false,
+      'allow_discount_on_item': false,
+      'allow_discount_on_bill': false,
+      'allow_process_payment': true,
+      'allow_cancel_print_bill': false,
+    };
+    Future<void> grant() => database.saveOperatorPermissions(profileId, {
+      'id': 'cashier', 'permissions': permissions,
+    });
+    await grant();
+    final controller = RegisterController(database);
+    controller.installation.value = await database.installation();
+    controller.operator.value = await database.operatorById('cashier');
+    await controller.loadUserPermissions('cashier');
+    controller.snapshot.value = {
+      ...snapshot('morning'), 'context': {
+        ...jsonObject(snapshot('morning')['context']),
+        'operator': {'id': 'owner', 'permissions': {'allow_free_item': true}},
+      },
+    };
+    expect(controller.allowsAction('allow_free_item'), isFalse);
+    expect(controller.allowsAction('allow_process_payment'), isTrue);
+    await expectLater(authority.execute(commandId: 'denied_day', operatorId: 'cashier',
+      action: RegisterAction.openDay, body: {}), throwsA(errorCode('PERMISSION_DENIED')));
+    final line = CartLine(coffee).withLineEdits({'discount_minor': 10});
+    final quoted = line.quote(config);
+    final printed = {
+      ...order(), 'cart_line_edits_version': 1, 'table_status': 'bill_requested',
+      'submit_order': true, 'quote': [quoted], 'total_minor': quoted['total_minor'],
+    };
+    await authority.execute(commandId: 'printed', operatorId: 'owner',
+      action: RegisterAction.hold, body: printed);
+    final held = (await database.heldBill(profileId, 'printed'))!;
+    final saved = jsonObject(jsonDecode(held.payload));
+    expect(saved['status'], 'bill_requested');
+    final input = {
+      ...order(billId: held.id, revision: held.revision),
+      'cart_line_edits_version': 1,
+      'quote': CartLine.billLines(saved).map((line) => line.quote(config)).toList(),
+      'total_minor': saved['total_minor'],
+    };
+    await expectLater(authority.execute(commandId: 'edit_locked', operatorId: 'owner',
+      action: RegisterAction.hold, body: input), throwsA(errorCode('BILL_REQUESTED')));
+    await expectLater(authority.execute(commandId: 'unlock_denied', operatorId: 'cashier',
+      action: RegisterAction.hold, body: {'bill_id': held.id, 'bill_revision': held.revision,
+      'cancel_print_bill': true}), throwsA(errorCode('PERMISSION_DENIED')));
+    await expectLater(authority.execute(commandId: 'pay_changed', operatorId: 'cashier',
+      action: RegisterAction.checkout, body: {...input, 'note': 'changed', 'payments': [
+        {'payment_type_id': 'cash', 'currency': 'USD', 'amount_minor': saved['total_minor']},
+      ]}), throwsA(errorCode('BILL_REQUESTED')));
+    await authority.execute(commandId: 'pay_locked', operatorId: 'cashier',
+      action: RegisterAction.checkout, body: {...input, 'payments': [
+        {'payment_type_id': 'cash', 'currency': 'USD', 'amount_minor': saved['total_minor']},
+      ]});
+    expect(await database.heldBill(profileId, held.id), isNull);
+    expect((await database.nextJob())?.saleId, held.id);
+
+    await authority.execute(commandId: 'printed_again', operatorId: 'owner',
+      action: RegisterAction.hold, body: printed);
+    permissions['allow_cancel_print_bill'] = true;
+    await grant();
+    final next = (await database.heldBill(profileId, 'printed_again'))!;
+    await authority.execute(commandId: 'unlock_allowed', operatorId: 'cashier',
+      action: RegisterAction.hold, body: {'bill_id': next.id, 'bill_revision': next.revision,
+      'cancel_print_bill': true});
+    final unlocked = (await database.heldBill(profileId, next.id))!;
+    expect(jsonObject(jsonDecode(unlocked.payload))['status'], 'submitted');
+    expect(unlocked.revision, next.revision + 1);
+  });
+
   test('checkout after shift handoff keeps business date and replays after restart', () async {
     final directory = await Directory.systemTemp.createTemp('emenu-register-');
     final file = File('${directory.path}${Platform.pathSeparator}register.db');

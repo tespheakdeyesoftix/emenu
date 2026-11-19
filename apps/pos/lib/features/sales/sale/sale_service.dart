@@ -1,3 +1,4 @@
+import '../../../core/user_permissions.dart';
 import 'dart:convert';
 
 import 'package:get/get.dart';
@@ -76,6 +77,8 @@ class SaleService extends GetxService {
   Json get _quoted => _quoteContext.value ?? context;
   Json get quoteConfig => _quoteContext.value == null
       ? config
+      : billRequested
+      ? jsonObject(jsonObject(_quoted['profile'])['config'])
       : withCurrentTaxSettings(
           jsonObject(jsonObject(_quoted['profile'])['config']),
           config,
@@ -221,6 +224,17 @@ class SaleService extends GetxService {
     int copies,
   ) => database.recordReceiptPrint(sale.id, operatorId, copies);
 
+  bool get canPay =>
+      cart.isNotEmpty &&
+      !commandPending.value &&
+      !busy.value &&
+      !needsDiscountReview &&
+      !register.needsOperatingSetup &&
+      (tableMode != 'required' || tableId.value != null) &&
+      !storeAuthorityPending &&
+      (!paired.value || online.value) &&
+      allowsAction('allow_process_payment');
+
   bool get canSubmit =>
       (cart.isNotEmpty ||
           (_activeBill.value != null && voidedLines.isNotEmpty)) &&
@@ -250,7 +264,9 @@ class SaleService extends GetxService {
     _quoteContext.value = null;
   }
 
-  bool get cartEditable => !commandPending.value && !busy.value;
+  bool get billRequested => activeSaleStatus == "bill_requested";
+  bool allowsAction(String key) => allowsUserAction(context, operator.value?.role ?? "", key);
+  bool get cartEditable => !commandPending.value && !busy.value && !billRequested;
 
   bool get supportsCartLineEdits =>
       (context['capabilities'] as Map?)?['cart_line_edits'] == true &&
@@ -267,6 +283,12 @@ class SaleService extends GetxService {
       !paired.value || context['store_sale_notes'] == true;
 
   bool checkProductEdit(CartLine line, CartProductEdit edit) {
+    final permission = switch (edit) {
+      CartProductEdit.price => "allow_change_product_price",
+      CartProductEdit.free => "allow_free_item",
+      CartProductEdit.discount => "allow_discount_on_item",
+    };
+    if (!allowsAction(permission)) { message.value = "PERMISSION_DENIED"; return false; }
     final current = (catalog['products'] as List?)
         ?.whereType<Map>()
         .where((product) => product['id'] == line.product['id'])
@@ -619,6 +641,7 @@ class SaleService extends GetxService {
   }
 
   Future<void> checkout(List<Json> payments) => register.run(() async {
+    requireUserAction(context, operator.value!.role, "allow_process_payment");
     await flushCart();
     await register.sendCommand(RegisterAction.checkout, {
       ..._cartCommand(),

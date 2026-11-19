@@ -92,7 +92,7 @@ import ShiftAuditDialog from "../components/ShiftAuditDialog.vue";
 import { useAdminStore } from "../stores/admin";
 import { formatPosAmount, type SupportedCurrency } from "../utils/currency";
 
-const statuses = ["open", "submitted", "paid", "cancelled"] as const;
+const statuses = ["open", "submitted", "bill_requested", "paid", "cancelled"] as const;
 type SaleStatus = (typeof statuses)[number];
 type Sale = {
   id: string;

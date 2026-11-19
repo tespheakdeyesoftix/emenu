@@ -27,6 +27,8 @@ class PosTranslations extends Translations {
       'បញ្ចូលទទឹងពី 160 ដល់ 360។',
       'Enter a width from 160 to 360.',
     ),
+    'PERMISSION_DENIED': ('អ្នកមិនមានសិទ្ធិសម្រាប់សកម្មភាពនេះទេ។', 'You do not have permission for this action.'),
+    'cancel_print_bill': ('បោះបង់សំណើបោះពុម្ព', 'Cancel Print Bill'),
     'sale_print_bill': ('បោះពុម្ពវិក្កយបត្រ', 'Print Bill'),
     'sale_submit_new': ('បញ្ជូន និងថ្មី', 'Submit & New'),
     'sale_quick_pay': ('ទូទាត់រហ័ស', 'Quick Pay'),
@@ -559,8 +561,13 @@ class PosTranslations extends Translations {
     'shift_enter_count': ('បញ្ចូលចំនួនដែលបានរាប់', 'Enter closing counts'),
     'shift_review_count': ('ពិនិត្យចំនួនដែលបានរាប់', 'Review closing counts'),
     'shift_opening_instructions': (
-      'បញ្ចូលសាច់ប្រាក់ដើមសម្រាប់រូបិយប័ណ្ណនីមួយៗ។ បញ្ចូល 0 ប្រសិនបើគ្មានសាច់ប្រាក់។',
-      'Enter the opening amount for each currency. Enter 0 when there is no cash.',
+      'បញ្ចូលប្រាក់ដើមវេនតាមវិធីទូទាត់។ ទុកចន្លោះទទេបើគ្មានប្រាក់ដើម។',
+      'Enter the opening float by payment method. Leave an amount blank for zero.',
+    ),
+    'shift_opening_total': ('ប្រាក់ដើមវេនសរុប', 'Total opening float'),
+    'shift_confirm_open_day': (
+      'តើអ្នកចង់បើកថ្ងៃធ្វើការឥឡូវនេះទេ?',
+      'Open the working day now?',
     ),
     'shift_count_instructions': (
       'រាប់សាច់ប្រាក់ និងផ្ទៀងផ្ទាត់ការទូទាត់តាមវិធីនីមួយៗ។',

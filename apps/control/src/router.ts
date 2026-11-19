@@ -16,6 +16,7 @@ import { telegramOrderQuery } from "./utils/telegramOrderLink";
 const pages = {
   overview: OverviewView,
   business: BusinessView,
+  users: () => import("./views/UsersView.vue"),
   appearance: AppearanceView,
   catalog: CatalogView,
   menus: () => import("./views/MenusView.vue"),
@@ -69,6 +70,7 @@ router.beforeEach(async (to) => {
       return { name: accessible[0], replace: true };
   } catch {
     if (!localStorage.getItem("mf_token")) return { path: "/login", query: orderAlert };
+    return { name: "workspace-unavailable", query: { reason: "connection", retry: to.fullPath }, replace: true };
   }
   return { name: "workspace-unavailable", replace: true };
 });

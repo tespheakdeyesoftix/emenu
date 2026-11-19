@@ -803,6 +803,9 @@ class _ShiftReportDialogState extends State<ShiftReportDialog> {
                                   Text(
                                     '${'shift_${event}_by'.tr} ${shiftPerson(data, '${event}_by')} · ${shiftTimestamp(context, data['${event}_at'], business['timezone'] as String, businessDate: data['business_date'] as String?)}',
                                   ),
+                                if (data['note'] case final String note
+                                    when note.isNotEmpty)
+                                  Text('${'cart_note'.tr}  $note'),
                                 const Divider(),
                                 if (totals != null) ...[
                                   Text(

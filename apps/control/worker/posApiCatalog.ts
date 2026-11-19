@@ -1,3 +1,4 @@
+import { requireLinePermissions } from "./posPermissions";
 import type { PosTaxRule } from "../../../shared/posProfile";
 import type { Env } from "./index";
 import {
@@ -438,9 +439,11 @@ export async function saleLines(
   taxMode: string,
   taxRate: number,
   taxRule: PosTaxRule | null,
+  saved: Record<string, unknown>[] = [],
 ) {
   const inputs = list(value, "lines", 60).map((entry) => {
     const line = object(entry);
+    requireLinePermissions(context, line, saved.find(old => line.line_key != null && old.line_key === line.line_key));
     const modifiers = list(line.modifier_ids ?? [], "modifier_ids", 120).map(
       (id) => recordId(id, "modifier ID"),
     );

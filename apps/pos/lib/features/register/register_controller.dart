@@ -1,3 +1,4 @@
+import '../../core/user_permissions.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -137,8 +138,23 @@ class RegisterController extends GetxController implements SalesRegister {
   Completer<void>? _refreshFinished;
   int _operatingRevision = 0;
 
+  final _userPermissions = <String, Json>{};
+
+  Future<void> loadUserPermissions(String id) async {
+    _userPermissions[id] = await database.operatorPermissions(installation.value!.profileId, id);
+  }
+
   @override
-  Json get context => jsonObject(snapshot.value!['context']);
+  Json get context {
+    final data = jsonObject(snapshot.value!['context']);
+    final actor = jsonObject(data['operator'] ?? const {});
+    final current = operator.value;
+    if (current == null || actor['id'] == current.id) return data;
+    return {...data, 'operator': {
+      'id': current.id, 'name': current.displayName, 'role': current.role,
+      'permissions': _userPermissions[current.id] ?? const <String,dynamic>{},
+    }};
+  }
   @override
   Json get operatingContext =>
       registerOperatingContext(context, DateTime.now());
@@ -162,6 +178,8 @@ class RegisterController extends GetxController implements SalesRegister {
   @override
   List<Json> get customers => jsonRows(snapshot.value!['customers']);
   List<Json> get paymentTypes => jsonRows(context['payment_types']);
+  bool allowsAction(String permission) => allowsUserAction(context, operator.value?.role ?? "", permission);
+
   bool get canManageStaffUsernames =>
       (operator.value?.role == 'owner' || operator.value?.role == 'manager') &&
       (context['capabilities'] as Map?)?['staff_usernames'] == true;
@@ -328,12 +346,25 @@ class RegisterController extends GetxController implements SalesRegister {
         : destination;
   }
 
+  bool get needsWorkingDay =>
+      config['working_day_enabled'] == true && context['working_day'] == null;
+
+  bool get needsCashierShift =>
+      config['cashier_shift_enabled'] == true && context['cashier_shift'] == null;
+
   @override
-  bool get needsOperatingSetup =>
-      (config['working_day_enabled'] == true &&
-          context['working_day'] == null) ||
-      (config['cashier_shift_enabled'] == true &&
-          context['cashier_shift'] == null);
+  bool get needsOperatingSetup => needsWorkingDay || needsCashierShift;
+
+  bool get operatingCommandsAvailable =>
+      (storeOperations
+          ? !paired.value || online.value
+          : !paired.value && online.value) &&
+      !busy.value &&
+      !commandPending.value &&
+      !storeAuthorityPending;
+
+  bool get canOpenOperatingSession =>
+      operatingCommandsAvailable && context['read_only'] != true;
 
   Future<void> refreshPinStaff() async {
     final eligible = <RegisterOperator>[];

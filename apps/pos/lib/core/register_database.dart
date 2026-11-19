@@ -523,7 +523,32 @@ class RegisterDatabase extends _$RegisterDatabase {
     return _effectiveProfile(row.profileId, snapshot);
   }
 
+  Future<void> saveOperatorPermissions(String profileId, Json actor) async {
+    await _ensureOperatorPermissions();
+    if (actor['id'] is! String) return;
+    await customStatement(
+      'INSERT INTO operator_permissions(profile_id,user_id,permissions_json) VALUES(?,?,?) '
+      'ON CONFLICT(profile_id,user_id) DO UPDATE SET permissions_json=excluded.permissions_json',
+      [profileId, actor['id'], jsonEncode(actor['permissions'] ?? {})],
+    );
+  }
+
+  Future<Json> operatorPermissions(String profileId, String id) async {
+    await _ensureOperatorPermissions();
+    final row = await customSelect(
+      'SELECT permissions_json FROM operator_permissions WHERE profile_id=? AND user_id=?',
+      variables: [Variable.withString(profileId), Variable.withString(id)],
+    ).getSingleOrNull();
+    return row == null ? {} : jsonObject(jsonDecode(row.read<String>('permissions_json')));
+  }
+
+  Future<void> _ensureOperatorPermissions() => customStatement(
+    'CREATE TABLE IF NOT EXISTS operator_permissions (profile_id TEXT NOT NULL, user_id TEXT NOT NULL, '
+    'permissions_json TEXT NOT NULL, PRIMARY KEY(profile_id,user_id))',
+  );
+
   Future<Json> saveSnapshot(String profileId, Json snapshot) async {
+    await saveOperatorPermissions(profileId, jsonObject(jsonObject(snapshot["context"])["operator"] ?? const {}));
     await into(profileSnapshots).insertOnConflictUpdate(
       ProfileSnapshotsCompanion.insert(
         profileId: profileId,

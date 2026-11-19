@@ -335,6 +335,7 @@ type GroupId = (typeof groups)[number]["id"];
 
 const pageNavigation = {
   overview: { group: null, icon: LayoutDashboard },
+  users: { group: "business", icon: Users },
   business: { group: "business", icon: Store },
   appearance: { group: "design", icon: Palette },
   catalog: { group: "menu", icon: Package },

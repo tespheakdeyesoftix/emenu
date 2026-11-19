@@ -1,3 +1,4 @@
+import { userPermissions } from "../../../shared/userPermissions";
 import type { Env } from "./index";
 import { getCatalog } from "./posApiCatalog";
 import { readRegisterCustomerPhoto, registerCustomerDirectory } from "./posApiCustomers";
@@ -170,7 +171,7 @@ async function authenticate(request: Request, db: D1Database) {
   if (!token) unauthenticated();
   const identity = await sql(
     db,
-    `SELECT s.business_id,b.name AS business_name,s.user_id,u.display_name,m.role,s.profile_id,
+    `SELECT s.business_id,b.name AS business_name,s.user_id,u.display_name,u.permissions,m.role,s.profile_id,
     b.timezone,b.currency,b.secondary_exchange_rate,b.menu_cache_version AS catalog_version,b.pricing_mode,
     b.default_price_list_id,s.credential_version,s.token_hash,sub.status AS subscriptionStatus,
     sub.current_period_end_at AS currentPeriodEndAt,
@@ -271,8 +272,8 @@ async function tables(context: PosContext, url: URL) {
     `WITH table_sales AS (
       SELECT table_id,MIN(id) AS open_sale_id,
         json_group_array(json_object('id',id,'guest_cover',guest_cover,'total_minor',total_minor))
-          FILTER (WHERE status='submitted') AS submitted_sales
-      FROM sales WHERE business_id=?2 AND profile_id=?1 AND table_id IS NOT NULL AND status IN ('open','submitted')
+          FILTER (WHERE status IN ('submitted','bill_requested')) AS submitted_sales
+      FROM sales WHERE business_id=?2 AND profile_id=?1 AND table_id IS NOT NULL AND status IN ('open','submitted','bill_requested')
       GROUP BY table_id
     )
     SELECT t.id,t.code,t.label,t.group_id,g.name AS group_name,
@@ -505,6 +506,7 @@ export async function handlePosApi(
           id: identity.user_id,
           name: identity.display_name,
           role: identity.role,
+          permissions: userPermissions(identity.permissions, identity.role),
         },
         business: {
           id: identity.business_id,
@@ -519,6 +521,8 @@ export async function handlePosApi(
         read_only: readOnly,
         store_authority_required: authority !== null,
         capabilities: {
+          user_permissions: true,
+          bill_request_lock: true,
           sale_context_guard: true,
           device_sessions: true,
           store_operations: true,
@@ -577,7 +581,7 @@ export async function handlePosApi(
     if (!match) missing("Endpoint");
     const [, resource, id, action] = match;
     if (resource === "sales") {
-      if (action && !["checkout", "cancel", "reverse", "submit"].includes(action))
+      if (action && !["checkout", "cancel", "reverse", "submit", "request-bill", "cancel-print-bill"].includes(action))
         missing("Endpoint");
       if (request.method === "GET" && !action) {
         if (!id && url.searchParams.get("history") === "active" &&
@@ -645,7 +649,7 @@ export async function handlePosApi(
           const blocked = await sql(db, `SELECT 1 FROM working_days d
             WHERE d.business_id=? AND d.branch_id=? AND d.id=? AND d.closed_at IS NULL
               AND (EXISTS(SELECT 1 FROM cashier_shifts WHERE working_day_id=d.id AND closed_at IS NULL)
-                OR EXISTS(SELECT 1 FROM sales WHERE working_day_id=d.id AND status IN ('open','submitted')))`,
+                OR EXISTS(SELECT 1 FROM sales WHERE working_day_id=d.id AND status IN ('open','submitted','bill_requested')))`,
             identity.business_id, profile.branch_id, id).first();
           if (blocked) conflict("Close the working day's shifts and bills", "WORKING_DAY_HAS_ACTIVITY");
         }

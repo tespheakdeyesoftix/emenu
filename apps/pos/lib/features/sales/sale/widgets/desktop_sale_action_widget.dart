@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../sale_controller.dart';
+import '../sale_service.dart';
 
 class DesktopSaleActionWidget extends GetView<SaleController> {
   const DesktopSaleActionWidget({super.key});
@@ -40,11 +41,15 @@ class DesktopSaleActionWidget extends GetView<SaleController> {
                     spacing: 4,
                     children: [
                       Expanded(
-                        child: _DockActionButton(
+                        child: Obx(() => _DockActionButton(
                           showLabel: showLabels,
-                          label: 'sale_print_bill'.tr,
+                          label: (controller.service.billRequested ? 'cancel_print_bill' : 'sale_print_bill').tr,
                           icon: Icons.print_outlined,
-                        ),
+                          onPressed: controller.service.billRequested
+                            ? (controller.service.allowsAction('allow_cancel_print_bill')
+                              ? () => controller.service.cancelPrintBill() : null)
+                            : (controller.service.canSubmit ? () => controller.service.printBill() : null),
+                        )),
                       ),
                       Expanded(
                         child: _DockActionButton(

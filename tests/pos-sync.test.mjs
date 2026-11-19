@@ -638,7 +638,7 @@ test("subscription plans publish current prices, provision selected access, and 
     name: "Starter", description: "QR basics", features: ["overview", "qrDesigns"],
     displayOrder: 0, isPublic: false, isActive: true, amountMinor: 0, billingInterval: "month",
   };
-  const limits = { branches: 1, menus: 2, products: 10, dailyOrders: 20 };
+  const limits = { users: null, branches: 1, menus: 2, products: 10, dailyOrders: 20 };
   await expectStatus(await plans("POST", "", { ...fields, limits: { ...limits, branches: 0 } }), 400);
   const { id } = await expectStatus(await plans("POST", "", fields), 201);
   const hidden = (await expectStatus(await plans(), 200)).plans.find(plan => plan.id === id);
@@ -657,7 +657,7 @@ test("subscription plans publish current prices, provision selected access, and 
   assert.equal(freeBefore.subscription_plan_id, id);
   assert.equal(freeBefore.status, "active");
   assert.equal(freeBefore.current_period_end_at, null);
-  assert.deepEqual(await access(registeredFree.token), ["overview", "qrDesigns"]);
+  assert.deepEqual(await access(registeredFree.token), ["overview", "users", "qrDesigns"]);
   await expectStatus(await request("/api/admin/tables", undefined, registeredFree.token, "GET"), 200);
   await expectStatus(await request("/api/admin/tables", {}, registeredFree.token), 403);
   await expectStatus(await request("/api/admin/orders", undefined, registeredFree.token, "GET"), 403);
@@ -670,7 +670,7 @@ test("subscription plans publish current prices, provision selected access, and 
   assert.notEqual(paid.priceId, free.priceId);
   assert.deepEqual(paid.limits, limits);
   assert.deepEqual(await assignment(registeredFree.business.id), freeBefore);
-  assert.deepEqual(await access(registeredFree.token), ["overview", "orders"]);
+  assert.deepEqual(await access(registeredFree.token), ["overview", "users", "orders"]);
   assert.equal((await expectStatus(await register("stale-plan", free), 409)).code, "PLAN_UNAVAILABLE");
   assert.equal(await db.prepare("SELECT id FROM businesses WHERE slug='stale-plan'").first(), null);
 
@@ -690,7 +690,7 @@ test("subscription plans publish current prices, provision selected access, and 
 
   await expectStatus(await superRequest(registeredPaid.business.id, { disabledControlPages: ["orders"] },
     "PUT", "super@example.test", "control-pages"), 200);
-  assert.deepEqual(await access(registeredPaid.token), ["overview"]);
+  assert.deepEqual(await access(registeredPaid.token), ["overview", "users"]);
   await expectStatus(await superRequest(registeredPaid.business.id, { planId: standard.id, priceId: standard.priceId },
     "PUT", "super@example.test", "subscription-plan"), 200);
   const paidAfter = await assignment(registeredPaid.business.id);
@@ -704,7 +704,7 @@ test("subscription plans publish current prices, provision selected access, and 
   assert.deepEqual(await expectStatus(await plans("DELETE", `/${id}`), 200), { archived: true });
   assert.equal((await listPublic()).some(plan => plan.id === id), false);
   assert.deepEqual(await assignment(registeredFree.business.id), freeBefore);
-  assert.deepEqual(await access(registeredFree.token), ["overview", "orders"]);
+  assert.deepEqual(await access(registeredFree.token), ["overview", "users", "orders"]);
   const unused = await expectStatus(await plans("POST", "", { ...fields, name: "Unused" }), 201);
   assert.deepEqual(await expectStatus(await plans("DELETE", `/${unused.id}`), 200), { archived: false });
   assert.equal((await expectStatus(await plans(), 200)).plans.some(plan => plan.id === unused.id), false);
@@ -712,6 +712,92 @@ test("subscription plans publish current prices, provision selected access, and 
   assert.deepEqual(audit.results.map(row => row.action), [
     "subscription.plan_assigned", "subscription.plan_created", "subscription.plan_removed", "subscription.plan_updated",
   ]);
+});
+
+test("subscription user limits cover owner and staff creation, races, tenant isolation and existing accounts", async () => {
+  const worker = await mf.getWorker("super");
+  const plans = (method = "GET", suffix = "", body) => worker.fetch("http://localhost/api/super/subscription-plans" + suffix, {
+    method, headers: { "content-type": "application/json", "x-test-identity": "super@example.test" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const list = async () => (await expectStatus(await plans(),200)).plans;
+  const [standard] = await list();
+  assert.equal(standard.limits.users,null);
+  const before = await db.prepare("SELECT business_id,status,trial_ends_at,current_period_end_at FROM business_subscriptions ORDER BY business_id").all();
+  const fields = { name: "User cap test",description: "Business user capacity",features: standard.features,
+    displayOrder: 9999,isPublic: true,isActive: true,amountMinor: 0,billingInterval: "month" };
+  const limits = { users: 3,branches: null,menus: null,products: null,dailyOrders: null };
+  for (const users of [0,-1,1.5,"3"]) await expectStatus(await plans("POST","",{ ...fields,limits: { ...limits,users } }),400);
+  await expectStatus(await plans("POST","",{ ...fields,limits: { ...limits,unexpected: 1 } }),400);
+  const { id } = await expectStatus(await plans("POST","",{ ...fields,limits }),201);
+  const offer = (await list()).find(plan => plan.id === id);
+  assert.equal(offer.limits.users,3);
+  const published = await expectStatus(await request("/api/public/subscription-plans",undefined,null,"GET"),200);
+  assert.equal(published.plans.find(plan => plan.id === id).limits.users,3);
+  for (const business of ["biz_a","biz_b"]) await expectStatus(await superRequest(business,
+    { planId: id,priceId: offer.priceId },"PUT","super@example.test","subscription-plan"),200);
+  assert.deepEqual((await db.prepare("SELECT business_id,status,trial_ends_at,current_period_end_at FROM business_subscriptions ORDER BY business_id").all()).results,before.results);
+  const count = business => db.prepare("SELECT count(*) AS n FROM memberships WHERE business_id=?").bind(business).first("n");
+  const proof = { passwordProof: "b".repeat(64),authVersion: "client-pbkdf2-sha256-v1" };
+  const permissions = Object.fromEntries([
+    "allow_start_working_day","allow_close_working_day","allow_start_cashier_shift","allow_close_cashier_shift",
+    "allow_change_product_price","allow_free_item","allow_discount_on_item","allow_discount_on_bill","allow_process_payment","allow_cancel_print_bill",
+  ].map(key => [key,false]));
+  const body = email => ({ name: "Plan user",email,role: "editor",profile_ids: [],permissions,...proof });
+  const create = (token,email) => request("/api/admin/users",body(email),token);
+  const superCreate = (business,email) => superRequest(business,{ email,displayName: "Super user",...proof },"POST","super@example.test","members");
+  const third = await expectStatus(await superCreate("biz_a","cap-third@example.test"),201);
+  assert.equal(await count("biz_a"),3);
+  assert.equal((await expectStatus(await create("owner-a","cap-blocked-control@example.test"),409)).code,"PLAN_USER_LIMIT");
+  assert.equal((await expectStatus(await superCreate("biz_a","cap-blocked-super@example.test"),409)).code,"PLAN_USER_LIMIT");
+  assert.equal(await db.prepare("SELECT count(*) AS n FROM users WHERE email IN ('cap-blocked-control@example.test','cap-blocked-super@example.test')").first("n"),0);
+  assert.equal(await db.prepare("SELECT count(*) AS n FROM super_admin_audit_log WHERE action='business.member_created' AND business_id='biz_a'").first("n"),1);
+  await expectStatus(await request("/api/admin/users/" + third.id,{ ...body(third.email),name: "Renamed at capacity" },"owner-a","PATCH"),200);
+  assert.equal(await count("biz_a"),3);
+
+  const contenders = ["cap-b1@example.test","cap-b2@example.test","cap-b3@example.test"];
+  const results = await Promise.all(contenders.map(async email => {
+    const response = await create("owner-b",email);
+    return { email,status: response.status,data: await response.json() };
+  }));
+  assert.deepEqual(results.map(result => result.status).sort(),[201,201,409]);
+  assert.equal(results.find(result => result.status === 409).data.code,"PLAN_USER_LIMIT");
+  assert.equal(await db.prepare("SELECT id FROM users WHERE email=?").bind(results.find(result => result.status === 409).email).first(),null);
+  assert.equal(await count("biz_a"),3);
+  assert.equal(await count("biz_b"),3);
+  const other = results.find(result => result.status === 201).data.id;
+  await assert.rejects(db.prepare("INSERT INTO memberships(user_id,business_id,role) VALUES (?,'biz_a','editor')").bind(other).run(),/PLAN_USER_LIMIT/);
+  await assert.rejects(db.prepare("UPDATE memberships SET business_id='biz_a' WHERE business_id='biz_b' AND user_id=?").bind(other).run(),/PLAN_USER_LIMIT/);
+  assert.equal(await count("biz_b"),3);
+
+  // An old frontend must not clear a quota it does not know about.
+  const { users: omitted,...legacyLimits } = limits;
+  await expectStatus(await plans("PUT","/" + id,{ ...fields,limits: legacyLimits }),200);
+  assert.equal((await list()).find(plan => plan.id === id).limits.users,3);
+  const legacy = await expectStatus(await plans("POST","",{ ...fields,isPublic: false,name: "Legacy limits",limits: legacyLimits }),201);
+  assert.equal((await list()).find(plan => plan.id === legacy.id).limits.users,null);
+  await expectStatus(await plans("DELETE","/" + legacy.id),200);
+  await expectStatus(await plans("PUT","/" + id,{ ...fields,limits: { ...limits,users: 2 } }),200);
+  assert.equal((await expectStatus(await request("/api/admin/users",undefined,"owner-a","GET"),200)).users.length,3);
+  await expectStatus(await request("/api/admin/workspace-access",undefined,"editor-a","GET"),200);
+  await expectStatus(await request("/api/admin/users/" + third.id,undefined,"owner-a","DELETE"),200);
+  assert.equal((await expectStatus(await create("owner-a","cap-still-full@example.test"),409)).code,"PLAN_USER_LIMIT");
+  await expectStatus(await request("/api/admin/users/user_editor",undefined,"owner-a","DELETE"),200);
+  await expectStatus(await create("owner-a","cap-freed-slot@example.test"),201);
+  assert.equal(await count("biz_a"),2);
+
+  await expectStatus(await plans("PUT","/" + id,{ ...fields,limits: { ...limits,users: 1 } }),200);
+  const signup = await expectStatus(await request("/api/auth/register",{
+    email: "single-user-plan@example.test",businessName: "Single user",slug: "single-user-plan",
+    ...proof,planId: id,priceId: offer.priceId,
+  },null),201);
+  assert.equal(await count(signup.business.id),1);
+  assert.equal((await expectStatus(await create(signup.token,"single-user-extra@example.test"),409)).code,"PLAN_USER_LIMIT");
+  assert.equal((await expectStatus(await superCreate(signup.business.id,"single-user-super@example.test"),409)).code,"PLAN_USER_LIMIT");
+  await expectStatus(await plans("PUT","/" + id,{ ...fields,isPublic: false,limits: { ...limits,users: null } }),200);
+  await expectStatus(await create("owner-a","cap-unlimited@example.test"),201);
+  await expectStatus(await create(signup.token,"single-user-extra@example.test"),201);
+  assert.equal((await list()).find(plan => plan.id === id).limits.users,null);
 });
 
 test("plan limits count saved branches, menus and products and allow POS updates at capacity", async () => {

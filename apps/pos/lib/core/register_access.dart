@@ -127,6 +127,7 @@ class RegisterAccess {
                 accessRevoked: const Value(false),
               ),
             );
+        await database.saveOperatorPermissions(profile['id'] as String, operator);
         if (updateSnapshot) {
           await database.saveSnapshot(profile['id'] as String, snapshot);
         }

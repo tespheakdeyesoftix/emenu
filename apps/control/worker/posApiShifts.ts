@@ -1,3 +1,4 @@
+import { requirePosPermission } from "./posPermissions";
 import {
   allowsCashFloat,
   choice,
@@ -11,6 +12,7 @@ import {
   missing,
   newId,
   object,
+  optionalText,
   pageOf,
   paymentTypes,
   promoteProfile,
@@ -29,7 +31,7 @@ import { daySummary, registerManager, shiftNameColumns, shiftSummary } from "./p
 const dayColumns =
   "id branch_id business_date timezone opened_at opened_by closed_at closed_by base_currency";
 const shiftColumns =
-  "id branch_id profile_id working_day_id opened_at opened_by closed_at closed_by activity_revision base_currency exchange_rate";
+  "id branch_id profile_id working_day_id opened_at opened_by closed_at closed_by activity_revision base_currency exchange_rate note";
 const dayJson = jsonRow("d", dayColumns);
 const shiftJson = jsonRow("s", shiftColumns);
 type WorkingDay = {
@@ -208,7 +210,7 @@ export async function readOperations(
         }
       }
       const data = await pageOf(db, url, table,
-        `SELECT s.id,s.profile_id,s.working_day_id,s.opened_at,s.opened_by,s.closed_at,s.closed_by,
+        `SELECT s.id,s.profile_id,s.working_day_id,s.opened_at,s.opened_by,s.closed_at,s.closed_by,s.note,
           ${businessDate} AS business_date,p.name AS profile_name,${shiftNameColumns("s")}
         FROM cashier_shifts s JOIN pos_profiles p ON s.profile_id=p.id
         LEFT JOIN working_days d ON s.working_day_id=d.id
@@ -314,7 +316,7 @@ export async function writeDay(
 ) {
   const { db, identity, profile, now } = context;
   const { business_id: businessId, user_id: actor } = identity;
-  requireManager(identity.role);
+  requirePosPermission(context, id ? "allow_close_working_day" : "allow_start_working_day");
   if (!id) {
     if (!context.config.working_day_enabled)
       conflict("Working days are disabled on this profile", "FEATURE_DISABLED");
@@ -326,7 +328,7 @@ export async function writeDay(
     const day = context.storeImport?.resourceId ?? newId("posd");
     return command.commit(
       201,
-      { query: "1", params: [], manager: true },
+      { query: "1", params: [] },
       [
         sql(
           db,
@@ -349,7 +351,7 @@ export async function writeDay(
   if (!day) missing("Working day");
   if (day.closed_at) conflict("This working day is already closed");
   const canClose = `NOT EXISTS (SELECT 1 FROM cashier_shifts WHERE working_day_id=? AND closed_at IS NULL)
-    AND NOT EXISTS (SELECT 1 FROM sales WHERE working_day_id=? AND status IN ('open','submitted'))`;
+    AND NOT EXISTS (SELECT 1 FROM sales WHERE working_day_id=? AND status IN ('open','submitted','bill_requested'))`;
   const allowed = await sql(
     db,
     "SELECT " + canClose + " AS allowed",
@@ -366,7 +368,6 @@ export async function writeDay(
     {
       query: `EXISTS (SELECT 1 FROM working_days WHERE id=? AND closed_at IS NULL) AND ${canClose}`,
       params: [id, id, id],
-      manager: true,
       allowReadOnly: true,
     },
     [
@@ -495,6 +496,8 @@ export async function writeShift(
   id?: string,
   action?: string,
 ) {
+  if (!id) requirePosPermission(context,"allow_start_cashier_shift");
+  if (action === "close") requirePosPermission(context,"allow_close_cashier_shift");
   const { db, identity, profile, config, now } = context;
   const actor = identity.user_id;
   if (!id) {
@@ -526,13 +529,18 @@ export async function writeShift(
     const keys = new Set(opening.map(countKey));
     if (keys.size !== opening.length)
       invalid("Provide one opening balance per payment type and currency");
+    const rawNote = command.body.note;
+    const note = optionalText(
+      typeof rawNote === "string" ? rawNote.trim() : rawNote,
+      "shift note",
+    );
     const shift = context.storeImport?.resourceId ?? newId("poss");
     const writes = [
       sql(
         db,
         `INSERT INTO cashier_shifts
-      (id,business_id,branch_id,profile_id,working_day_id,opened_at,opened_by,payment_types_json,base_currency,exchange_rate,business_date,opening_sequence)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,(
+      (id,business_id,branch_id,profile_id,working_day_id,opened_at,opened_by,payment_types_json,base_currency,exchange_rate,business_date,note,opening_sequence)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,(
         SELECT coalesce(max(opening_sequence),0)+1 FROM cashier_shifts WHERE business_id=? AND profile_id=?
       ))`,
         shift,
@@ -546,6 +554,7 @@ export async function writeShift(
         context.storeImport?.baseCurrency ?? identity.currency,
         context.storeImport?.exchangeRate ?? String(identity.secondary_exchange_rate),
         day?.business_date ?? context.localDate,
+        note,
         identity.business_id,
         profile.id,
       ),

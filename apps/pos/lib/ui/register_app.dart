@@ -5,7 +5,9 @@ import 'package:get/get.dart';
 
 import '../auths/login_binding.dart';
 import '../auths/login_screen.dart';
+import '../core/api_endpoint.dart';
 import '../core/pos_api.dart';
+import '../core/register_shift_reports.dart';
 import '../features/customers/customer_binding.dart';
 import '../features/customers/customer_controller.dart';
 import '../features/customers/customer_screen.dart';
@@ -18,6 +20,8 @@ import '../features/sales/sale/sales_history_view.dart';
 import '../features/sales/sale/sale_service.dart';
 import '../features/sales/table/widgets/table_status_label.dart';
 import '../features/sales/sale/widgets/confirm_exit_sale_dialog_widget.dart';
+import '../features/shifts/widgets/open_shift_dialog_widget.dart';
+import '../global.dart';
 import '../helpers/helper.dart';
 import '../shared/app_theme.dart';
 import '../shared/brand_mark.dart';
@@ -92,6 +96,25 @@ class _RegisterShellState extends State<RegisterShell> {
   RegisterController get controller => widget.controller;
   bool _choosingExit = false;
   bool _drawerOpen = false;
+
+  Future<void> _openOperatingSetup() async {
+    if (controller.needsWorkingDay) {
+      if (!shiftManager(controller.operator.value?.role ?? '')) {
+        controller.message.value = 'shift_wait_for_manager';
+        return;
+      }
+      if (!await app.onConfirm('shift_confirm_open_day'.tr) ||
+          !mounted ||
+          !controller.canOpenOperatingSession) {
+        return;
+      }
+      if (controller.needsWorkingDay &&
+          !await controller.operation(ApiEndpoint.workingDays, {})) {
+        return;
+      }
+    }
+    if (mounted) await OpenShiftDialogWidget.open(context, controller);
+  }
 
   Future<void> _leaveSale(bool selling, VoidCallback navigate) async {
     if (_choosingExit) return;
@@ -333,14 +356,22 @@ class _RegisterShellState extends State<RegisterShell> {
                               vertical: 8,
                             ),
                           ),
-                          onPressed: () =>
-                              selectDestination(RegisterController.shiftTab),
+                          onPressed: controller.canOpenOperatingSession
+                              ? _openOperatingSetup
+                              : null,
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             spacing: 8,
                             children: [
                               const Icon(Icons.schedule, size: 18),
-                              Flexible(child: Text('open_operating_context'.tr)),
+                              Flexible(
+                                child: Text(
+                                  (controller.needsWorkingDay
+                                          ? 'open_day'
+                                          : 'open_shift')
+                                      .tr,
+                                ),
+                              ),
                               const Icon(Icons.chevron_right, size: 18),
                             ],
                           ),

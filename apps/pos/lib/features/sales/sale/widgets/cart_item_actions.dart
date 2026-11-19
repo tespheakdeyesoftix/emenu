@@ -51,7 +51,7 @@ class CartItemActions extends GetView<SaleController> {
       children: [
         button(
           'cart_price',
-          enhanced && !line.isFree
+          enhanced && !line.isFree && service.allowsAction("allow_change_product_price")
               ? () => controller.editPrice(context, line)
               : null,
         ),
@@ -77,7 +77,7 @@ class CartItemActions extends GetView<SaleController> {
               CartAction.free,
               line.isFree ? Icons.undo_rounded : Icons.card_giftcard_outlined,
               line.isFree ? 'cart_restore_price' : 'cart_mark_free',
-              enabled: line.isFree ? enhanced : service.supportsFreeItemReasons,
+              enabled: service.allowsAction('allow_free_item') && (line.isFree ? enhanced : service.supportsFreeItemReasons),
             ),
             menuItem(
               CartAction.note,
@@ -89,8 +89,8 @@ class CartItemActions extends GetView<SaleController> {
               CartAction.discount,
               line.hasDiscount ? Icons.undo_rounded : Icons.percent_rounded,
               line.hasDiscount ? 'cart_cancel_discount' : 'cart_discount',
-              enabled: line.hasDiscount ||
-                  (!line.isFree && service.supportsItemDiscountDetails),
+              enabled: service.allowsAction('allow_discount_on_item') && (line.hasDiscount ||
+                  (!line.isFree && service.supportsItemDiscountDetails)),
             ),
           ],
           icon: const Icon(Icons.more_horiz),

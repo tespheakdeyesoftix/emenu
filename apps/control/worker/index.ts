@@ -1,3 +1,4 @@
+import { adminUsers } from "./adminUsers";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import {
   catalogReaderPages,
@@ -4090,6 +4091,7 @@ async function handle(request: Request, env: Env, execution: ExecutionContext): 
     : json({ error: "Telegram notifications are unavailable for this account or plan" }, 403);
   const accessibleControlPages = controlPageIds.filter(
     (page) =>
+      page === "users" ? auth.role === "owner" && auth.sessionType === "customer" :
       page === "bookings" ? bookingAccess.visible :
         page === "telegramNotifications" ? telegramAccess :
         sellingControlPages.includes(page) ? canAccessSelling && !disabledControlPages.has(page) :
@@ -4127,6 +4129,9 @@ async function handle(request: Request, env: Env, execution: ExecutionContext): 
       402,
     );
   }
+
+  if (path === "/api/admin/users" || path.startsWith("/api/admin/users/"))
+    return adminUsers(request, url, env.DB, auth, proof => credentialHash(proof, env.AUTH_PEPPER));
 
   if (path === "/api/admin/integrations/pos")
     return handlePosIntegration(request, env, auth);
@@ -7838,6 +7843,7 @@ export class SuperAdminService extends WorkerEntrypoint<Env> {
     const limits = input.limits === undefined ? null : parsePlanLimits(input.limits);
     if (input.limits !== undefined && !limits)
       return rpcFailure(400, "Enter valid whole-number plan limits or leave them blank");
+    const hasUserLimit = limits !== null && Object.hasOwn(input.limits as Json, "users");
     const pos = input.pos === undefined ? null : parsePlanPos(input.pos);
     if (input.pos !== undefined && !pos)
       return rpcFailure(400, "Choose whether to include POS and enter whole-number POS limits or leave them blank");
@@ -7853,17 +7859,18 @@ export class SuperAdminService extends WorkerEntrypoint<Env> {
       ? [limits.branches, limits.menus, limits.products, limits.dailyOrders]
       : [null, null, null, null];
     const limitUpdate = limits ? ",max_branches=?,max_menus=?,max_products=?,max_daily_orders=?" : "";
+    const userLimitUpdate = hasUserLimit ? ",max_users=?" : "";
     const posValues = pos ? [Number(pos.enabled), pos.profiles, pos.dailySales] : [0, null, null];
     const posUpdate = pos ? ",pos_enabled=?,max_pos_profiles=?,max_daily_pos_sales=?" : "";
     const planStatement = planId
       ? db.prepare(`UPDATE subscription_plans SET name=?,description=?,features_json=?,
-          is_active=?,is_public=?,display_order=?,updated_at=CURRENT_TIMESTAMP${limitUpdate}${posUpdate} WHERE id=?`)
-        .bind(...planValues, ...(limits ? limitValues : []), ...(pos ? posValues : []), recordId)
+          is_active=?,is_public=?,display_order=?,updated_at=CURRENT_TIMESTAMP${limitUpdate}${userLimitUpdate}${posUpdate} WHERE id=?`)
+        .bind(...planValues, ...(limits ? limitValues : []), ...(hasUserLimit ? [limits!.users] : []), ...(pos ? posValues : []), recordId)
       : db.prepare(`INSERT INTO subscription_plans
           (id,code,name,description,features_json,is_active,is_public,display_order,
-           max_branches,max_menus,max_products,max_daily_orders,pos_enabled,max_pos_profiles,max_daily_pos_sales)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .bind(recordId, recordSlug(name, "plan", recordId), ...planValues, ...limitValues, ...posValues);
+           max_branches,max_menus,max_products,max_daily_orders,max_users,pos_enabled,max_pos_profiles,max_daily_pos_sales)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .bind(recordId, recordSlug(name, "plan", recordId), ...planValues, ...limitValues, limits?.users ?? null, ...posValues);
     const writes = [
       planStatement,
       db.prepare(`UPDATE subscription_plan_prices SET is_active=0,updated_at=CURRENT_TIMESTAMP
@@ -7877,7 +7884,7 @@ export class SuperAdminService extends WorkerEntrypoint<Env> {
         .bind(priceId, priceId, amountMinor, interval, recordId),
       auditStatement(this.env, actor, planId ? "subscription.plan_updated" : "subscription.plan_created", null, null,
         { planId: recordId, name: name.trim(), isPublic, isActive, features, amountMinor, billingInterval: interval,
-          ...(limits ? { limits } : {}), ...(pos ? { pos } : {}) }),
+          ...(limits ? { limits: input.limits } : {}), ...(pos ? { pos } : {}) }),
     ];
     try {
       const [planWrite] = await db.batch(writes);
@@ -8592,7 +8599,9 @@ export class SuperAdminService extends WorkerEntrypoint<Env> {
         role: "manager",
         createdAt,
       });
-    } catch {
+    } catch (error) {
+      const limit = planLimitError(error);
+      if (limit) return rpcFailure(409, limit.error, limit.code);
       return rpcFailure(
         409,
         "Email is already in use",

@@ -1,3 +1,4 @@
+import 'user_permissions.dart';
 import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
@@ -130,6 +131,22 @@ class RegisterAuthority {
           );
         }
         final context = jsonObject(snapshot['context']);
+        final permissions = await database.operatorPermissions(profileId, actor.id);
+        snapshot['context'] = {
+          ...context,
+          'operator': { 'id': actor.id, 'name': actor.displayName, 'role': actor.role, 'permissions': permissions },
+        };
+        final actionPermission = switch (action) {
+          RegisterAction.openDay => 'allow_start_working_day',
+          RegisterAction.closeDay => 'allow_close_working_day',
+          RegisterAction.openShift => 'allow_start_cashier_shift',
+          RegisterAction.closeShift => 'allow_close_cashier_shift',
+          RegisterAction.checkout => 'allow_process_payment',
+          _ => null,
+        };
+        if (actionPermission != null) requireUserAction(jsonObject(snapshot['context']), actor.role, actionPermission);
+        final actorContext = jsonObject(snapshot['context']);
+
         if (context['read_only'] == true &&
             !const [
               RegisterAction.closeDay,
@@ -186,7 +203,7 @@ class RegisterAuthority {
             profileId,
             actor,
             snapshot,
-            context,
+            actorContext,
             input,
             time,
             operating,
@@ -251,6 +268,30 @@ class RegisterAuthority {
       throw const PosApiError(409, 'BILL_CHANGED', 'Reload the held bill.');
     }
     final id = held?.id ?? commandId;
+    if (action == RegisterAction.hold && input['cancel_print_bill'] == true) {
+      if (held == null) throw invalidCommand;
+      final saved = jsonObject(jsonDecode(held.payload));
+      if (saved['status'] != 'bill_requested') throw invalidCommand;
+      requireUserAction(context, actor.role, 'allow_cancel_print_bill');
+      await database.holdBill(
+        id: id, profileId: profileId, tableId: held.tableId,
+        workingDayId: held.workingDayId, revision: held.revision,
+        payload: {...saved, 'status': 'submitted', 'table_status': 'occupied'},
+      );
+      if (operating != null) {
+        await operating.cancelPrintBill(commandId, id, {});
+      } else {
+        await database.queueSubmittedOrder(commandId: commandId, saleId: id,
+          profileId: profileId, operatorId: actor.id, payload: {
+            'cancel_print_bill': true, 'revision': held.revision,
+          });
+      }
+      return {'bill_id': id};
+    }
+    if (held != null && jsonObject(jsonDecode(held.payload))['status'] == 'bill_requested' &&
+        action != RegisterAction.checkout) {
+      throw const PosApiError(409, 'BILL_REQUESTED', 'Cancel Print Bill before editing this bill.');
+    }
     if (action == RegisterAction.discard) {
       if (held == null) throw invalidCommand;
       final operatingContext = registerOperatingContext(context, time);
@@ -362,10 +403,9 @@ class RegisterAuthority {
           }
         : jsonObject(saved['quote_context']);
     final quoteProfile = jsonObject(savedQuote['profile']);
-    final config = withCurrentTaxSettings(
-      jsonObject(quoteProfile['config']),
-      activeConfig,
-    );
+    final config = saved?['status'] == 'bill_requested'
+        ? jsonObject(quoteProfile['config'])
+        : withCurrentTaxSettings(jsonObject(quoteProfile['config']), activeConfig);
     final quoteContext = {
       ...savedQuote,
       'profile': {...quoteProfile, 'config': config},
@@ -392,16 +432,16 @@ class RegisterAuthority {
     }
     final tableStatus = input['table_status'] ?? 'hold';
     if (!const ['hold', 'occupied', 'bill_requested'].contains(tableStatus) ||
-        (tableStatus != 'hold' && action != RegisterAction.hold) ||
-        (tableStatus == 'bill_requested' && tableId == null)) {
+        (tableStatus != 'hold' && action != RegisterAction.hold)) {
       throw invalidCommand;
     }
     final submit = input['submit_order'] == true;
     if (submit &&
-        (action != RegisterAction.hold || tableStatus != 'occupied')) {
+        (action != RegisterAction.hold || !const ['occupied', 'bill_requested'].contains(tableStatus))) {
       throw invalidCommand;
     }
-    final submitted = submit || saved?['status'] == 'submitted';
+    final submitted = submit || const ['submitted','bill_requested'].contains(saved?['status']);
+    final requested = tableStatus == 'bill_requested';
     final table = jsonRows(snapshot['tables'])
         .where((row) => row['id'] == tableId)
         .firstOrNull;
@@ -439,6 +479,43 @@ class RegisterAuthority {
     }
 
     final quoted = jsonRows(input['quote']);
+    final priorQuotes = saved == null ? <Json>[] : CartLine.billLines(saved).map((line) => line.quote(config)).toList();
+    final locked = saved?['status'] == 'bill_requested';
+    const lockedFields = [
+      'line_key','product_id','portion_id','modifier_ids','quantity',
+      'unit_price_minor','subtotal_minor','total_minor','tax_minor',
+      'base_price_override_minor','price_change_reason','is_free','free_reason',
+      'discount_minor','discount_bps','discount_note','note',
+    ];
+    Json project(Json line, List<String> fields) => {for (final field in fields) field: line[field]};
+    if (locked && (
+        tableId != held?.tableId || cover != saved?['guest_cover'] ||
+        customerId != saved?['customer_id'] || note != saved?['note'] ||
+        postingDate != (saved?['posting_date'] ?? operating['business_date']) ||
+        _canonicalJson(quoted.map((line) => project(line, lockedFields)).toList()) !=
+          _canonicalJson(priorQuotes.map((line) => project(line, lockedFields)).toList()))) {
+      throw const PosApiError(409, 'BILL_REQUESTED', 'Cancel Print Bill before editing this bill.');
+    }
+    for (final line in quoted) {
+      final old = priorQuotes.where((row) => line['line_key'] != null && row['line_key'] == line['line_key']).firstOrNull;
+      final sameSelection = old != null &&
+          _canonicalJson(project(line, ['product_id','portion_id','modifier_ids','quantity'])) ==
+          _canonicalJson(project(old, ['product_id','portion_id','modifier_ids','quantity']));
+      bool changed(List<String> fields) => !sameSelection ||
+          _canonicalJson(project(line, fields)) != _canonicalJson(project(old, fields));
+      if (changed(['base_price_override_minor','price_change_reason']) &&
+          (line['base_price_override_minor'] != null || old?['base_price_override_minor'] != null)) {
+        requireUserAction(context, actor.role, 'allow_change_product_price');
+      }
+      if (changed(['is_free','free_reason']) && (line['is_free'] == true || old?['is_free'] == true)) {
+        requireUserAction(context, actor.role, 'allow_free_item');
+      }
+      if (changed(['discount_minor','discount_bps','discount_note']) &&
+          [line['discount_minor'],line['discount_bps'],old?['discount_minor'],old?['discount_bps']]
+            .any((value) => (value as num? ?? 0) > 0)) {
+        requireUserAction(context, actor.role, 'allow_discount_on_item');
+      }
+    }
     final savedLines = jsonRows(saved?['lines']);
     bool hasEdits(Json line) =>
         line['base_price_override_minor'] != null ||
@@ -595,6 +672,7 @@ class RegisterAuthority {
       'expected_total_minor': total,
       if (deletions.isNotEmpty) 'voided_lines': deletions,
       'expected_context': operating,
+      if (requested) 'request_bill': true,
     };
     final types = jsonRows(quoteContext['payment_types']);
     final quotedProfile = jsonObject(quoteContext['profile']);
@@ -651,6 +729,7 @@ class RegisterAuthority {
             },
         ],
         'payment_types': types,
+        if (requested) 'request_bill': true,
         if (deletions.isNotEmpty) 'voided_lines': deletions,
         'receipt': receipt,
       };
@@ -674,7 +753,7 @@ class RegisterAuthority {
           'guest_cover': cover,
           if (postingOverride != null) 'posting_date': postingDate,
           'table_status': tableStatus,
-          if (submitted) 'status': 'submitted',
+          if (submitted) 'status': requested ? 'bill_requested' : 'submitted',
           'total_minor': total,
           'currency': currency,
           'quote_context': quoteContext,
@@ -722,6 +801,7 @@ class RegisterAuthority {
         'note': ?note,
         'register_command_id': commandId,
         if (submitted) 'submitted_order': true,
+        if (locked) 'bill_requested': true,
         'quote': prices,
         'voided_lines': voidedLines,
         'exchange_rate': rate,

@@ -195,6 +195,7 @@ class RegisterNetwork {
             return context;
           }, profileId: profileId);
           final actor = jsonObject(context['operator']);
+          await _db.saveOperatorPermissions(profileId, actor);
           final devices = _db.selectOnly(_db.storeDevices)
             ..addColumns([_db.storeDevices.id])
             ..where(

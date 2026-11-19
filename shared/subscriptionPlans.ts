@@ -1,6 +1,7 @@
 import type { ControlPage } from "./controlPages";
 
 export type PlanLimits = {
+  users: number | null;
   branches: number | null;
   menus: number | null;
   products: number | null;

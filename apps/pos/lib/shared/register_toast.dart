@@ -129,6 +129,7 @@ class _ToastMessage extends StatelessWidget {
       'UNSYNCED_SHIFT_SALES' ||
       'UNSYNCED_DAY_SALES' ||
       'WORKING_DAY_REQUIRED' ||
+      'shift_wait_for_manager' ||
       'CASHIER_SHIFT_REQUIRED' ||
       'TABLE_REQUIRED' ||
       'EMPTY_CART' ||

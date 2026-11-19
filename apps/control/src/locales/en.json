@@ -64,6 +64,7 @@
     "unavailable": "{count} were already unavailable."
   },
   "nav": {
+    "users": "Users",
     "overview": "Overview",
     "business": "Business information",
     "appearance": "Menu appearance",
@@ -170,6 +171,49 @@
       "other": "Other"
     }
   },
+  "staff": {
+    "userCapacity": "{count} of {limit} users used",
+    "unlimitedUsers": "{count} users · Unlimited",
+    "ownerCounts": "The owner counts toward the subscription plan’s user limit.",
+    "limitReached": "User limit reached. Remove a user or upgrade the subscription plan to add another account.",
+  "title": "Users",
+  "add": "Add user",
+  "edit": "Edit user",
+  "name": "Name",
+  "email": "Email",
+  "password": "Password",
+  "newPassword": "New password",
+  "passwordHelp": "Leave blank to keep the current password.",
+  "username": "POS username",
+  "usernameHelp": "Optional. Use 2–40 letters, digits, dots, hyphens or underscores.",
+  "role": "Role",
+  "roles": {
+    "owner": "Owner",
+    "manager": "Manager",
+    "editor": "Staff"
+  },
+  "profiles": "POS profile access",
+  "noProfiles": "Create a POS profile to give this user register access.",
+  "managerProfiles": "Managers can access all POS profiles.",
+  "permissions": "POS permissions",
+  "allowedCount": "{count} of {total} allowed",
+  "accountOwner": "Account owner",
+  "remove": "Remove access",
+  "removeTitle": "Remove user access?",
+  "removeMessage": "{name} will lose access to this business and its POS profiles.",
+  "actions": {
+    "allow_start_working_day": "Allow start working day",
+    "allow_close_working_day": "Allow close working day",
+    "allow_start_cashier_shift": "Allow start cashier shift",
+    "allow_close_cashier_shift": "Allow close cashier shift",
+    "allow_change_product_price": "Allow change product price",
+    "allow_free_item": "Allow free item",
+    "allow_discount_on_item": "Allow discount on item",
+    "allow_discount_on_bill": "Allow discount on bill",
+    "allow_process_payment": "Allow process payment",
+    "allow_cancel_print_bill": "Allow cancel print bill"
+  }
+},
   "selling": {
     "tablePlanSettings": "Table plan",
     "promptGuestCover": "Ask for guest count when opening a table",
@@ -190,6 +234,7 @@
     "noSales": "No POS sales match these filters.",
     "statuses": {
       "submitted": "Submitted",
+      "bill_requested": "Bill Requested",
       "open": "Open",
       "paid": "Paid",
       "cancelled": "Cancelled",
@@ -534,6 +579,7 @@
     "defaultBranch": "Default branch"
   },
   "shell": {
+    "connectionFailed": "The server did not respond. Check the connection and try again.",
     "workspace": "Management workspace",
     "loadingBusiness": "Loading…",
     "noExpiry": "No expiry",

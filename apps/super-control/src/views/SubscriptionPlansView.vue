@@ -23,6 +23,7 @@
               · {{ plan.features.length }} Control features
             </p>
             <p class="mb-0 mt-1 text-xs text-black/55">
+              {{ plan.limits.users ?? "Unlimited" }} users ·
               {{ plan.limits.branches ?? "Unlimited" }} branches ·
               {{ plan.limits.menus ?? "Unlimited" }} menus ·
               {{ plan.limits.products ?? "Unlimited" }} products ·
@@ -90,7 +91,8 @@
           </label>
           <p class="m-0 text-xs leading-5 text-black/60 sm:col-span-2">
             Branches, menus and products count even when archived or hidden. The default branch and submenus count too.
-            Daily orders are counted across all branches in the business’s time zone.
+            Users include the owner, managers and staff across all branches. Lowering a limit keeps existing accounts
+            and blocks new accounts until there is room. Daily orders use the business’s time zone.
           </p>
         </fieldset>
         <fieldset class="m-0 grid min-w-0 gap-3 rounded-xl border border-black/10 p-3">
@@ -153,12 +155,14 @@ const wasArchived = ref(false);
 const endpoint = "/api/super/subscription-plans";
 const planControlPages = controlPageIds.filter((page) => !sellingControlPages.includes(page));
 const limitFields = [
+  { key: "users", label: "Users (including owner)", min: 1, max: undefined, placeholder: "Unlimited" },
   { key: "branches", label: "Branches", min: 1, max: undefined, placeholder: "Unlimited" },
   { key: "menus", label: "Menus and submenus", min: 0, max: undefined, placeholder: "Unlimited" },
   { key: "products", label: "Products", min: 0, max: undefined, placeholder: "Unlimited" },
   { key: "dailyOrders", label: "Daily order submissions", min: 0, max: MAX_DAILY_ORDERS, placeholder: String(MAX_DAILY_ORDERS) },
 ] as const;
 const limitDraft = (limits?: PlanLimits): Record<keyof PlanLimits, number | ""> => ({
+  users: limits?.users ?? "",
   branches: limits?.branches ?? "",
   menus: limits?.menus ?? "",
   products: limits?.products ?? "",

@@ -123,6 +123,7 @@ class LoginService extends GetxService {
       register.operator.value = await register.database.operatorById(
         operatorId,
       );
+      await register.loadUserPermissions(operatorId);
       register.applyProfileSnapshot(
         await register.database.readSnapshot(
           register.installation.value!.profileId,
@@ -165,6 +166,7 @@ class LoginService extends GetxService {
     register.operator.value = current;
     register.pinConfigured.value = true;
     register.offerPinSetup = false;
+    await register.loadUserPermissions(operatorId);
     register.applyProfileSnapshot(cached);
     await register.sales.loadCart(current);
     register.tab.value = register.landingTab;

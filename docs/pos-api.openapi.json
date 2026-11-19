@@ -1217,7 +1217,7 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "enum": ["open", "submitted", "paid", "cancelled"]
+              "enum": ["open", "submitted", "bill_requested", "paid", "cancelled"]
             }
           },
           {
@@ -1424,6 +1424,118 @@
             }
           },
           "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/sales/{id}/request-bill": {
+      "post": {
+        "tags": [
+          "POS sales"
+        ],
+        "summary": "Request the bill and lock editing",
+        "description": "Cancel Print Bill requires allow_cancel_print_bill. A requested bill can be paid but cannot be edited until unlocked.",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "revision"
+                ],
+                "properties": {
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated sale",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sale"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/sales/{id}/cancel-print-bill": {
+      "post": {
+        "tags": [
+          "POS sales"
+        ],
+        "summary": "Unlock a requested bill and return it to Submitted",
+        "description": "Cancel Print Bill requires allow_cancel_print_bill. A requested bill can be paid but cannot be edited until unlocked.",
+        "security": [
+          {
+            "PosBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "revision"
+                ],
+                "properties": {
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated sale",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sale"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -2389,6 +2501,7 @@
               "reopen_shift",
               "cash_movement",
               "submit_sale",
+              "cancel_print_bill",
               "cancel_sale",
               "checkout",
               "reversal"
@@ -3673,6 +3786,10 @@
           "activity_revision": {
             "type": "integer",
             "minimum": 1
+          },
+          "note": {
+            "type": ["string", "null"],
+            "maxLength": 500
           }
         }
       },
@@ -3742,6 +3859,10 @@
             "type": "integer",
             "minimum": 1
           },
+          "note": {
+            "type": ["string", "null"],
+            "maxLength": 500
+          },
           "closing_counts": {
             "type": "array",
             "items": {
@@ -3768,6 +3889,10 @@
       "ShiftOpen": {
         "type": "object",
         "properties": {
+          "note": {
+            "type": ["string", "null"],
+            "maxLength": 500
+          },
           "opening_cash": {
             "type": "array",
             "items": {
@@ -3976,6 +4101,55 @@
           }
         }
       },
+      "UserPermissions": {
+        "type": "object",
+        "description": "Effective user grants. Owners always have all grants. Each action is checked again on the server and in the local register authority.",
+        "additionalProperties": false,
+        "required": [
+          "allow_start_working_day",
+          "allow_close_working_day",
+          "allow_start_cashier_shift",
+          "allow_close_cashier_shift",
+          "allow_change_product_price",
+          "allow_free_item",
+          "allow_discount_on_item",
+          "allow_discount_on_bill",
+          "allow_process_payment",
+          "allow_cancel_print_bill"
+        ],
+        "properties": {
+          "allow_start_working_day": {
+            "type": "boolean"
+          },
+          "allow_close_working_day": {
+            "type": "boolean"
+          },
+          "allow_start_cashier_shift": {
+            "type": "boolean"
+          },
+          "allow_close_cashier_shift": {
+            "type": "boolean"
+          },
+          "allow_change_product_price": {
+            "type": "boolean"
+          },
+          "allow_free_item": {
+            "type": "boolean"
+          },
+          "allow_discount_on_item": {
+            "type": "boolean"
+          },
+          "allow_discount_on_bill": {
+            "type": "boolean"
+          },
+          "allow_process_payment": {
+            "type": "boolean"
+          },
+          "allow_cancel_print_bill": {
+            "type": "boolean"
+          }
+        }
+      },
       "Context": {
         "type": "object",
         "required": [
@@ -3997,6 +4171,9 @@
             "type": "object",
             "required": ["id", "name", "role"],
             "properties": {
+              "permissions": {
+                "$ref": "#/components/schemas/UserPermissions"
+              },
               "id": {
                 "$ref": "#/components/schemas/Id"
               },
@@ -4078,6 +4255,8 @@
               "staff_usernames": {
                 "type": "boolean"
               },
+              "user_permissions": { "type": "boolean", "const": true },
+              "bill_request_lock": { "type": "boolean", "const": true },
               "cart_line_edits": {
                 "type": "boolean"
               },
@@ -4641,6 +4820,7 @@
         "type": "object",
         "required": ["lines"],
         "properties": {
+          "request_bill": { "type": "boolean", "description": "Set true when submitting to save the sale as Bill Requested and lock editing." },
           "expected_total_minor": { "$ref": "#/components/schemas/Amount" },
           "voided_lines": { "$ref": "#/components/schemas/ItemDeletions" },
           "guest_cover": { "type": ["integer", "null"], "minimum": 1, "maximum": 1000 },
@@ -5113,7 +5293,7 @@
           },
           "status": {
             "type": "string",
-            "enum": ["open", "submitted", "paid", "cancelled"]
+            "enum": ["open", "submitted", "bill_requested", "paid", "cancelled"]
           },
           "revision": {
             "type": "integer",
@@ -5344,7 +5524,7 @@
           },
           "status": {
             "type": "string",
-            "enum": ["open", "submitted", "paid", "cancelled"]
+            "enum": ["open", "submitted", "bill_requested", "paid", "cancelled"]
           },
           "revision": {
             "type": "integer",

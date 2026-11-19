@@ -1,5 +1,6 @@
 export const controlPages = {
   overview: { path: "/", label: "Overview" },
+  users: { path: "/users", label: "Users" },
   business: { path: "/business", label: "Business information" },
   appearance: { path: "/appearance", label: "Menu appearance" },
   catalog: { path: "/catalog", label: "Product Catalog" },

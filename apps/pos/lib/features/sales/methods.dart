@@ -27,7 +27,7 @@ extension SaleMethods on SaleController {
   }
 
   Future<void> pay(BuildContext context, int total) async {
-    if (!service.canSubmit) return;
+    if (!service.canPay || !service.allowsAction("allow_process_payment")) return;
     if (total != service.cartTotal) {
       service.message.value = 'PRICE_CHANGED';
       return;
@@ -50,7 +50,7 @@ extension SaleMethods on SaleController {
     if (!context.mounted ||
         payments == null ||
         generation != service.billGeneration ||
-        !service.canSubmit) {
+        !service.canPay) {
       return;
     }
     if (total != service.cartTotal) {
@@ -98,6 +98,7 @@ extension SaleMethods on SaleController {
           replaceLine(line, service.withOptions(line, next));
         }
       case CartAction.free:
+        if (!service.allowsAction('allow_free_item')) { service.message.value = 'PERMISSION_DENIED'; return; }
         if (line.isFree) {
           replaceLine(line, service.restorePrice(line));
         } else {
@@ -106,6 +107,7 @@ extension SaleMethods on SaleController {
       case CartAction.note:
         await editItemNote(context, line);
       case CartAction.discount:
+        if (!service.allowsAction('allow_discount_on_item')) { service.message.value = 'PERMISSION_DENIED'; return; }
         if (line.hasDiscount) {
           replaceLine(line, line.withDiscount());
         } else {

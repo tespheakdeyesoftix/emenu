@@ -1,12 +1,126 @@
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
-// worker/index.ts
-import { WorkerEntrypoint } from "cloudflare:workers";
+// ../../shared/userPermissions.ts
+var userPermissionKeys = [
+  "allow_start_working_day",
+  "allow_close_working_day",
+  "allow_start_cashier_shift",
+  "allow_close_cashier_shift",
+  "allow_change_product_price",
+  "allow_free_item",
+  "allow_discount_on_item",
+  "allow_discount_on_bill",
+  "allow_process_payment",
+  "allow_cancel_print_bill"
+];
+function userPermissions(value, role) {
+  let parsed = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      parsed = {};
+    }
+  }
+  const settings = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  return Object.fromEntries(userPermissionKeys.map((key) => [
+    key,
+    role === "owner" || (typeof settings[key] === "boolean" ? settings[key] : role === "manager" || !["allow_start_working_day", "allow_close_working_day"].includes(key))
+  ]));
+}
+__name(userPermissions, "userPermissions");
+
+// worker/posPermissions.ts
+function permissionSql(key, user = "u", role = "m.role") {
+  const fallback = ["allow_start_working_day", "allow_close_working_day"].includes(key) ? `CASE WHEN ${role}='manager' THEN 1 ELSE 0 END` : "1";
+  return `(${role}='owner' OR COALESCE(json_extract(${user}.permissions,'$.${key}'),${fallback})=1)`;
+}
+__name(permissionSql, "permissionSql");
+function requirePosPermission(context, key) {
+  if (!userPermissions(context.identity.permissions, context.identity.role)[key])
+    throw new PosError(403, "PERMISSION_DENIED", "You do not have permission for this action.");
+  (context.requiredPermissions ??= /* @__PURE__ */ new Set()).add(key);
+}
+__name(requirePosPermission, "requirePosPermission");
+function requireLinePermissions(context, line, saved) {
+  const ids = /* @__PURE__ */ __name((value) => JSON.stringify(Array.isArray(value) ? value.map((v) => typeof v === "object" && v ? v.id : v).sort() : []), "ids");
+  const same = saved != null && line.product_id === saved.product_id && (line.portion_id ?? null) === (saved.portion_id ?? null) && Number(line.quantity) === Number(saved.quantity) && ids(line.modifier_ids ?? line.modifiers) === ids(saved.modifiers);
+  const changed = /* @__PURE__ */ __name((fields2) => !same || fields2.some((key) => {
+    const a = line[key] ?? (key.startsWith("discount_") && key !== "discount_note" ? 0 : null);
+    const b = saved?.[key] ?? (key.startsWith("discount_") && key !== "discount_note" ? 0 : null);
+    return key === "is_free" ? Boolean(a) !== Boolean(b) : a !== b;
+  }), "changed");
+  if (changed(["base_price_override_minor", "price_change_reason"]) && (line.base_price_override_minor != null || saved?.base_price_override_minor != null))
+    requirePosPermission(context, "allow_change_product_price");
+  if (changed(["is_free", "free_reason"]) && (line.is_free || saved?.is_free))
+    requirePosPermission(context, "allow_free_item");
+  if (changed(["discount_minor", "discount_bps", "discount_note"]) && [line.discount_minor, line.discount_bps, saved?.discount_minor, saved?.discount_bps].some((value) => Number(value ?? 0) > 0))
+    requirePosPermission(context, "allow_discount_on_item");
+}
+__name(requireLinePermissions, "requireLinePermissions");
+
+// ../../shared/posReceipts.ts
+var posReceiptTypes = ["receipt", "kitchen_receipt", "qr_label"];
+var posReceiptLanguages = ["en", "km", "bilingual"];
+var posReceiptTextSizes = ["small", "normal", "large"];
+var posReceiptAlignments = ["left", "center", "right"];
+var posQrTargets = ["table_menu", "business_menu", "custom_url"];
+var posReceiptFields = {
+  receipt: [
+    "logo",
+    "business_details",
+    "branch",
+    "order_number",
+    "date_time",
+    "cashier",
+    "customer",
+    "table",
+    "service_type",
+    "item_codes",
+    "modifiers",
+    "item_notes",
+    "unit_prices",
+    "discount",
+    "tax",
+    "payments",
+    "change",
+    "order_notes",
+    "signature"
+  ],
+  kitchen_receipt: [
+    "logo",
+    "branch",
+    "order_number",
+    "date_time",
+    "cashier",
+    "table",
+    "service_type",
+    "station",
+    "item_codes",
+    "modifiers",
+    "item_notes",
+    "order_notes",
+    "highlight_notes"
+  ],
+  qr_label: ["logo", "branch", "table", "show_link"]
+};
+var posReceiptLimits = {
+  width: { min: 30, max: 216 },
+  labelHeight: { min: 20, max: 150 },
+  qrSize: { min: 15, max: 150 },
+  copies: { min: 1, max: 10 }
+};
+var emptyPosReceiptDefaults = {
+  receipt: null,
+  kitchen_receipt: null,
+  qr_label: null
+};
 
 // ../../shared/controlPages.ts
 var controlPages = {
   overview: { path: "/", label: "Overview" },
+  users: { path: "/users", label: "Users" },
   business: { path: "/business", label: "Business information" },
   appearance: { path: "/appearance", label: "Menu appearance" },
   catalog: { path: "/catalog", label: "Product Catalog" },
@@ -16,6 +130,7 @@ var controlPages = {
   sellingOverview: { path: "/selling", label: "Selling dashboard" },
   posProfiles: { path: "/selling/pos-profiles", label: "POS profile settings" },
   posPaymentTypes: { path: "/selling/payment-types", label: "Payment types" },
+  posCustomers: { path: "/selling/customers", label: "Customers" },
   salesList: { path: "/selling/sales", label: "Sales list" },
   orders: { path: "/orders", label: "Orders" },
   bookings: { path: "/bookings", label: "Bookings" },
@@ -30,6 +145,7 @@ var sellingControlPages = [
   "sellingOverview",
   "posProfiles",
   "posPaymentTypes",
+  "posCustomers",
   "salesList"
 ];
 var catalogReaderPages = [
@@ -45,6 +161,886 @@ var priceListReaderPages = [
   "priceLists",
   "managePrices"
 ];
+
+// ../../shared/subscriptionPlans.ts
+var MAX_DAILY_ORDERS = 999;
+
+// worker/subscriptionPlans.ts
+var DEFAULT_PLAN_ID = "plan_standard";
+var planOfferJoin = `
+  JOIN subscription_plan_prices price ON price.id=(
+    SELECT id FROM subscription_plan_prices
+    WHERE plan_id=plan.id AND is_active=1 AND currency='USD'
+      AND provider IS NULL AND interval_count=1
+    ORDER BY created_at DESC,id DESC LIMIT 1
+  )`;
+var planOfferFields = `
+  plan.id,plan.code,plan.name,plan.description,plan.features_json AS featuresJson,
+  plan.max_users AS maxUsers,plan.max_branches AS maxBranches,plan.max_menus AS maxMenus,
+  plan.max_products AS maxProducts,plan.max_daily_orders AS maxDailyOrders,
+  plan.pos_enabled AS posEnabled,plan.max_pos_profiles AS maxPosProfiles,
+  plan.max_daily_pos_sales AS maxDailyPosSales,
+  price.id AS priceId,price.amount_minor AS amountMinor,price.billing_interval AS billingInterval`;
+var planFeatures = /* @__PURE__ */ __name((value) => {
+  try {
+    const keys = JSON.parse(value);
+    return Array.isArray(keys) ? controlPageIds.filter((key) => keys.includes(key)) : [];
+  } catch {
+    return [];
+  }
+}, "planFeatures");
+var serializePlan = /* @__PURE__ */ __name(({
+  featuresJson,
+  maxUsers,
+  maxBranches,
+  maxMenus,
+  maxProducts,
+  maxDailyOrders,
+  posEnabled,
+  maxPosProfiles,
+  maxDailyPosSales,
+  ...row
+}) => ({
+  ...row,
+  features: planFeatures(featuresJson),
+  limits: { users: maxUsers, branches: maxBranches, menus: maxMenus, products: maxProducts, dailyOrders: maxDailyOrders },
+  pos: { enabled: Boolean(posEnabled), profiles: maxPosProfiles, dailySales: maxDailyPosSales }
+}), "serializePlan");
+var isLimit = /* @__PURE__ */ __name((input, minimum, maximum = Number.MAX_SAFE_INTEGER) => input === null || typeof input === "number" && Number.isSafeInteger(input) && input >= minimum && input <= maximum, "isLimit");
+function parsePlanLimits(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input = value;
+  const { branches, menus, products, dailyOrders } = input;
+  const users = Object.hasOwn(input, "users") ? input.users : null;
+  if (Object.keys(input).some((key) => !["users", "branches", "menus", "products", "dailyOrders"].includes(key)) || !isLimit(users, 1) || !isLimit(branches, 1) || !isLimit(menus, 0) || !isLimit(products, 0) || !isLimit(dailyOrders, 0, MAX_DAILY_ORDERS)) return null;
+  return { users, branches, menus, products, dailyOrders };
+}
+__name(parsePlanLimits, "parsePlanLimits");
+function parsePlanPos(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const { enabled, profiles, dailySales } = value;
+  if (Object.keys(value).length !== 3 || typeof enabled !== "boolean" || !isLimit(profiles, 0) || !isLimit(dailySales, 0)) return null;
+  return { enabled, profiles, dailySales };
+}
+__name(parsePlanPos, "parsePlanPos");
+var posPlanEnabled = /* @__PURE__ */ __name((businessId) => `NOT EXISTS (
+  SELECT 1 FROM business_subscriptions subscription
+  JOIN subscription_plans plan ON plan.id=subscription.plan_id
+  WHERE subscription.business_id=${businessId} AND plan.pos_enabled=0
+)`, "posPlanEnabled");
+var limitErrors = {
+  PLAN_USER_LIMIT: { code: "PLAN_USER_LIMIT", error: "This business has reached its subscription plan\u2019s user limit, including the owner. Remove a user or upgrade the plan to add another account." },
+  PLAN_BRANCH_LIMIT: { code: "PLAN_BRANCH_LIMIT", error: "This business has reached its subscription plan\u2019s branch limit." },
+  PLAN_MENU_LIMIT: { code: "PLAN_MENU_LIMIT", error: "This business has reached its subscription plan\u2019s menu limit." },
+  PLAN_PRODUCT_LIMIT: { code: "PLAN_PRODUCT_LIMIT", error: "This business has reached its subscription plan\u2019s product limit." },
+  PLAN_DAILY_ORDER_LIMIT: { code: "order_limit_reached", error: "The business has reached its daily order limit." },
+  PLAN_POS_PROFILE_LIMIT: { code: "PLAN_POS_PROFILE_LIMIT", error: "This business has reached its subscription plan\u2019s active POS profile limit." },
+  PLAN_POS_PROFILE_IN_USE: { code: "PLAN_POS_PROFILE_IN_USE", error: "Deactivate excess POS profiles before applying this limit." },
+  PLAN_DAILY_POS_SALE_LIMIT: { code: "PLAN_DAILY_POS_SALE_LIMIT", error: "This business has reached its daily POS sales limit." }
+};
+function planLimitError(error3) {
+  const message = String(error3);
+  const code = Object.keys(limitErrors).find((key) => message.includes(key));
+  return code ? limitErrors[code] : null;
+}
+__name(planLimitError, "planLimitError");
+function selectedPlan(db, planId, publicOnly) {
+  return db.prepare(
+    `SELECT ${planOfferFields} FROM subscription_plans plan ${planOfferJoin}
+     WHERE plan.id=? AND plan.is_active=1 AND (?=0 OR plan.is_public=1)`
+  ).bind(planId, Number(publicOnly)).first();
+}
+__name(selectedPlan, "selectedPlan");
+async function publicPlans(db) {
+  const { results } = await db.prepare(
+    `SELECT ${planOfferFields} FROM subscription_plans plan ${planOfferJoin}
+     WHERE plan.is_active=1 AND plan.is_public=1 ORDER BY plan.display_order,plan.name,plan.id`
+  ).all();
+  return results.map(serializePlan);
+}
+__name(publicPlans, "publicPlans");
+
+// ../../shared/posProfile.ts
+var paymentKindByGroup = {
+  Cash: "cash",
+  "Credit Card": "card",
+  Bank: "other",
+  "QR Payment": "qr",
+  Other: "other"
+};
+var paymentTypeGroups = Object.keys(paymentKindByGroup);
+var defaultPaymentGroup = {
+  cash: "Cash",
+  card: "Credit Card",
+  qr: "QR Payment",
+  other: "Other"
+};
+var posTaxModes = ["disabled", "inclusive", "exclusive"];
+var posTableStatusColors = {
+  vacant: "#2F7656",
+  occupied: "#245EB2",
+  bill_requested: "#B45309",
+  hold: "#6B4AA0",
+  booked: "#AE356C"
+};
+var posTableStatuses = Object.keys(posTableStatusColors);
+
+// worker/posApiCore.ts
+var posApiPath = "/api/integrations/pos/v1";
+var posAdminPath = "/api/admin/pos";
+var isPosApiPath = /* @__PURE__ */ __name((path) => path === posApiPath || path.startsWith(posApiPath + "/"), "isPosApiPath");
+var isPosAdminPath = /* @__PURE__ */ __name((path) => path === posAdminPath || path.startsWith(posAdminPath + "/"), "isPosAdminPath");
+function allowsCashFloat(type) {
+  return type.allow_cash_float ?? type.kind === "cash";
+}
+__name(allowsCashFloat, "allowsCashFloat");
+var PosError = class extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+  status;
+  code;
+  static {
+    __name(this, "PosError");
+  }
+};
+function respond(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "private, no-store"
+    }
+  });
+}
+__name(respond, "respond");
+function errorResponse(error3) {
+  if (error3 instanceof PosError)
+    return respond({ error: error3.message, code: error3.code }, error3.status);
+  const limit = planLimitError(error3);
+  if (limit) return respond(limit, 409);
+  const message = String(error3);
+  if (message.includes(
+    "UNIQUE constraint failed: sales.business_id, sales.profile_id, sales.table_id"
+  )) {
+    return respond(
+      {
+        error: "This table already has an open bill on this profile",
+        code: "TABLE_OCCUPIED"
+      },
+      409
+    );
+  }
+  if (message.includes("POS_STATE_CONFLICT") || message.includes("UNIQUE constraint failed:")) {
+    return respond(
+      {
+        error: "The requested state conflicts with existing POS data. Refresh and retry.",
+        code: "STATE_CONFLICT"
+      },
+      409
+    );
+  }
+  if (message.includes("FOREIGN KEY constraint failed")) {
+    return respond(
+      {
+        error: "A referenced record is no longer available",
+        code: "STATE_CONFLICT"
+      },
+      409
+    );
+  }
+  throw error3;
+}
+__name(errorResponse, "errorResponse");
+function requirePosPlan(enabled) {
+  if (enabled === 0)
+    throw new PosError(403, "PLAN_POS_DISABLED", "POS is not included in this business\u2019s subscription plan.");
+}
+__name(requirePosPlan, "requirePosPlan");
+function invalid(message) {
+  throw new PosError(400, "INVALID_REQUEST", message);
+}
+__name(invalid, "invalid");
+function conflict(message, code = "STATE_CONFLICT") {
+  throw new PosError(409, code, message);
+}
+__name(conflict, "conflict");
+function missing(entity) {
+  throw new PosError(404, "NOT_FOUND", `${entity} was not found`);
+}
+__name(missing, "missing");
+var privileged = /* @__PURE__ */ __name((role) => role === "owner" || role === "manager", "privileged");
+function requireManager(role) {
+  if (!privileged(role))
+    throw new PosError(
+      403,
+      "FORBIDDEN",
+      "A business owner or manager is required"
+    );
+}
+__name(requireManager, "requireManager");
+var newId = /* @__PURE__ */ __name((prefix) => `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`, "newId");
+var sql = /* @__PURE__ */ __name((db, query, ...bindings) => db.prepare(query).bind(...bindings), "sql");
+var MAX_AMOUNT = 1e11;
+function object(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    invalid("Expected a JSON object");
+  return value;
+}
+__name(object, "object");
+async function bodyOf(request, maxBytes = 128e3) {
+  if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") {
+    throw new PosError(415, "UNSUPPORTED_MEDIA_TYPE", "Send application/json");
+  }
+  const reader = request.body?.getReader();
+  const decoder = new TextDecoder();
+  let size = 0;
+  let text2 = "";
+  if (!reader) invalid("Expected a JSON body");
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      throw new PosError(
+        413,
+        "REQUEST_TOO_LARGE",
+        `JSON body exceeds ${maxBytes.toLocaleString("en-US")} bytes`
+      );
+    }
+    text2 += decoder.decode(value, { stream: true });
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text2 + decoder.decode());
+  } catch {
+    invalid("Malformed JSON");
+  }
+  return object(parsed);
+}
+__name(bodyOf, "bodyOf");
+function string(value, field, limit = 120) {
+  if (typeof value !== "string" || !value.trim() || value.trim().length > limit)
+    invalid(`Invalid ${field}`);
+  return value.trim();
+}
+__name(string, "string");
+var optionalText = /* @__PURE__ */ __name((value, field, limit = 500) => value == null || value === "" ? null : string(value, field, limit), "optionalText");
+function recordId(value, field) {
+  if (typeof value !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(value))
+    invalid(`Invalid ${field}`);
+  return value;
+}
+__name(recordId, "recordId");
+function integer(value, field, min, max = MAX_AMOUNT) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max)
+    invalid(`Invalid ${field}`);
+  return value;
+}
+__name(integer, "integer");
+function choice(value, field, options) {
+  if (typeof value !== "string" || !options.includes(value))
+    invalid(`Invalid ${field}`);
+  return value;
+}
+__name(choice, "choice");
+var currencyOf = /* @__PURE__ */ __name((value) => choice(value, "currency", ["USD", "KHR"]), "currencyOf");
+function list(value, field, max) {
+  if (!Array.isArray(value) || value.length > max) invalid(`Invalid ${field}`);
+  return value;
+}
+__name(list, "list");
+function boolean(value, field) {
+  if (typeof value !== "boolean") invalid(`Invalid ${field}`);
+  return value;
+}
+__name(boolean, "boolean");
+async function digest(text2) {
+  const bytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text2)
+  );
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+__name(digest, "digest");
+var activeDeviceSession = `(s.device_credential_id IS NULL OR EXISTS (
+  SELECT 1 FROM pos_device_credentials d
+  WHERE d.id=s.device_credential_id AND d.revoked_at IS NULL
+    AND d.business_id=s.business_id AND d.profile_id=s.profile_id AND d.user_id=s.user_id
+    AND d.credential_version=s.credential_version
+))`;
+var storeOperatorRegistered = `EXISTS (
+  SELECT 1 FROM pos_store_operator_history h
+  WHERE h.business_id=authority.business_id AND h.profile_id=? AND h.operator_id=?
+    AND h.device_id=authority.device_id AND h.public_key=authority.public_key
+)`;
+var storeOperatorActive = `EXISTS (
+  SELECT 1 FROM pos_device_credentials d
+  JOIN memberships member ON member.business_id=d.business_id AND member.user_id=d.user_id
+  JOIN users account ON account.id=d.user_id AND account.password_salt=d.credential_version
+  WHERE d.business_id=authority.business_id AND d.profile_id=? AND d.user_id=? AND d.revoked_at IS NULL
+    AND d.device_id=authority.device_id AND d.public_key=authority.public_key
+    AND (member.role IN ('owner','manager') OR EXISTS (
+      SELECT 1 FROM pos_profile_grants g
+      WHERE g.business_id=d.business_id AND g.profile_id=d.profile_id AND g.user_id=d.user_id
+    ))
+)`;
+var profileColumns = `p.id,p.branch_id,b.name AS branch_name,p.name,
+  p.is_active,p.version,p.config_json,p.pending_config_json`;
+function normalizeProfileConfig(config) {
+  const taxRules = (config.tax_rules ?? []).map((rule, index) => ({
+    ...rule,
+    id: rule.id ?? "legacy_tax_rule_" + (index + 1),
+    tax_mode: rule.tax_mode ?? "disabled"
+  }));
+  const defaultTaxRule = taxRules.find(({ id: id2 }) => id2 === config.default_tax_rule_id) ?? null;
+  return {
+    ...config,
+    default_menu_id: config.default_menu_id ?? null,
+    prompt_guest_cover: config.prompt_guest_cover ?? false,
+    table_status_colors: { ...posTableStatusColors, ...config.table_status_colors },
+    receipt_templates: config.receipt_templates ?? [],
+    default_receipt_templates: { ...emptyPosReceiptDefaults, ...config.default_receipt_templates },
+    tax_rules: taxRules,
+    default_tax_rule_id: defaultTaxRule?.id ?? null,
+    default_tax_rule: defaultTaxRule
+  };
+}
+__name(normalizeProfileConfig, "normalizeProfileConfig");
+function registerTaxSettings(profile) {
+  const config = normalizeProfileConfig(
+    JSON.parse(profile.pending_config_json ?? profile.config_json)
+  );
+  return {
+    tax_rules: config.tax_rules,
+    default_tax_rule_id: config.default_tax_rule_id,
+    default_tax_rule: config.default_tax_rule,
+    tax_mode: config.tax_mode,
+    tax_rate_bps: config.tax_rate_bps
+  };
+}
+__name(registerTaxSettings, "registerTaxSettings");
+function profileView(profile, admin = false) {
+  const { config_json, pending_config_json, is_active, ...fields2 } = profile;
+  return {
+    ...fields2,
+    is_active: Boolean(is_active),
+    config: normalizeProfileConfig(JSON.parse(config_json)),
+    ...admin ? {
+      pending_config: pending_config_json ? normalizeProfileConfig(JSON.parse(pending_config_json)) : null
+    } : {}
+  };
+}
+__name(profileView, "profileView");
+async function paymentTypes(context) {
+  const { results } = await sql(
+    context.db,
+    `SELECT t.id,t.name,t.kind,t.currency,t.payment_type_group
+    FROM pos_payment_types t WHERE t.business_id=? AND t.id IN (SELECT json_extract(value,'$.id') FROM json_each(?))`,
+    context.identity.business_id,
+    JSON.stringify(context.config.payment_types)
+  ).all();
+  const types = new Map(results.map((row) => [row.id, row]));
+  return context.config.payment_types.flatMap((entry) => {
+    const stored = types.get(entry.id);
+    if (!stored) return [];
+    if (stored.currency && stored.currency !== entry.currency) return [];
+    return [{
+      ...stored,
+      currency: entry.currency,
+      allow_cash_float: entry.allow_cash_float ?? (context.config.cashier_shift_enabled && stored.kind === "cash")
+    }];
+  });
+}
+__name(paymentTypes, "paymentTypes");
+var idleProfile = `NOT EXISTS (
+    SELECT 1 FROM cashier_shifts shift WHERE shift.profile_id=pos_profiles.id AND shift.closed_at IS NULL
+  ) AND NOT EXISTS (
+    SELECT 1 FROM sales sale WHERE sale.profile_id=pos_profiles.id AND sale.status IN ('open','submitted','bill_requested')
+  )`;
+function promoteProfile(context) {
+  return sql(
+    context.db,
+    `UPDATE pos_profiles SET config_json=pending_config_json,
+    pending_config_json=NULL,version=version+1
+    WHERE business_id=? AND id=? AND pending_config_json IS NOT NULL AND ${idleProfile}`,
+    context.identity.business_id,
+    context.profile.id
+  );
+}
+__name(promoteProfile, "promoteProfile");
+function jsonRow(alias, columns, extra = {}) {
+  const entries = [
+    ...columns.split(/\s+/).filter(Boolean).map((column) => [column, `${alias}.${column}`]),
+    ...Object.entries(extra)
+  ];
+  let expression = "'{}'";
+  for (let offset = 0; offset < entries.length; offset += 12) {
+    const argumentsSql = entries.slice(offset, offset + 12).map(([key, value]) => `'$.${key}',${value}`).join(",");
+    expression = `json_set(${expression},${argumentsSql})`;
+  }
+  return expression;
+}
+__name(jsonRow, "jsonRow");
+function canonical(value) {
+  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  if (value && typeof value === "object") {
+    const row = value;
+    return "{" + Object.keys(row).sort().map((key) => JSON.stringify(key) + ":" + canonical(row[key])).join(",") + "}";
+  }
+  return JSON.stringify(value);
+}
+__name(canonical, "canonical");
+var Command = class _Command {
+  constructor(context, key, hash2, body) {
+    this.context = context;
+    this.key = key;
+    this.hash = hash2;
+    this.body = body;
+  }
+  context;
+  key;
+  hash;
+  body;
+  static {
+    __name(this, "Command");
+  }
+  static async read(request, context, supplied) {
+    const key = request.headers.get("idempotency-key");
+    if (!key || !/^[A-Za-z0-9_-]{8,128}$/.test(key))
+      invalid("A valid Idempotency-Key header is required");
+    const body = supplied?.body ?? await bodyOf(request);
+    const hash2 = await digest(
+      canonical([
+        request.method,
+        context.storeImport?.recovery ? posApiPath + "/store-operations" : new URL(request.url).pathname,
+        context.identity.user_id,
+        supplied?.envelope ?? body
+      ])
+    );
+    const command = new _Command(context, key, hash2, body);
+    return await command.replay() ?? command;
+  }
+  async replay() {
+    const { db, identity, profile } = this.context;
+    const record = await sql(
+      db,
+      `SELECT request_hash,response_json,response_status FROM pos_commands
+      WHERE business_id=? AND profile_id=? AND idempotency_key=?`,
+      identity.business_id,
+      profile.id,
+      this.key
+    ).first();
+    if (!record) return null;
+    if (record.request_hash !== this.hash)
+      conflict(
+        "The idempotency key was already used for a different request",
+        "IDEMPOTENCY_CONFLICT"
+      );
+    return respond(JSON.parse(record.response_json), record.response_status);
+  }
+  async commit(status, guard, writes, result) {
+    const { db, identity, profile, now, storeImport } = this.context;
+    const { business_id: businessId, user_id: actor } = identity;
+    const recovery = storeImport?.recovery;
+    const eligible = `EXISTS (
+      SELECT 1 FROM pos_profiles p
+      JOIN branches b ON b.id=p.branch_id AND b.business_id=p.business_id AND b.is_active=1
+      JOIN businesses business ON business.id=b.business_id AND business.is_active=1
+      JOIN pos_sessions s ON s.business_id=p.business_id AND ${recovery ? "s.profile_id=?" : "s.profile_id=p.id"}
+      JOIN memberships m ON m.business_id=s.business_id AND m.user_id=s.user_id
+      JOIN users u ON u.id=m.user_id AND u.password_salt=s.credential_version
+      WHERE p.business_id=? AND p.id=? AND p.version=? AND p.is_active=1
+        AND s.token_hash=? AND s.expires_at>unixepoch() AND ${activeDeviceSession}
+        AND ${posPlanEnabled("p.business_id")}
+        ${recovery ? `AND m.role='owner' AND EXISTS (
+          SELECT 1 FROM pos_profiles approving
+          WHERE approving.id=s.profile_id AND approving.business_id=p.business_id
+            AND approving.branch_id=p.branch_id AND approving.is_active=1
+        )` : ""}
+        AND ${storeImport ? `EXISTS (
+            SELECT 1 FROM pos_store_authorities authority
+            JOIN pos_device_credentials device ON device.id=s.device_credential_id
+            WHERE authority.business_id=p.business_id AND authority.branch_id=p.branch_id
+              AND authority.epoch=? AND authority.last_sequence=? AND authority.device_id=device.device_id
+              AND (authority.public_key IS NULL OR authority.public_key=device.public_key)
+              ${recovery ? `AND ${storeOperatorRegistered} AND NOT ${storeOperatorActive}` : ""}
+          )` : guard.allowStoreAuthority ? "1" : `NOT EXISTS (
+            SELECT 1 FROM pos_store_authorities authority
+            WHERE authority.business_id=p.business_id AND authority.branch_id=p.branch_id
+          )`}
+        AND ${[...this.context.requiredPermissions ?? []].map((key) => permissionSql(key)).join(" AND ") || "1"}
+        AND (m.role IN ('owner','manager') ${guard.manager ? "" : `OR EXISTS (
+          SELECT 1 FROM pos_profile_grants g WHERE g.business_id=m.business_id AND g.profile_id=p.id AND g.user_id=m.user_id
+        )`})
+        ${guard.allowReadOnly ? "" : `AND NOT EXISTS (
+          SELECT 1 FROM business_subscriptions sub WHERE sub.business_id=p.business_id
+          AND (sub.status IN ('past_due','canceled') OR
+            (sub.current_period_end_at IS NOT NULL AND COALESCE(unixepoch(sub.current_period_end_at),0)<=unixepoch()))
+        )`}
+    )`;
+    const results = await db.batch([
+      sql(
+        db,
+        `INSERT INTO pos_commands
+          (business_id,profile_id,idempotency_key,request_hash,actor_id,created_at,response_status,state_valid)
+          SELECT ?,?,?,?,?,?,?,CASE WHEN ${eligible} AND (${guard.query}) THEN 1 ELSE 0 END`,
+        businessId,
+        profile.id,
+        this.key,
+        this.hash,
+        actor,
+        now,
+        status,
+        ...recovery ? [identity.profile_id] : [],
+        businessId,
+        profile.id,
+        profile.version,
+        identity.token_hash,
+        ...storeImport ? [storeImport.epoch, storeImport.sequence - 1] : [],
+        ...recovery ? [profile.id, actor, profile.id, actor] : [],
+        ...guard.params
+      ),
+      ...writes,
+      ...recovery ? [
+        sql(
+          db,
+          `INSERT INTO pos_store_recoveries
+          (epoch,sequence,business_id,branch_id,profile_id,command_id,operator_id,approved_by,reason,approved_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          storeImport.epoch,
+          storeImport.sequence,
+          businessId,
+          profile.branch_id,
+          profile.id,
+          this.key,
+          actor,
+          recovery.approvedBy,
+          recovery.reason,
+          recovery.approvedAt
+        )
+      ] : [],
+      ...storeImport ? [
+        sql(
+          db,
+          "UPDATE pos_store_authorities SET last_sequence=? WHERE epoch=?",
+          storeImport.sequence,
+          storeImport.epoch
+        )
+      ] : [],
+      sql(
+        db,
+        `UPDATE pos_commands SET response_json=(${result.query})
+          WHERE business_id=? AND profile_id=? AND idempotency_key=? RETURNING response_json`,
+        ...result.params,
+        businessId,
+        profile.id,
+        this.key
+      )
+    ]);
+    return respond(
+      JSON.parse(results[results.length - 1].results[0].response_json),
+      status
+    );
+  }
+};
+function pagination(url) {
+  const size = url.searchParams.get("page_size") ?? "25";
+  const page = url.searchParams.get("page") ?? "1";
+  if (!/^\d+$/.test(page) || !/^\d+$/.test(size)) invalid("Invalid pagination");
+  const limit = integer(Number(size), "page_size", 1, 100);
+  const pageNumber = integer(Number(page), "page", 1, 1e6);
+  return { limit, offset: (pageNumber - 1) * limit, page: pageNumber };
+}
+__name(pagination, "pagination");
+async function pageOf(db, url, resource, query, params) {
+  const { limit, offset, page } = pagination(url);
+  const { results } = await sql(
+    db,
+    `${query} LIMIT ? OFFSET ?`,
+    ...params,
+    limit + 1,
+    offset
+  ).all();
+  return {
+    [resource]: results.slice(0, limit),
+    page,
+    page_size: limit,
+    has_more: results.length > limit
+  };
+}
+__name(pageOf, "pageOf");
+
+// worker/posApiStaff.ts
+function staffUsername(value) {
+  const username = string(value, "username", 40);
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$/.test(username)) {
+    invalid(
+      "Use 2\u201340 letters, digits, dots, hyphens or underscores, starting with a letter or digit"
+    );
+  }
+  return username.toLowerCase();
+}
+__name(staffUsername, "staffUsername");
+var eligibleStaff = `m.business_id=? AND m.role<>'owner' AND (
+  m.role='manager' OR EXISTS (
+    SELECT 1 FROM pos_profile_grants g
+    WHERE g.business_id=m.business_id AND g.profile_id=? AND g.user_id=m.user_id
+  )
+)`;
+async function resolveStaffUsername(context, request) {
+  requireManager(context.identity.role);
+  const { username } = await bodyOf(request);
+  const member = await sql(
+    context.db,
+    `SELECT u.email FROM memberships m JOIN users u ON u.id=m.user_id
+    WHERE ${eligibleStaff} AND m.pos_username=?`,
+    context.identity.business_id,
+    context.profile.id,
+    staffUsername(username)
+  ).first();
+  if (!member) missing("Staff username");
+  return respond(member);
+}
+__name(resolveStaffUsername, "resolveStaffUsername");
+async function listStaffUsernames(context, url) {
+  requireManager(context.identity.role);
+  return respond(
+    await pageOf(
+      context.db,
+      url,
+      "staff",
+      `SELECT m.user_id,u.display_name AS name,m.role,m.pos_username AS username
+    FROM memberships m JOIN users u ON u.id=m.user_id
+    WHERE ${eligibleStaff} ORDER BY u.display_name COLLATE NOCASE,m.user_id`,
+      [context.identity.business_id, context.profile.id]
+    )
+  );
+}
+__name(listStaffUsernames, "listStaffUsernames");
+async function setStaffUsername(context, request, userId) {
+  requireManager(context.identity.role);
+  const command = await Command.read(request, context);
+  if (command instanceof Response) return command;
+  const username = command.body.username === null ? null : staffUsername(command.body.username);
+  const { db, identity, profile } = context;
+  const matching = `FROM memberships m WHERE ${eligibleStaff} AND m.user_id=?`;
+  const params = [identity.business_id, profile.id, userId];
+  if (!await sql(db, `SELECT 1 ${matching}`, ...params).first())
+    missing("Staff member");
+  try {
+    return await command.commit(
+      200,
+      {
+        query: `EXISTS (SELECT 1 ${matching})`,
+        params,
+        manager: true,
+        allowReadOnly: true,
+        allowStoreAuthority: true
+      },
+      [
+        sql(
+          db,
+          "UPDATE memberships SET pos_username=? WHERE business_id=? AND user_id=?",
+          username,
+          identity.business_id,
+          userId
+        )
+      ],
+      {
+        query: `SELECT json_object('user_id',m.user_id,'username',m.pos_username) ${matching}`,
+        params
+      }
+    );
+  } catch (error3) {
+    const replay = await command.replay();
+    if (replay) return replay;
+    if (error3 instanceof Error && error3.message.includes(
+      "UNIQUE constraint failed: memberships.business_id, memberships.pos_username"
+    )) {
+      conflict(
+        "That username is already in use in this business",
+        "POS_USERNAME_TAKEN"
+      );
+    }
+    throw error3;
+  }
+}
+__name(setStaffUsername, "setStaffUsername");
+
+// worker/adminUsers.ts
+async function userCapacity(db, businessId) {
+  const result = await sql(db, `SELECT
+    (SELECT COUNT(*) FROM memberships WHERE business_id=?1) AS current,
+    (SELECT p.max_users FROM business_subscriptions s JOIN subscription_plans p
+      ON p.id=s.plan_id WHERE s.business_id=?1) AS quota`, businessId).first();
+  return { current: result.current, limit: result.quota };
+}
+__name(userCapacity, "userCapacity");
+var members = `FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.business_id=?`;
+var fields = `u.id,u.display_name AS name,u.email,m.role,m.pos_username AS username,u.permissions,
+  (SELECT COUNT(*) FROM memberships other WHERE other.user_id=u.id) AS memberships,
+  (SELECT json_group_array(g.profile_id) FROM pos_profile_grants g
+    WHERE g.user_id=u.id AND g.business_id=m.business_id) AS profile_ids`;
+async function adminUsers(request, url, db, auth, credential) {
+  if (auth.role !== "owner" || auth.sessionType !== "customer")
+    return respond({ error: "Only the business owner can manage users." }, 403);
+  try {
+    const suffix = url.pathname.slice("/api/admin/users".length);
+    if (request.method === "GET" && suffix === "/options") {
+      const profiles2 = await sql(db, `SELECT p.id,p.name,b.name AS branch FROM pos_profiles p
+        JOIN branches b ON b.id=p.branch_id WHERE p.business_id=? ORDER BY b.name,p.name,p.id`, auth.businessId).all();
+      return respond({ profiles: profiles2.results });
+    }
+    if (request.method === "GET" && !suffix) {
+      const { results } = await sql(db, `SELECT ${fields} ${members}
+        ORDER BY CASE m.role WHEN 'owner' THEN 0 ELSE 1 END,u.display_name COLLATE NOCASE,u.id`, auth.businessId).all();
+      return respond({ capacity: await userCapacity(db, auth.businessId), users: results.map((row) => ({
+        ...row,
+        permissions: userPermissions(row.permissions, row.role),
+        profile_ids: JSON.parse(row.profile_ids)
+      })) });
+    }
+    const match = suffix.match(/^\/([a-zA-Z0-9_-]{1,80})$/);
+    const id2 = match?.[1];
+    if (suffix && !id2 || !id2 && request.method !== "POST" || id2 && !["PATCH", "DELETE"].includes(request.method))
+      return respond({ error: "Method not allowed" }, 405);
+    const existing = id2 ? await sql(db, `SELECT u.id,u.email,m.role,
+      (SELECT COUNT(*) FROM memberships other WHERE other.user_id=u.id) AS memberships
+      ${members} AND u.id=?`, auth.businessId, id2).first() : null;
+    if (id2 && !existing) missing("Business user");
+    if (existing?.role === "owner" || id2 === auth.userId)
+      return respond({ error: "Use your account settings to edit the owner account." }, 403);
+    if (request.method === "DELETE") {
+      const removable = `EXISTS (SELECT 1 FROM memberships target JOIN memberships actor
+        ON actor.business_id=target.business_id
+        WHERE target.business_id=? AND target.user_id=? AND target.role<>'owner'
+          AND actor.user_id=? AND actor.role='owner')`;
+      const deletes = ["pos_profile_grants", "pos_sessions", "pos_device_credentials", "sessions", "memberships"].map((table) => sql(
+        db,
+        `DELETE FROM ${table} WHERE business_id=? AND user_id=? AND ${removable}`,
+        auth.businessId,
+        id2,
+        auth.businessId,
+        id2,
+        auth.userId
+      ));
+      const results = await db.batch(deletes);
+      if (!results.at(-1)?.meta.changes) conflict("The user changed. Refresh and retry.");
+      return respond({ ok: true });
+    }
+    if (existing && existing.memberships > 1)
+      return respond({ error: "This account belongs to multiple businesses. Its account and permissions need to be managed in Super Control." }, 409);
+    if (!existing) {
+      const capacity = await userCapacity(db, auth.businessId);
+      if (capacity.limit !== null && capacity.current >= capacity.limit)
+        return respond(planLimitError("PLAN_USER_LIMIT"), 409);
+    }
+    const body = await bodyOf(request);
+    const name = string(body.name, "name", 120);
+    const email = existing?.email ?? string(body.email, "email", 254).toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) invalid("Enter a valid email address.");
+    const role = choice(body.role, "role", ["manager", "editor"]);
+    const username = body.username ? staffUsername(body.username) : null;
+    const permissions = body.permissions;
+    if (!permissions || typeof permissions !== "object" || Array.isArray(permissions) || Object.keys(permissions).some((key) => !userPermissionKeys.includes(key)) || userPermissionKeys.some((key) => typeof permissions[key] !== "boolean"))
+      invalid("Choose valid user permissions.");
+    if (!Array.isArray(body.profile_ids) || body.profile_ids.length > 500 || body.profile_ids.some((id3) => typeof id3 !== "string") || new Set(body.profile_ids).size !== body.profile_ids.length)
+      invalid("Choose valid POS profiles.");
+    const profiles = JSON.stringify(body.profile_ids);
+    const total = await sql(db, `SELECT COUNT(*) AS total FROM pos_profiles WHERE business_id=?
+      AND id IN (SELECT value FROM json_each(?))`, auth.businessId, profiles).first("total");
+    if (total !== body.profile_ids.length) invalid("Choose profiles from this business.");
+    let password = null;
+    if (!existing || body.passwordProof !== void 0) {
+      if (body.authVersion !== "client-pbkdf2-sha256-v1" || typeof body.passwordProof !== "string" || !/^[a-f0-9]{64}$/.test(body.passwordProof)) invalid("Provide a valid password.");
+      password = await credential(body.passwordProof);
+    }
+    const userId = id2 ?? newId("usr");
+    const encoded = JSON.stringify(permissions);
+    const canEdit = `EXISTS (SELECT 1 FROM memberships WHERE business_id=? AND user_id=? AND role='owner')`;
+    if (!existing) {
+      const [created] = await db.batch([
+        sql(
+          db,
+          `INSERT INTO users(id,email,display_name,password_hash,password_salt,permissions)
+          SELECT ?,?,?,?,?,? WHERE ${canEdit}`,
+          userId,
+          email,
+          name,
+          password.hash,
+          password.salt,
+          encoded,
+          auth.businessId,
+          auth.userId
+        ),
+        sql(db, `INSERT INTO memberships(user_id,business_id,role,pos_username)
+          SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM users WHERE id=?)`, userId, auth.businessId, role, username, userId),
+        sql(
+          db,
+          `INSERT INTO pos_profile_grants(business_id,profile_id,user_id)
+          SELECT ?,value,? FROM json_each(?) WHERE EXISTS(SELECT 1 FROM memberships WHERE user_id=? AND business_id=?)`,
+          auth.businessId,
+          userId,
+          profiles,
+          userId,
+          auth.businessId
+        )
+      ]);
+      if (!created.meta.changes) conflict("Your access changed. Refresh and retry.");
+    } else {
+      const [updated] = await db.batch([
+        sql(
+          db,
+          `UPDATE users SET display_name=?,permissions=?,
+          password_hash=COALESCE(?,password_hash),password_salt=COALESCE(?,password_salt)
+          WHERE id=? AND ${canEdit}
+          AND (SELECT COUNT(*) FROM memberships WHERE user_id=users.id)=1
+          AND EXISTS(SELECT 1 FROM memberships WHERE user_id=users.id AND business_id=? AND role<>'owner')`,
+          name,
+          encoded,
+          password?.hash ?? null,
+          password?.salt ?? null,
+          userId,
+          auth.businessId,
+          auth.userId,
+          auth.businessId
+        ),
+        sql(
+          db,
+          `UPDATE memberships SET role=CASE WHEN changes()=1 THEN ? ELSE NULL END,pos_username=? WHERE business_id=? AND user_id=? AND role<>'owner'`,
+          role,
+          username,
+          auth.businessId,
+          userId
+        ),
+        sql(db, "DELETE FROM pos_profile_grants WHERE business_id=? AND user_id=? AND profile_id NOT IN (SELECT value FROM json_each(?))", auth.businessId, userId, profiles),
+        sql(db, `INSERT INTO pos_profile_grants(business_id,profile_id,user_id)
+          SELECT ?,value,? FROM json_each(?) WHERE 1 ON CONFLICT DO NOTHING`, auth.businessId, userId, profiles),
+        ...password ? [
+          sql(db, "DELETE FROM sessions WHERE user_id=?", userId),
+          sql(db, "DELETE FROM pos_sessions WHERE user_id=?", userId),
+          sql(db, "DELETE FROM pos_device_credentials WHERE user_id=?", userId)
+        ] : []
+      ]);
+      if (!updated.meta.changes) conflict("The user changed. Refresh and retry.");
+    }
+    return respond({ id: userId }, existing ? 200 : 201);
+  } catch (error3) {
+    if (String(error3).includes("UNIQUE constraint failed: users.email"))
+      return respond({ error: "This email is already registered. Use another email for the additional user." }, 409);
+    if (String(error3).includes("UNIQUE constraint failed: memberships.business_id, memberships.pos_username"))
+      return respond({ error: "That POS username is already in use in this business." }, 409);
+    return errorResponse(error3);
+  }
+}
+__name(adminUsers, "adminUsers");
+
+// worker/index.ts
+import { WorkerEntrypoint } from "cloudflare:workers";
 
 // ../../shared/distanceMeters.ts
 function distanceMeters(latitude, longitude, customerLatitude, customerLongitude) {
@@ -62,9 +1058,6 @@ var defaultMenuKhmerFont = menuKhmerFonts[0];
 var defaultQrFooterText = "\u178A\u17B6\u1780\u17CB\u1780\u17B6\u1798\u17C1\u179A\u17C9\u17B6\u179A\u1794\u179F\u17CB\u17A2\u17D2\u1793\u1780\u178F\u1798\u17D2\u179A\u1784\u17CB\u1791\u17C5\u179B\u17C1\u1781\u1780\u17BC\u178A QR";
 var maxQrFooterTextLength = 120;
 var maxQrTablePrefixLength = 32;
-
-// ../../shared/subscriptionPlans.ts
-var MAX_DAILY_ORDERS = 999;
 
 // worker/catalogScope.ts
 var branchOrderOverrides = {
@@ -324,7 +1317,7 @@ var SyncError = class extends Error {
     __name(this, "SyncError");
   }
 };
-function invalid(field, message) {
+function invalid2(field, message) {
   throw new SyncError(
     `${snakeCase(field)}: ${message.replace(
       /\b(?:syncId|sourceUpdatedAt|nameKm|priceCents|priceEntries)\b/g,
@@ -332,15 +1325,15 @@ function invalid(field, message) {
     )}`
   );
 }
-__name(invalid, "invalid");
-function object(value, field) {
+__name(invalid2, "invalid");
+function object2(value, field) {
   if (!value || typeof value !== "object" || Array.isArray(value))
-    invalid(field, "must be an object");
+    invalid2(field, "must be an object");
   return value;
 }
-__name(object, "object");
-function knownFields(row, fields, field) {
-  const unknown = Object.keys(row).find((key) => !fields.includes(key));
+__name(object2, "object");
+function knownFields(row, fields2, field) {
+  const unknown = Object.keys(row).find((key) => !fields2.includes(key));
   if (unknown)
     throw new SyncError(
       `${field}.${unknown}: is not a supported writable field`
@@ -352,34 +1345,34 @@ function snakeCase(value) {
 }
 __name(snakeCase, "snakeCase");
 function syncFields(row, internalFields, wireNames = {}) {
-  const fields = {};
+  const fields2 = {};
   for (const key of internalFields) {
     const wireName = wireNames[key] ?? snakeCase(key);
-    if (has(row, wireName)) fields[key] = row[wireName];
+    if (has(row, wireName)) fields2[key] = row[wireName];
   }
-  return fields;
+  return fields2;
 }
 __name(syncFields, "syncFields");
 function text(value, field, max, nullable = false) {
   if (nullable && value === null) return null;
-  if (typeof value !== "string") invalid(field, "must be a string");
+  if (typeof value !== "string") invalid2(field, "must be a string");
   const result = value.trim();
-  if (result.length > max) invalid(field, `must be at most ${max} characters`);
+  if (result.length > max) invalid2(field, `must be at most ${max} characters`);
   return result;
 }
 __name(text, "text");
 function number(value, field, max = MAX_PRICE, min = 0) {
   if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max)
-    invalid(field, `must be a number between ${min} and ${max}`);
+    invalid2(field, `must be a number between ${min} and ${max}`);
   return value;
 }
 __name(number, "number");
-function integer(value, field, max = 999999) {
+function integer2(value, field, max = 999999) {
   const result = number(value, field, max);
-  if (!Number.isInteger(result)) invalid(field, "must be a whole number");
+  if (!Number.isInteger(result)) invalid2(field, "must be a whole number");
   return result;
 }
-__name(integer, "integer");
+__name(integer2, "integer");
 function sortOrder(value) {
   if (typeof value !== "number") return 999999;
   if (value < 0) return 0;
@@ -389,18 +1382,18 @@ __name(sortOrder, "sortOrder");
 function flag(value, field) {
   if (value === true || value === 1) return 1;
   if (value === false || value === 0) return 0;
-  return invalid(field, "must be true, false, 1 or 0");
+  return invalid2(field, "must be true, false, 1 or 0");
 }
 __name(flag, "flag");
 function uuid(value, field) {
   if (typeof value !== "string" || !UUID.test(value))
-    invalid(field, "must be a hyphenated UUID");
+    invalid2(field, "must be a hyphenated UUID");
   return value.toLowerCase();
 }
 __name(uuid, "uuid");
 function reference(value, field) {
   if (typeof value !== "string" || !RECORD_ID.test(value))
-    invalid(field, "must be a record ID");
+    invalid2(field, "must be a record ID");
   return UUID.test(value) ? value.toLowerCase() : value;
 }
 __name(reference, "reference");
@@ -408,30 +1401,30 @@ function timestamp(value, field) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(
     value
   ) || !Number.isFinite(Date.parse(value)))
-    invalid(field, "must be an ISO 8601 timestamp with a timezone");
+    invalid2(field, "must be an ISO 8601 timestamp with a timezone");
   const [year, month, day] = value.slice(0, 10).split("-").map(Number);
   const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
   if (month < 1 || month > 12 || day < 1 || day > daysInMonth)
-    invalid(field, "contains an invalid calendar date");
+    invalid2(field, "contains an invalid calendar date");
   return new Date(value).toISOString();
 }
 __name(timestamp, "timestamp");
 function imageUrl(value, field) {
   if (value === null || value === "") return null;
-  if (typeof value !== "string") invalid(field, "must be a string");
+  if (typeof value !== "string") invalid2(field, "must be a string");
   const result = value.trim();
   return result.length > 2048 ? null : result || null;
 }
 __name(imageUrl, "imageUrl");
 function array(value, field, max) {
   if (!Array.isArray(value) || value.length > max)
-    invalid(field, `must be an array with at most ${max} entries`);
+    invalid2(field, `must be an array with at most ${max} entries`);
   return value;
 }
 __name(array, "array");
 function unique(values, field) {
   if (new Set(values).size !== values.length)
-    invalid(field, "contains duplicate IDs");
+    invalid2(field, "contains duplicate IDs");
 }
 __name(unique, "unique");
 async function hash(value) {
@@ -451,7 +1444,7 @@ async function readBody(request, limit = MAX_BYTES) {
     );
   if (Number(request.headers.get("content-length")) > limit)
     throw new SyncError("Sync request is too large", 413, "SYNC_TOO_LARGE");
-  if (!request.body) invalid("body", "is required");
+  if (!request.body) invalid2("body", "is required");
   const reader = request.body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
   let size = 0;
@@ -478,7 +1471,7 @@ async function readBody(request, limit = MAX_BYTES) {
 __name(readBody, "readBody");
 function parseJson(raw) {
   try {
-    return object(JSON.parse(raw), "body");
+    return object2(JSON.parse(raw), "body");
   } catch (error3) {
     if (error3 instanceof SyncError) throw error3;
     throw new SyncError("Request body must contain valid JSON");
@@ -536,7 +1529,7 @@ async function handlePosIntegration(request, env, auth) {
       const body = parseJson(await readBody(request, 4096));
       knownFields(body, ["name"], "body");
       const name = has(body, "name") ? text(body.name, "name", 120) : "POS";
-      if (!name) invalid("name", "cannot be empty");
+      if (!name) invalid2("name", "cannot be empty");
       return response(await issuePosApiKey(env, auth.businessId, name));
     }
     if (request.method === "DELETE") {
@@ -565,7 +1558,7 @@ function localized(row, existing, field) {
   if (!result.name)
     result.name = result.name_km || result.name_en || result.name_zh;
   if (!result.name)
-    invalid(
+    invalid2(
       field,
       "a new record needs name or nameKm (or another translated name)"
     );
@@ -578,7 +1571,7 @@ function slug(row, existing, names, id2, field) {
     const value = text(row.slug, `${field}.slug`, 200, true);
     if (value) {
       if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value))
-        invalid(
+        invalid2(
           `${field}.slug`,
           "must contain lowercase letters, digits and single hyphens"
         );
@@ -592,7 +1585,7 @@ function slug(row, existing, names, id2, field) {
 __name(slug, "slug");
 function nullableNumber(row, existing, api, column, field, max, whole = false) {
   if (!has(row, api)) return existing[column] ?? null;
-  return row[api] === null ? null : whole ? integer(row[api], `${field}.${api}`, max) : number(row[api], `${field}.${api}`, max);
+  return row[api] === null ? null : whole ? integer2(row[api], `${field}.${api}`, max) : number(row[api], `${field}.${api}`, max);
 }
 __name(nullableNumber, "nullableNumber");
 function label(row, field) {
@@ -601,7 +1594,7 @@ function label(row, field) {
     labelEn: has(row, "labelEn") ? text(row.labelEn, `${field}.labelEn`, 120) : "",
     labelZh: has(row, "labelZh") ? text(row.labelZh, `${field}.labelZh`, 120) : ""
   };
-  if (!result.labelKm) invalid(`${field}.labelKm`, "is required");
+  if (!result.labelKm) invalid2(`${field}.labelKm`, "is required");
   return result;
 }
 __name(label, "label");
@@ -609,7 +1602,7 @@ function optionId(row, field) {
   if (!has(row, "id")) return crypto.randomUUID();
   const value = reference(row.id, `${field}.id`);
   if (value === "base")
-    invalid(`${field}.id`, "base is reserved for the base price");
+    invalid2(`${field}.id`, "base is reserved for the base price");
   return value;
 }
 __name(optionId, "optionId");
@@ -617,7 +1610,7 @@ function portions(value, field) {
   const result = array(value, field, 20).map((entry, index) => {
     const path = `${field}[${index}]`;
     const row = syncFields(
-      object(entry, path),
+      object2(entry, path),
       [
         "id",
         "labelKm",
@@ -652,7 +1645,7 @@ function modifiers(value, field) {
   const result = array(value, field, 12).map((entry, index) => {
     const path = `${field}[${index}]`;
     const row = syncFields(
-      object(entry, path),
+      object2(entry, path),
       [
         "id",
         "labelKm",
@@ -667,7 +1660,7 @@ function modifiers(value, field) {
       (entry2, index2) => {
         const optionPath = `${path}.options[${index2}]`;
         const option = syncFields(
-          object(entry2, optionPath),
+          object2(entry2, optionPath),
           ["id", "labelKm", "labelEn", "labelZh", "priceCents", "prefix"],
           { priceCents: "price" }
         );
@@ -685,7 +1678,7 @@ function modifiers(value, field) {
       }
     );
     if (!options.length)
-      invalid(`${path}.options`, "must contain at least one option");
+      invalid2(`${path}.options`, "must contain at least one option");
     unique(
       options.map((option) => option.id),
       `${path}.options`
@@ -710,7 +1703,7 @@ function photo(row, existing, api, column, field, media, env) {
     const mediaId = reference(row[api], `${field}.${api}`);
     const owned = media.get(mediaId);
     if (!owned)
-      invalid(`${field}.${api}`, "must reference media owned by this business");
+      invalid2(`${field}.${api}`, "must reference media owned by this business");
     const base = env.PUBLIC_MEDIA_BASE?.trim().replace(/\/$/, "");
     return {
       mediaId,
@@ -778,7 +1771,7 @@ function categoriesForSync(input, existing, media, env) {
     const old = existing.get(id2) || {};
     const names = localized(row, old, field);
     if (has(row, "imageUrl") && row.imageMediaId)
-      invalid(field, "send image_url or image_media_id, not both");
+      invalid2(field, "send image_url or image_media_id, not both");
     const image = photo(
       row,
       old,
@@ -816,9 +1809,9 @@ function productsForSync(input, existing, gallery, media, priceLists, normalId, 
     const portionsJson = JSON.stringify(productPortions);
     const modifiersJson = JSON.stringify(productModifiers);
     if (portionsJson.length + modifiersJson.length > 64e3)
-      invalid(field, "product options exceed 64,000 characters");
+      invalid2(field, "product options exceed 64,000 characters");
     if (!productPortions.length && !has(row, "priceCents") && !has(old, "price_cents"))
-      invalid(
+      invalid2(
         `${field}.price`,
         "is required for a new product without portions"
       );
@@ -826,7 +1819,7 @@ function productsForSync(input, existing, gallery, media, priceLists, normalId, 
     const minPrice = productPortions.length ? Math.min(...productPortions.map((portion) => portion.priceCents)) : base;
     const maxPrice = productPortions.length ? Math.max(...productPortions.map((portion) => portion.priceCents)) : base;
     if (has(row, "maxPrice") && number(row.maxPrice, `${field}.maxPrice`) !== maxPrice)
-      invalid(
+      invalid2(
         `${field}.maxPrice`,
         "must match the maximum portion price, or price when there are no portions"
       );
@@ -837,7 +1830,7 @@ function productsForSync(input, existing, gallery, media, priceLists, normalId, 
       (entry, index2) => {
         const path = `${field}.priceEntries[${index2}]`;
         const price = syncFields(
-          object(entry, path),
+          object2(entry, path),
           ["priceListId", "targetKey", "priceCents"]
         );
         const priceListId = reference(
@@ -846,17 +1839,17 @@ function productsForSync(input, existing, gallery, media, priceLists, normalId, 
         );
         const targetKey = reference(price.targetKey, `${path}.targetKey`);
         if (!priceLists.has(priceListId))
-          invalid(
+          invalid2(
             `${path}.priceListId`,
             "price list is not owned by this business or is archived"
           );
         if (!validTargets.has(targetKey))
-          invalid(
+          invalid2(
             `${path}.targetKey`,
             "must be base or an existing portion ID"
           );
         if (priceListId === normalId)
-          invalid(
+          invalid2(
             `${path}.priceListId`,
             "Normal Rate is set through price or portions, not priceEntries"
           );
@@ -896,12 +1889,12 @@ function productsForSync(input, existing, gallery, media, priceLists, normalId, 
     if (has(row, "imageUrl") && !image.mediaId && !has(row, "mediaIds"))
       mediaIds = [];
     if (mediaIds.length > 5 || mediaIds.some((mediaId) => !media.has(mediaId)))
-      invalid(
+      invalid2(
         `${field}.mediaIds`,
         "must contain at most 5 media IDs owned by this business"
       );
     if (has(row, "imageUrl") && image.mediaId)
-      invalid(field, "send image_url or primary_media_id, not both");
+      invalid2(field, "send image_url or primary_media_id, not both");
     const code = has(row, "code") ? text(row.code, `${field}.code`, 64, true) || null : old.code ?? null;
     return {
       id: id2,
@@ -964,22 +1957,22 @@ function validateGraph(categories, existing, products, kind = "category") {
     let current = String(category.id);
     while (current) {
       if (!parents.has(current))
-        invalid(
+        invalid2(
           parentField,
           `parent ${kind} is not owned by this business or included in this sync`
         );
       if (path.has(current))
-        invalid(parentField, `${kind} hierarchy contains a cycle`);
+        invalid2(parentField, `${kind} hierarchy contains a cycle`);
       path.add(current);
       if (path.size > 32)
-        invalid(parentField, `${kind} hierarchy exceeds 32 levels`);
+        invalid2(parentField, `${kind} hierarchy exceeds 32 levels`);
       current = parents.get(current) ?? null;
     }
     depths.set(String(category.id), path.size);
   }
   for (const product of products)
     if (!parents.has(product.category_id))
-      invalid(
+      invalid2(
         `products.${product.id}.category_id`,
         "category is not owned by this business or included in this sync"
       );
@@ -1133,12 +2126,12 @@ async function commitTableSync(env, identity, syncId, payloadHash, changes, skip
 __name(commitTableSync, "commitTableSync");
 function tableArchiveWrites(env, businessId, input) {
   const archive = syncFields(
-    object(input, "archive"),
+    object2(input, "archive"),
     ["tableId", "tableGroupId"]
   );
   const group = has(archive, "tableGroupId");
   if (group === has(archive, "tableId"))
-    invalid("archive", "include exactly one table_id or table_group_id");
+    invalid2("archive", "include exactly one table_id or table_group_id");
   if (!group) {
     const id3 = reference(archive.tableId, "archive.table_id");
     return [
@@ -1206,7 +2199,7 @@ async function syncTables(env, identity, raw) {
     return tableSyncSuccess(readSkippedTables(receipt.skipped_tables_json));
   if (has(body, "archive")) {
     if (has(body, "tableGroups") || has(body, "tables"))
-      invalid(
+      invalid2(
         "body",
         "send archive in a separate request from table_groups and tables"
       );
@@ -1221,18 +2214,18 @@ async function syncTables(env, identity, raw) {
   }
   const groupRows = array(body.tableGroups, "table_groups", 500).map(
     (entry, i) => syncFields(
-      object(entry, `table_groups[${i}]`),
+      object2(entry, `table_groups[${i}]`),
       ["id", "name", "sortOrder", "isActive", "branchId"]
     )
   );
   const tableRows = array(body.tables, "tables", 1e3).map(
     (entry, i) => syncFields(
-      object(entry, `tables[${i}]`),
+      object2(entry, `tables[${i}]`),
       ["id", "groupId", "code", "label", "sortOrder", "isActive"]
     )
   );
   if (!groupRows.length && !tableRows.length)
-    invalid("body", "include at least one table group or table");
+    invalid2("body", "include at least one table group or table");
   const groupIds = groupRows.map(
     (row, i) => reference(row.id, `table_groups[${i}].id`)
   );
@@ -1273,10 +2266,10 @@ async function syncTables(env, identity, raw) {
     const old = groupsById.get(id2);
     if (!old) uuid(id2, `${field}.id`);
     const name = has(row, "name") ? text(row.name, `${field}.name`, 80) : old?.name;
-    if (!name) invalid(`${field}.name`, "is required");
+    if (!name) invalid2(`${field}.name`, "is required");
     const branchId = has(row, "branchId") ? reference(row.branchId, `${field}.branchId`) : old?.branch_id ?? defaultBranchId;
     if (old ? branchId !== old.branch_id : !branchesResult.results.some((branch2) => branch2.id === branchId && branch2.is_active === 1))
-      invalid(`${field}.branchId`, "must use the existing group's branch or an active branch of this business");
+      invalid2(`${field}.branchId`, "must use the existing group's branch or an active branch of this business");
     const group = {
       id: id2,
       name,
@@ -1294,20 +2287,20 @@ async function syncTables(env, identity, raw) {
     if (!old) uuid(id2, `${field}.id`);
     const groupId = has(row, "groupId") ? reference(row.groupId, `${field}.groupId`) : old?.group_id;
     if (typeof groupId !== "string" || !groupsById.has(groupId))
-      invalid(
+      invalid2(
         `${field}.groupId`,
         "must reference a table group owned by this business or included in this sync"
       );
     const code = has(row, "code") ? text(row.code, `${field}.code`, 30) : old?.code;
-    if (!code) invalid(`${field}.code`, "is required");
+    if (!code) invalid2(`${field}.code`, "is required");
     const label2 = has(row, "label") ? text(row.label, `${field}.label`, 80) : old?.label ?? code;
-    if (!label2) invalid(`${field}.label`, "must not be empty");
+    if (!label2) invalid2(`${field}.label`, "must not be empty");
     const isActive = has(row, "isActive") ? flag(row.isActive, `${field}.isActive`) : old?.is_active ?? 1;
     if (isActive === 1 && groupsById.get(groupId)?.is_active !== 1)
-      invalid(`${field}.groupId`, "an active table requires an active group");
+      invalid2(`${field}.groupId`, "an active table requires an active group");
     const branchId = groupsById.get(groupId)?.branch_id;
     if (old && old.branch_id !== branchId)
-      invalid(`${field}.groupId`, "must be in the table's branch");
+      invalid2(`${field}.groupId`, "must be in the table's branch");
     const table = {
       id: id2,
       group_id: groupId,
@@ -1409,13 +2402,13 @@ __name(withPosIdentity, "withPosIdentity");
 async function menuSnapshotWrites(env, businessId, menuInput, linkInput, productIds, media) {
   const rows = array(menuInput, "menus", 1e3).map((entry, index) => {
     const field = `menus[${index}]`;
-    return syncFields(object(entry, field), CATEGORY_FIELDS.filter((key) => key !== "createdAt"));
+    return syncFields(object2(entry, field), CATEGORY_FIELDS.filter((key) => key !== "createdAt"));
   });
   const menuIds = rows.map((row, index) => uuid(row.id, `menus[${index}].id`));
   unique(menuIds, "menus");
   const links = array(linkInput, "menu_products", 1e4).map((entry, index) => {
     const field = `menu_products[${index}]`;
-    const row = syncFields(object(entry, field), ["menuId", "productId"]);
+    const row = syncFields(object2(entry, field), ["menuId", "productId"]);
     return { menu_id: uuid(row.menuId, `${field}.menuId`), product_id: uuid(row.productId, `${field}.productId`) };
   });
   unique(links.map((link) => `${link.menu_id}:${link.product_id}`), "menu_products");
@@ -1439,7 +2432,7 @@ async function menuSnapshotWrites(env, businessId, menuInput, linkInput, product
     const parentId = parent == null ? null : uuid(parent, `${field}.parentId`);
     const menuSlug = slug(row, old, names, id2, field);
     if (existing && menuSlug !== old.slug)
-      invalid(field, "an existing menu must keep its slug");
+      invalid2(field, "an existing menu must keep its slug");
     const image = photo(row, old, "imageMediaId", "image_media_id", field, media, env);
     const sort = has(row, "sortOrder") ? sortOrder(row.sortOrder) : old.sort_order ?? 0;
     const active = has(row, "isActive") ? flag(row.isActive, `${field}.isActive`) : 1;
@@ -1464,8 +2457,8 @@ async function menuSnapshotWrites(env, businessId, menuInput, linkInput, product
     normalized.filter((menu) => menu.parent_id !== null).map((menu) => menu.id)
   );
   for (const link of links) {
-    if (!incomingSections.has(link.menu_id)) invalid("menu_products.menuId", "must reference a submenu in this snapshot");
-    if (!incomingProducts.has(link.product_id)) invalid("menu_products.productId", "must reference a product owned by this business or included in this sync");
+    if (!incomingSections.has(link.menu_id)) invalid2("menu_products.menuId", "must reference a submenu in this snapshot");
+    if (!incomingProducts.has(link.product_id)) invalid2("menu_products.productId", "must reference a product owned by this business or included in this sync");
   }
   validateGraph(normalized, [], [], "menu");
   const effectiveMenus = normalized.map((menu) => {
@@ -1535,7 +2528,7 @@ async function productMenuWrites(env, businessId, productId, value, revision) {
   const encoded = JSON.stringify(ids);
   const count = await env.DB.prepare(`SELECT COUNT(*) AS count FROM menus WHERE business_id=? AND source='pos' AND parent_id IS NOT NULL
     AND id IN (SELECT value FROM json_each(?))`).bind(businessId, encoded).first("count");
-  if (count !== ids.length) invalid("product.menu_ids", "must reference POS submenus owned by this business");
+  if (count !== ids.length) invalid2("product.menu_ids", "must reference POS submenus owned by this business");
   return [
     env.DB.prepare(`DELETE FROM menu_products WHERE business_id=? AND product_id=? AND assigned_in_admin=0
       AND menu_id IN (SELECT id FROM menus WHERE business_id=? AND source='pos')
@@ -1588,25 +2581,25 @@ async function handlePosSync(request, env, subscriptionFor, scope) {
       )
     ).toISOString();
     if (has(body, "currency") && body.currency !== identity.currency)
-      invalid(
+      invalid2(
         "currency",
         `must match the business currency (${identity.currency})`
       );
     const categories = singleProduct && !has(body, "categories") ? [] : array(body.categories, "categories", 500).map(
-      (row, index) => object(row, `categories[${index}]`)
+      (row, index) => object2(row, `categories[${index}]`)
     );
-    const products = singleProduct ? [object(body.product, "product")] : array(body.products, "products", 1e3).map(
-      (row, index) => object(row, `products[${index}]`)
+    const products = singleProduct ? [object2(body.product, "product")] : array(body.products, "products", 1e3).map(
+      (row, index) => object2(row, `products[${index}]`)
     );
     const menuSnapshot = has(body, "menus");
-    if (menuSnapshot !== has(body, "menuProducts")) invalid("body", "send menus and menu_products together");
+    if (menuSnapshot !== has(body, "menuProducts")) invalid2("body", "send menus and menu_products together");
     const productMenus = singleProduct && has(products[0], "menu_ids");
     const menuIds = productMenus ? products[0].menu_ids : void 0;
     if (productMenus) delete products[0].menu_ids;
     if ((menuSnapshot || productMenus) && !sourceTimestamp)
-      invalid("sourceUpdatedAt", "is required for menu updates");
+      invalid2("sourceUpdatedAt", "is required for menu updates");
     if (!categories.length && !products.length && !menuSnapshot)
-      invalid("body", "include at least one category or product");
+      invalid2("body", "include at least one category or product");
     const categoryIds = categories.map(
       (row, index) => uuid(row.id, `categories[${index}].id`)
     );
@@ -1709,7 +2702,7 @@ async function handlePosSync(request, env, subscriptionFor, scope) {
       sourceTimestamp
     );
     if (!await ownsPortionBranches(env.DB, identity.businessId, normalizedProducts.flatMap((product) => product.portions)))
-      invalid("products.portions.branchId", "must reference a branch of this business");
+      invalid2("products.portions.branchId", "must reference a branch of this business");
     const orderedCategories = validateGraph(
       normalizedCategories,
       results[2].results,
@@ -2096,10 +3089,10 @@ function validateWebhookTemplate(body, table, event, includeBookingContact, form
     throw new Error(format === "text" ? "Enter a text body." : "Enter a valid JSON value.");
   if (new TextEncoder().encode(JSON.stringify(body)).length > 64 * 1024)
     throw new Error("The body template must be at most 64 KB.");
-  const fields = webhookFields(table, includeBookingContact);
+  const fields2 = webhookFields(table, includeBookingContact);
   function validateToken(token) {
     const [source, field] = token.split(".");
-    if (field ? !Object.hasOwn(fields, field) || source === "previous" && event !== "updated" : !contextFields.includes(source)) throw new Error("Unsupported body placeholder: " + token);
+    if (field ? !Object.hasOwn(fields2, field) || source === "previous" && event !== "updated" : !contextFields.includes(source)) throw new Error("Unsupported body placeholder: " + token);
   }
   __name(validateToken, "validateToken");
   if (format === "text") {
@@ -2268,9 +3261,9 @@ async function send(env, job) {
     headers.set("x-emenu-delivery-id", job.id);
     headers.set("x-emenu-event", job.event);
     if (!headers.has("idempotency-key")) headers.set("idempotency-key", job.id);
-    const fields = webhookFields(job.table, Boolean(job.includeContact));
+    const fields2 = webhookFields(job.table, Boolean(job.includeContact));
     const snapshot = /* @__PURE__ */ __name((value) => Object.fromEntries(
-      Object.entries(JSON.parse(value)).filter(([field]) => Object.hasOwn(fields, field))
+      Object.entries(JSON.parse(value)).filter(([field]) => Object.hasOwn(fields2, field))
     ), "snapshot");
     const template = JSON.parse(job.bodyJson);
     const record = snapshot(job.recordJson);
@@ -2584,655 +3577,6 @@ async function handlePosOrders(request, env, execution, subscriptionFor, orderId
 }
 __name(handlePosOrders, "handlePosOrders");
 
-// ../../shared/posReceipts.ts
-var posReceiptTypes = ["receipt", "kitchen_receipt", "qr_label"];
-var posReceiptLanguages = ["en", "km", "bilingual"];
-var posReceiptTextSizes = ["small", "normal", "large"];
-var posReceiptAlignments = ["left", "center", "right"];
-var posQrTargets = ["table_menu", "business_menu", "custom_url"];
-var posReceiptFields = {
-  receipt: [
-    "logo",
-    "business_details",
-    "branch",
-    "order_number",
-    "date_time",
-    "cashier",
-    "customer",
-    "table",
-    "service_type",
-    "item_codes",
-    "modifiers",
-    "item_notes",
-    "unit_prices",
-    "discount",
-    "tax",
-    "payments",
-    "change",
-    "order_notes",
-    "signature"
-  ],
-  kitchen_receipt: [
-    "logo",
-    "branch",
-    "order_number",
-    "date_time",
-    "cashier",
-    "table",
-    "service_type",
-    "station",
-    "item_codes",
-    "modifiers",
-    "item_notes",
-    "order_notes",
-    "highlight_notes"
-  ],
-  qr_label: ["logo", "branch", "table", "show_link"]
-};
-var posReceiptLimits = {
-  width: { min: 30, max: 216 },
-  labelHeight: { min: 20, max: 150 },
-  qrSize: { min: 15, max: 150 },
-  copies: { min: 1, max: 10 }
-};
-var emptyPosReceiptDefaults = {
-  receipt: null,
-  kitchen_receipt: null,
-  qr_label: null
-};
-
-// worker/subscriptionPlans.ts
-var DEFAULT_PLAN_ID = "plan_standard";
-var planOfferJoin = `
-  JOIN subscription_plan_prices price ON price.id=(
-    SELECT id FROM subscription_plan_prices
-    WHERE plan_id=plan.id AND is_active=1 AND currency='USD'
-      AND provider IS NULL AND interval_count=1
-    ORDER BY created_at DESC,id DESC LIMIT 1
-  )`;
-var planOfferFields = `
-  plan.id,plan.code,plan.name,plan.description,plan.features_json AS featuresJson,
-  plan.max_branches AS maxBranches,plan.max_menus AS maxMenus,
-  plan.max_products AS maxProducts,plan.max_daily_orders AS maxDailyOrders,
-  plan.pos_enabled AS posEnabled,plan.max_pos_profiles AS maxPosProfiles,
-  plan.max_daily_pos_sales AS maxDailyPosSales,
-  price.id AS priceId,price.amount_minor AS amountMinor,price.billing_interval AS billingInterval`;
-var planFeatures = /* @__PURE__ */ __name((value) => {
-  try {
-    const keys = JSON.parse(value);
-    return Array.isArray(keys) ? controlPageIds.filter((key) => keys.includes(key)) : [];
-  } catch {
-    return [];
-  }
-}, "planFeatures");
-var serializePlan = /* @__PURE__ */ __name(({
-  featuresJson,
-  maxBranches,
-  maxMenus,
-  maxProducts,
-  maxDailyOrders,
-  posEnabled,
-  maxPosProfiles,
-  maxDailyPosSales,
-  ...row
-}) => ({
-  ...row,
-  features: planFeatures(featuresJson),
-  limits: { branches: maxBranches, menus: maxMenus, products: maxProducts, dailyOrders: maxDailyOrders },
-  pos: { enabled: Boolean(posEnabled), profiles: maxPosProfiles, dailySales: maxDailyPosSales }
-}), "serializePlan");
-var isLimit = /* @__PURE__ */ __name((input, minimum, maximum = Number.MAX_SAFE_INTEGER) => input === null || typeof input === "number" && Number.isSafeInteger(input) && input >= minimum && input <= maximum, "isLimit");
-function parsePlanLimits(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const { branches, menus, products, dailyOrders } = value;
-  if (Object.keys(value).length !== 4 || !isLimit(branches, 1) || !isLimit(menus, 0) || !isLimit(products, 0) || !isLimit(dailyOrders, 0, MAX_DAILY_ORDERS)) return null;
-  return { branches, menus, products, dailyOrders };
-}
-__name(parsePlanLimits, "parsePlanLimits");
-function parsePlanPos(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const { enabled, profiles, dailySales } = value;
-  if (Object.keys(value).length !== 3 || typeof enabled !== "boolean" || !isLimit(profiles, 0) || !isLimit(dailySales, 0)) return null;
-  return { enabled, profiles, dailySales };
-}
-__name(parsePlanPos, "parsePlanPos");
-var posPlanEnabled = /* @__PURE__ */ __name((businessId) => `NOT EXISTS (
-  SELECT 1 FROM business_subscriptions subscription
-  JOIN subscription_plans plan ON plan.id=subscription.plan_id
-  WHERE subscription.business_id=${businessId} AND plan.pos_enabled=0
-)`, "posPlanEnabled");
-var limitErrors = {
-  PLAN_BRANCH_LIMIT: { code: "PLAN_BRANCH_LIMIT", error: "This business has reached its subscription plan\u2019s branch limit." },
-  PLAN_MENU_LIMIT: { code: "PLAN_MENU_LIMIT", error: "This business has reached its subscription plan\u2019s menu limit." },
-  PLAN_PRODUCT_LIMIT: { code: "PLAN_PRODUCT_LIMIT", error: "This business has reached its subscription plan\u2019s product limit." },
-  PLAN_DAILY_ORDER_LIMIT: { code: "order_limit_reached", error: "The business has reached its daily order limit." },
-  PLAN_POS_PROFILE_LIMIT: { code: "PLAN_POS_PROFILE_LIMIT", error: "This business has reached its subscription plan\u2019s active POS profile limit." },
-  PLAN_POS_PROFILE_IN_USE: { code: "PLAN_POS_PROFILE_IN_USE", error: "Deactivate excess POS profiles before applying this limit." },
-  PLAN_DAILY_POS_SALE_LIMIT: { code: "PLAN_DAILY_POS_SALE_LIMIT", error: "This business has reached its daily POS sales limit." }
-};
-function planLimitError(error3) {
-  const message = String(error3);
-  const code = Object.keys(limitErrors).find((key) => message.includes(key));
-  return code ? limitErrors[code] : null;
-}
-__name(planLimitError, "planLimitError");
-function selectedPlan(db, planId, publicOnly) {
-  return db.prepare(
-    `SELECT ${planOfferFields} FROM subscription_plans plan ${planOfferJoin}
-     WHERE plan.id=? AND plan.is_active=1 AND (?=0 OR plan.is_public=1)`
-  ).bind(planId, Number(publicOnly)).first();
-}
-__name(selectedPlan, "selectedPlan");
-async function publicPlans(db) {
-  const { results } = await db.prepare(
-    `SELECT ${planOfferFields} FROM subscription_plans plan ${planOfferJoin}
-     WHERE plan.is_active=1 AND plan.is_public=1 ORDER BY plan.display_order,plan.name,plan.id`
-  ).all();
-  return results.map(serializePlan);
-}
-__name(publicPlans, "publicPlans");
-
-// ../../shared/posProfile.ts
-var paymentKindByGroup = {
-  Cash: "cash",
-  "Credit Card": "card",
-  Bank: "other",
-  "QR Payment": "qr",
-  Other: "other"
-};
-var paymentTypeGroups = Object.keys(paymentKindByGroup);
-var defaultPaymentGroup = {
-  cash: "Cash",
-  card: "Credit Card",
-  qr: "QR Payment",
-  other: "Other"
-};
-var posTaxModes = ["disabled", "inclusive", "exclusive"];
-var posTableStatusColors = {
-  vacant: "#2F7656",
-  occupied: "#245EB2",
-  bill_requested: "#B45309",
-  hold: "#6B4AA0",
-  booked: "#AE356C"
-};
-var posTableStatuses = Object.keys(posTableStatusColors);
-
-// worker/posApiCore.ts
-var posApiPath = "/api/integrations/pos/v1";
-var posAdminPath = "/api/admin/pos";
-var isPosApiPath = /* @__PURE__ */ __name((path) => path === posApiPath || path.startsWith(posApiPath + "/"), "isPosApiPath");
-var isPosAdminPath = /* @__PURE__ */ __name((path) => path === posAdminPath || path.startsWith(posAdminPath + "/"), "isPosAdminPath");
-function allowsCashFloat(type) {
-  return type.allow_cash_float ?? type.kind === "cash";
-}
-__name(allowsCashFloat, "allowsCashFloat");
-var PosError = class extends Error {
-  constructor(status, code, message) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-  status;
-  code;
-  static {
-    __name(this, "PosError");
-  }
-};
-function respond(body, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "private, no-store"
-    }
-  });
-}
-__name(respond, "respond");
-function errorResponse(error3) {
-  if (error3 instanceof PosError)
-    return respond({ error: error3.message, code: error3.code }, error3.status);
-  const limit = planLimitError(error3);
-  if (limit) return respond(limit, 409);
-  const message = String(error3);
-  if (message.includes(
-    "UNIQUE constraint failed: sales.business_id, sales.profile_id, sales.table_id"
-  )) {
-    return respond(
-      {
-        error: "This table already has an open bill on this profile",
-        code: "TABLE_OCCUPIED"
-      },
-      409
-    );
-  }
-  if (message.includes("POS_STATE_CONFLICT") || message.includes("UNIQUE constraint failed:")) {
-    return respond(
-      {
-        error: "The requested state conflicts with existing POS data. Refresh and retry.",
-        code: "STATE_CONFLICT"
-      },
-      409
-    );
-  }
-  if (message.includes("FOREIGN KEY constraint failed")) {
-    return respond(
-      {
-        error: "A referenced record is no longer available",
-        code: "STATE_CONFLICT"
-      },
-      409
-    );
-  }
-  throw error3;
-}
-__name(errorResponse, "errorResponse");
-function requirePosPlan(enabled) {
-  if (enabled === 0)
-    throw new PosError(403, "PLAN_POS_DISABLED", "POS is not included in this business\u2019s subscription plan.");
-}
-__name(requirePosPlan, "requirePosPlan");
-function invalid2(message) {
-  throw new PosError(400, "INVALID_REQUEST", message);
-}
-__name(invalid2, "invalid");
-function conflict(message, code = "STATE_CONFLICT") {
-  throw new PosError(409, code, message);
-}
-__name(conflict, "conflict");
-function missing(entity) {
-  throw new PosError(404, "NOT_FOUND", `${entity} was not found`);
-}
-__name(missing, "missing");
-var privileged = /* @__PURE__ */ __name((role) => role === "owner" || role === "manager", "privileged");
-function requireManager(role) {
-  if (!privileged(role))
-    throw new PosError(
-      403,
-      "FORBIDDEN",
-      "A business owner or manager is required"
-    );
-}
-__name(requireManager, "requireManager");
-var newId = /* @__PURE__ */ __name((prefix) => `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`, "newId");
-var sql = /* @__PURE__ */ __name((db, query, ...bindings) => db.prepare(query).bind(...bindings), "sql");
-var MAX_AMOUNT = 1e11;
-function object2(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    invalid2("Expected a JSON object");
-  return value;
-}
-__name(object2, "object");
-async function bodyOf(request, maxBytes = 128e3) {
-  if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") {
-    throw new PosError(415, "UNSUPPORTED_MEDIA_TYPE", "Send application/json");
-  }
-  const reader = request.body?.getReader();
-  const decoder = new TextDecoder();
-  let size = 0;
-  let text2 = "";
-  if (!reader) invalid2("Expected a JSON body");
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > maxBytes) {
-      await reader.cancel();
-      throw new PosError(
-        413,
-        "REQUEST_TOO_LARGE",
-        `JSON body exceeds ${maxBytes.toLocaleString("en-US")} bytes`
-      );
-    }
-    text2 += decoder.decode(value, { stream: true });
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(text2 + decoder.decode());
-  } catch {
-    invalid2("Malformed JSON");
-  }
-  return object2(parsed);
-}
-__name(bodyOf, "bodyOf");
-function string(value, field, limit = 120) {
-  if (typeof value !== "string" || !value.trim() || value.trim().length > limit)
-    invalid2(`Invalid ${field}`);
-  return value.trim();
-}
-__name(string, "string");
-var optionalText = /* @__PURE__ */ __name((value, field, limit = 500) => value == null || value === "" ? null : string(value, field, limit), "optionalText");
-function recordId(value, field) {
-  if (typeof value !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(value))
-    invalid2(`Invalid ${field}`);
-  return value;
-}
-__name(recordId, "recordId");
-function integer2(value, field, min, max = MAX_AMOUNT) {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max)
-    invalid2(`Invalid ${field}`);
-  return value;
-}
-__name(integer2, "integer");
-function choice(value, field, options) {
-  if (typeof value !== "string" || !options.includes(value))
-    invalid2(`Invalid ${field}`);
-  return value;
-}
-__name(choice, "choice");
-var currencyOf = /* @__PURE__ */ __name((value) => choice(value, "currency", ["USD", "KHR"]), "currencyOf");
-function list(value, field, max) {
-  if (!Array.isArray(value) || value.length > max) invalid2(`Invalid ${field}`);
-  return value;
-}
-__name(list, "list");
-function boolean(value, field) {
-  if (typeof value !== "boolean") invalid2(`Invalid ${field}`);
-  return value;
-}
-__name(boolean, "boolean");
-async function digest(text2) {
-  const bytes = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(text2)
-  );
-  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-__name(digest, "digest");
-var activeDeviceSession = `(s.device_credential_id IS NULL OR EXISTS (
-  SELECT 1 FROM pos_device_credentials d
-  WHERE d.id=s.device_credential_id AND d.revoked_at IS NULL
-    AND d.business_id=s.business_id AND d.profile_id=s.profile_id AND d.user_id=s.user_id
-    AND d.credential_version=s.credential_version
-))`;
-var storeOperatorRegistered = `EXISTS (
-  SELECT 1 FROM pos_store_operator_history h
-  WHERE h.business_id=authority.business_id AND h.profile_id=? AND h.operator_id=?
-    AND h.device_id=authority.device_id AND h.public_key=authority.public_key
-)`;
-var storeOperatorActive = `EXISTS (
-  SELECT 1 FROM pos_device_credentials d
-  JOIN memberships member ON member.business_id=d.business_id AND member.user_id=d.user_id
-  JOIN users account ON account.id=d.user_id AND account.password_salt=d.credential_version
-  WHERE d.business_id=authority.business_id AND d.profile_id=? AND d.user_id=? AND d.revoked_at IS NULL
-    AND d.device_id=authority.device_id AND d.public_key=authority.public_key
-    AND (member.role IN ('owner','manager') OR EXISTS (
-      SELECT 1 FROM pos_profile_grants g
-      WHERE g.business_id=d.business_id AND g.profile_id=d.profile_id AND g.user_id=d.user_id
-    ))
-)`;
-var profileColumns = `p.id,p.branch_id,b.name AS branch_name,p.name,
-  p.is_active,p.version,p.config_json,p.pending_config_json`;
-function readProfileConfig(json4) {
-  const config = JSON.parse(json4);
-  const taxRules = (config.tax_rules ?? []).map((rule, index) => ({
-    ...rule,
-    id: rule.id ?? "legacy_tax_rule_" + (index + 1),
-    tax_mode: rule.tax_mode ?? "disabled"
-  }));
-  const defaultTaxRule = taxRules.find(({ id: id2 }) => id2 === config.default_tax_rule_id) ?? null;
-  return {
-    ...config,
-    default_menu_id: config.default_menu_id ?? null,
-    prompt_guest_cover: config.prompt_guest_cover ?? false,
-    table_status_colors: { ...posTableStatusColors, ...config.table_status_colors },
-    receipt_templates: config.receipt_templates ?? [],
-    default_receipt_templates: { ...emptyPosReceiptDefaults, ...config.default_receipt_templates },
-    tax_rules: taxRules,
-    default_tax_rule_id: defaultTaxRule?.id ?? null,
-    default_tax_rule: defaultTaxRule
-  };
-}
-__name(readProfileConfig, "readProfileConfig");
-function profileView(profile, admin = false) {
-  const { config_json, pending_config_json, is_active, ...fields } = profile;
-  return {
-    ...fields,
-    is_active: Boolean(is_active),
-    config: readProfileConfig(config_json),
-    ...admin ? {
-      pending_config: pending_config_json ? readProfileConfig(pending_config_json) : null
-    } : {}
-  };
-}
-__name(profileView, "profileView");
-async function paymentTypes(context) {
-  const { results } = await sql(
-    context.db,
-    `SELECT t.id,t.name,t.kind,t.currency,t.payment_type_group
-    FROM pos_payment_types t WHERE t.business_id=? AND t.id IN (SELECT json_extract(value,'$.id') FROM json_each(?))`,
-    context.identity.business_id,
-    JSON.stringify(context.config.payment_types)
-  ).all();
-  const types = new Map(results.map((row) => [row.id, row]));
-  return context.config.payment_types.flatMap((entry) => {
-    const stored = types.get(entry.id);
-    if (!stored) return [];
-    if (stored.currency && stored.currency !== entry.currency) return [];
-    return [{
-      ...stored,
-      currency: entry.currency,
-      allow_cash_float: entry.allow_cash_float ?? (context.config.cashier_shift_enabled && stored.kind === "cash")
-    }];
-  });
-}
-__name(paymentTypes, "paymentTypes");
-var idleProfile = `NOT EXISTS (
-    SELECT 1 FROM cashier_shifts shift WHERE shift.profile_id=pos_profiles.id AND shift.closed_at IS NULL
-  ) AND NOT EXISTS (
-    SELECT 1 FROM sales sale WHERE sale.profile_id=pos_profiles.id AND sale.status='open'
-  )`;
-function promoteProfile(context) {
-  return sql(
-    context.db,
-    `UPDATE pos_profiles SET config_json=pending_config_json,
-    pending_config_json=NULL,version=version+1
-    WHERE business_id=? AND id=? AND pending_config_json IS NOT NULL AND ${idleProfile}`,
-    context.identity.business_id,
-    context.profile.id
-  );
-}
-__name(promoteProfile, "promoteProfile");
-function jsonRow(alias, columns, extra = {}) {
-  const entries = [
-    ...columns.split(/\s+/).filter(Boolean).map((column) => [column, `${alias}.${column}`]),
-    ...Object.entries(extra)
-  ];
-  let expression = "'{}'";
-  for (let offset = 0; offset < entries.length; offset += 12) {
-    const argumentsSql = entries.slice(offset, offset + 12).map(([key, value]) => `'$.${key}',${value}`).join(",");
-    expression = `json_set(${expression},${argumentsSql})`;
-  }
-  return expression;
-}
-__name(jsonRow, "jsonRow");
-function canonical(value) {
-  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
-  if (value && typeof value === "object") {
-    const row = value;
-    return "{" + Object.keys(row).sort().map((key) => JSON.stringify(key) + ":" + canonical(row[key])).join(",") + "}";
-  }
-  return JSON.stringify(value);
-}
-__name(canonical, "canonical");
-var Command = class _Command {
-  constructor(context, key, hash2, body) {
-    this.context = context;
-    this.key = key;
-    this.hash = hash2;
-    this.body = body;
-  }
-  context;
-  key;
-  hash;
-  body;
-  static {
-    __name(this, "Command");
-  }
-  static async read(request, context, supplied) {
-    const key = request.headers.get("idempotency-key");
-    if (!key || !/^[A-Za-z0-9_-]{8,128}$/.test(key))
-      invalid2("A valid Idempotency-Key header is required");
-    const body = supplied?.body ?? await bodyOf(request);
-    const hash2 = await digest(
-      canonical([
-        request.method,
-        context.storeImport?.recovery ? posApiPath + "/store-operations" : new URL(request.url).pathname,
-        context.identity.user_id,
-        supplied?.envelope ?? body
-      ])
-    );
-    const command = new _Command(context, key, hash2, body);
-    return await command.replay() ?? command;
-  }
-  async replay() {
-    const { db, identity, profile } = this.context;
-    const record = await sql(
-      db,
-      `SELECT request_hash,response_json,response_status FROM pos_commands
-      WHERE business_id=? AND profile_id=? AND idempotency_key=?`,
-      identity.business_id,
-      profile.id,
-      this.key
-    ).first();
-    if (!record) return null;
-    if (record.request_hash !== this.hash)
-      conflict(
-        "The idempotency key was already used for a different request",
-        "IDEMPOTENCY_CONFLICT"
-      );
-    return respond(JSON.parse(record.response_json), record.response_status);
-  }
-  async commit(status, guard, writes, result) {
-    const { db, identity, profile, now, storeImport } = this.context;
-    const { business_id: businessId, user_id: actor } = identity;
-    const recovery = storeImport?.recovery;
-    const eligible = `EXISTS (
-      SELECT 1 FROM pos_profiles p
-      JOIN branches b ON b.id=p.branch_id AND b.business_id=p.business_id AND b.is_active=1
-      JOIN businesses business ON business.id=b.business_id AND business.is_active=1
-      JOIN pos_sessions s ON s.business_id=p.business_id AND ${recovery ? "s.profile_id=?" : "s.profile_id=p.id"}
-      JOIN memberships m ON m.business_id=s.business_id AND m.user_id=s.user_id
-      JOIN users u ON u.id=m.user_id AND u.password_salt=s.credential_version
-      WHERE p.business_id=? AND p.id=? AND p.version=? AND p.is_active=1
-        AND s.token_hash=? AND s.expires_at>unixepoch() AND ${activeDeviceSession}
-        AND ${posPlanEnabled("p.business_id")}
-        ${recovery ? `AND m.role='owner' AND EXISTS (
-          SELECT 1 FROM pos_profiles approving
-          WHERE approving.id=s.profile_id AND approving.business_id=p.business_id
-            AND approving.branch_id=p.branch_id AND approving.is_active=1
-        )` : ""}
-        AND ${storeImport ? `EXISTS (
-            SELECT 1 FROM pos_store_authorities authority
-            JOIN pos_device_credentials device ON device.id=s.device_credential_id
-            WHERE authority.business_id=p.business_id AND authority.branch_id=p.branch_id
-              AND authority.epoch=? AND authority.last_sequence=? AND authority.device_id=device.device_id
-              AND (authority.public_key IS NULL OR authority.public_key=device.public_key)
-              ${recovery ? `AND ${storeOperatorRegistered} AND NOT ${storeOperatorActive}` : ""}
-          )` : guard.allowStoreAuthority ? "1" : `NOT EXISTS (
-            SELECT 1 FROM pos_store_authorities authority
-            WHERE authority.business_id=p.business_id AND authority.branch_id=p.branch_id
-          )`}
-        AND (m.role IN ('owner','manager') ${guard.manager ? "" : `OR EXISTS (
-          SELECT 1 FROM pos_profile_grants g WHERE g.business_id=m.business_id AND g.profile_id=p.id AND g.user_id=m.user_id
-        )`})
-        ${guard.allowReadOnly ? "" : `AND NOT EXISTS (
-          SELECT 1 FROM business_subscriptions sub WHERE sub.business_id=p.business_id
-          AND (sub.status IN ('past_due','canceled') OR
-            (sub.current_period_end_at IS NOT NULL AND COALESCE(unixepoch(sub.current_period_end_at),0)<=unixepoch()))
-        )`}
-    )`;
-    const results = await db.batch([
-      sql(
-        db,
-        `INSERT INTO pos_commands
-          (business_id,profile_id,idempotency_key,request_hash,actor_id,created_at,response_status,state_valid)
-          SELECT ?,?,?,?,?,?,?,CASE WHEN ${eligible} AND (${guard.query}) THEN 1 ELSE 0 END`,
-        businessId,
-        profile.id,
-        this.key,
-        this.hash,
-        actor,
-        now,
-        status,
-        ...recovery ? [identity.profile_id] : [],
-        businessId,
-        profile.id,
-        profile.version,
-        identity.token_hash,
-        ...storeImport ? [storeImport.epoch, storeImport.sequence - 1] : [],
-        ...recovery ? [profile.id, actor, profile.id, actor] : [],
-        ...guard.params
-      ),
-      ...writes,
-      ...recovery ? [
-        sql(
-          db,
-          `INSERT INTO pos_store_recoveries
-          (epoch,sequence,business_id,branch_id,profile_id,command_id,operator_id,approved_by,reason,approved_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?)`,
-          storeImport.epoch,
-          storeImport.sequence,
-          businessId,
-          profile.branch_id,
-          profile.id,
-          this.key,
-          actor,
-          recovery.approvedBy,
-          recovery.reason,
-          recovery.approvedAt
-        )
-      ] : [],
-      ...storeImport ? [
-        sql(
-          db,
-          "UPDATE pos_store_authorities SET last_sequence=? WHERE epoch=?",
-          storeImport.sequence,
-          storeImport.epoch
-        )
-      ] : [],
-      sql(
-        db,
-        `UPDATE pos_commands SET response_json=(${result.query})
-          WHERE business_id=? AND profile_id=? AND idempotency_key=? RETURNING response_json`,
-        ...result.params,
-        businessId,
-        profile.id,
-        this.key
-      )
-    ]);
-    return respond(
-      JSON.parse(results[results.length - 1].results[0].response_json),
-      status
-    );
-  }
-};
-function pagination(url) {
-  const size = url.searchParams.get("page_size") ?? "25";
-  const page = url.searchParams.get("page") ?? "1";
-  if (!/^\d+$/.test(page) || !/^\d+$/.test(size)) invalid2("Invalid pagination");
-  const limit = integer2(Number(size), "page_size", 1, 100);
-  const pageNumber = integer2(Number(page), "page", 1, 1e6);
-  return { limit, offset: (pageNumber - 1) * limit, page: pageNumber };
-}
-__name(pagination, "pagination");
-async function pageOf(db, url, resource, query, params) {
-  const { limit, offset, page } = pagination(url);
-  const { results } = await sql(
-    db,
-    `${query} LIMIT ? OFFSET ?`,
-    ...params,
-    limit + 1,
-    offset
-  ).all();
-  return {
-    [resource]: results.slice(0, limit),
-    page,
-    page_size: limit,
-    has_more: results.length > limit
-  };
-}
-__name(pageOf, "pageOf");
-
 // worker/posApiCatalog.ts
 function ratio(value) {
   const match = String(value).match(/^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i);
@@ -3260,6 +3604,16 @@ function bounded(value) {
   return Number(value);
 }
 __name(bounded, "bounded");
+function saleQuantity(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > 999 || Math.round(value * 1e3) / 1e3 !== value)
+    invalid("Enter a quantity from 0.001 to 999 with up to three decimal places");
+  return value;
+}
+__name(saleQuantity, "saleQuantity");
+function lineGross(unitPrice, quantity) {
+  return bounded(rounded(BigInt(unitPrice) * BigInt(Math.round(quantity * 1e3)), 1000n));
+}
+__name(lineGross, "lineGross");
 function priceMinor(value, currency) {
   const [numerator, denominator] = ratio(value);
   return bounded(rounded(numerator * units(currency), denominator));
@@ -3281,7 +3635,7 @@ function secondaryToPrimary(amount, primary, rate) {
   );
 }
 __name(secondaryToPrimary, "secondaryToPrimary");
-function saleLineTotals(gross, mode, bps, rule = null, discount = 0) {
+function saleLineTotals(gross, mode, bps, rule = null, discount = 0, discountBps = null) {
   const rates = rule ? [rule.tax_1_rate, rule.tax_2_rate, rule.tax_3_rate].map(ratio) : [[BigInt(bps), 100n], [0n, 1n], [0n, 1n]];
   const afterDiscount = rule ? [
     rule.calculate_tax_1_after_discount,
@@ -3298,6 +3652,8 @@ function saleLineTotals(gross, mode, bps, rule = null, discount = 0) {
   ];
   let subtotal = gross;
   let taxes = [0n, 0n, 0n];
+  const discountFor = /* @__PURE__ */ __name((base) => discountBps == null ? discount : Number(rounded(BigInt(base) * BigInt(discountBps), 10000n)), "discountFor");
+  let amountOff;
   if (mode === "inclusive") {
     const scale = rates.reduce((max, [, d]) => d > max ? d : max, 1n) * 100n;
     const base = scale ** 3n;
@@ -3325,10 +3681,11 @@ function saleLineTotals(gross, mode, bps, rule = null, discount = 0) {
     }, "extract");
     taxes = extract(shares.map((share) => BigInt(gross) * share), denominator);
     subtotal = gross - Number(taxes.reduce((sum, tax4) => sum + tax4, 0n));
-    if (discount > subtotal) invalid2("The discount exceeds the line subtotal");
-    if (discount) {
+    amountOff = discountFor(subtotal);
+    if (amountOff > subtotal) invalid("The discount exceeds the line subtotal");
+    if (amountOff) {
       const grossBase = BigInt(gross) * base;
-      const discountBase = BigInt(discount) * denominator;
+      const discountBase = BigInt(amountOff) * denominator;
       const applied = discountBase > grossBase ? grossBase : discountBase;
       const reductions = coefficients(true);
       taxes = extract(
@@ -3337,10 +3694,11 @@ function saleLineTotals(gross, mode, bps, rule = null, discount = 0) {
       );
     }
   } else {
-    if (discount > subtotal) invalid2("The discount exceeds the line subtotal");
+    amountOff = discountFor(subtotal);
+    if (amountOff > subtotal) invalid("The discount exceeds the line subtotal");
     if (mode === "exclusive") {
       for (const [i, [n, d]] of rates.entries()) {
-        const net = BigInt(subtotal - (afterDiscount[i] ? discount : 0));
+        const net = BigInt(subtotal - (afterDiscount[i] ? amountOff : 0));
         const prior = parents[i].reduce((sum, parent) => sum + taxes[parent], 0n);
         taxes[i] = rounded((net + prior) * n, d * 100n);
       }
@@ -3350,12 +3708,12 @@ function saleLineTotals(gross, mode, bps, rule = null, discount = 0) {
   const tax = bounded(taxes.reduce((sum, amount) => sum + amount, 0n));
   return {
     subtotal_minor: subtotal,
-    discount_minor: discount,
+    discount_minor: amountOff,
     tax_1_amount: tax1,
     tax_2_amount: tax2,
     tax_3_amount: tax3,
     tax_minor: tax,
-    total_minor: subtotal - discount + tax
+    total_minor: subtotal - amountOff + tax
   };
 }
 __name(saleLineTotals, "saleLineTotals");
@@ -3371,7 +3729,7 @@ function activeCatalogNodes(mode) {
     )`;
 }
 __name(activeCatalogNodes, "activeCatalogNodes");
-function catalogScope(context) {
+function catalogScope(context, menuId) {
   const mode = context.config.catalog_mode;
   const isMenu = mode === "menu";
   const table = isMenu ? "menus" : "categories";
@@ -3379,13 +3737,23 @@ function catalogScope(context) {
     context.identity.business_id,
     JSON.stringify(context.config.selected_ids)
   ];
-  const scope = `${activeCatalogNodes(mode)}, selected_nodes(id) AS (
+  let scope = `${activeCatalogNodes(mode)}, selected_nodes(id) AS (
       SELECT id FROM active_nodes
       WHERE CASE WHEN ?2='null' THEN parent_id IS NULL ELSE id IN (SELECT value FROM json_each(?2)) END
       UNION
       SELECT node.id FROM active_nodes node JOIN selected_nodes parent ON node.parent_id=parent.id
     )`;
-  const assignment = `FROM menu_products mp JOIN selected_nodes node ON node.id=mp.menu_id
+  let catalogNodes = "selected_nodes";
+  if (menuId) {
+    params.push(menuId);
+    scope += `, menu_subtree(id) AS (
+      SELECT id FROM selected_nodes WHERE id=?3
+      UNION
+      SELECT node.id FROM active_nodes node JOIN menu_subtree parent ON node.parent_id=parent.id
+    )`;
+    catalogNodes = "menu_subtree";
+  }
+  const assignment = `FROM menu_products mp JOIN ${catalogNodes} node ON node.id=mp.menu_id
       WHERE mp.business_id=p.business_id AND mp.product_id=p.id
       AND NOT EXISTS (SELECT 1 FROM menu_product_exclusions x
         WHERE x.business_id=mp.business_id AND x.menu_id=mp.menu_id AND x.product_id=mp.product_id)`;
@@ -3393,18 +3761,22 @@ function catalogScope(context) {
     SELECT p.id,p.code,p.category_id AS categoryId,COALESCE(NULLIF(p.name_km,''),p.name) AS name,
       p.name_km AS nameKm,p.name_en AS nameEn,p.name_zh AS nameZh,p.description,p.unit,p.image_url AS imageUrl,
       p.price_cents AS priceCents,p.portions_json AS portionsJson,p.modifier_groups_json AS modifierGroupsJson,
+      p.allow_discount AS allowDiscount,p.allow_change_price AS allowChangePrice,
+      p.is_open_product AS isOpenProduct,p.allow_free AS allowFree,
       ${isMenu ? `(SELECT json_group_array(mp.menu_id) ${assignment})` : "'[]'"} AS menuIds
     FROM products p WHERE p.business_id=?1 AND p.is_available=1
       AND ${isMenu ? `EXISTS (SELECT 1 ${assignment})` : "p.category_id IN (SELECT id FROM selected_nodes)"}
       AND (json_array_length(p.portions_json)=0 OR EXISTS (
         SELECT 1 FROM json_each(p.portions_json) WHERE json_extract(value,'$.branchId') IS NULL
-          OR json_extract(value,'$.branchId')=?3
+          OR json_extract(value,'$.branchId')=?
       ))`;
   const nodes = `${scope}
-    SELECT node.id,CASE WHEN node.parent_id IN (SELECT id FROM selected_nodes) THEN node.parent_id END AS parent_id,
+    SELECT node.id,CASE WHEN node.parent_id IN (SELECT id FROM ${catalogNodes}) THEN node.parent_id END AS parent_id,
       COALESCE(NULLIF(node.name_km,''),${isMenu ? "NULLIF(node.name_en,''),node.name_zh" : "node.name"}) AS name,
-      node.name_km,node.name_en,node.name_zh,node.sort_order
-    FROM ${table} node JOIN selected_nodes selected ON selected.id=node.id
+      node.name_km,node.name_en,node.name_zh,node.sort_order,
+      node.image_url,node.image_media_id,photo.object_key AS image_object_key
+    FROM ${table} node JOIN ${catalogNodes} selected ON selected.id=node.id
+    LEFT JOIN media photo ON photo.id=node.image_media_id AND photo.business_id=node.business_id
     WHERE node.business_id=?1 ORDER BY node.sort_order,node.id`;
   return { products, nodes, params };
 }
@@ -3465,12 +3837,16 @@ function modifierGroups(value, currency) {
 }
 __name(modifierGroups, "modifierGroups");
 async function getCatalog(env, deps, context, url) {
-  const { products, nodes, params } = catalogScope(context);
+  const rawMenuId = url.searchParams.get("menu_id");
+  const menuId = rawMenuId === null ? void 0 : recordId(rawMenuId, "menu_id");
+  if (menuId && context.config.catalog_mode !== "menu")
+    invalid("menu_id requires a menu-based POS profile");
+  const { products, nodes, params } = catalogScope(context, menuId);
   const { limit, offset, page } = pagination(url);
   const [productRows, nodeRows] = await context.db.batch([
     sql(
       context.db,
-      products + " ORDER BY p.sort_order,p.id LIMIT ?4 OFFSET ?5",
+      products + " ORDER BY p.sort_order,p.id LIMIT ? OFFSET ?",
       ...params,
       context.profile.branch_id,
       limit + 1,
@@ -3478,7 +3854,10 @@ async function getCatalog(env, deps, context, url) {
     ),
     sql(context.db, nodes, ...params)
   ]);
+  if (menuId && !nodeRows.results.length) missing("Menu");
   const { currency, catalog_version } = context.identity;
+  const publicMediaBase = env.PUBLIC_MEDIA_BASE?.trim().replace(/\/$/, "");
+  const publicAssetBase = env.PUBLIC_ASSET_BASE?.trim().replace(/\/$/, "");
   const result = await priced(
     env,
     deps,
@@ -3490,7 +3869,10 @@ async function getCatalog(env, deps, context, url) {
     currency,
     price_list_id: result.pricing.activeId,
     mode: context.config.catalog_mode,
-    nodes: nodeRows.results,
+    nodes: nodeRows.results.map(({ image_media_id, image_object_key, ...node }) => ({
+      ...node,
+      image_url: publicMediaBase && image_object_key ? `${publicMediaBase}/${String(image_object_key).split("/").map(encodeURIComponent).join("/")}` : node.image_url || (publicAssetBase && image_media_id ? `${publicAssetBase}/${image_media_id}` : null)
+    })),
     page,
     page_size: limit,
     has_more: productRows.results.length > limit,
@@ -3503,6 +3885,10 @@ async function getCatalog(env, deps, context, url) {
       name_zh: product.nameZh,
       description: product.description,
       unit: product.unit,
+      allow_discount: Boolean(product.allowDiscount),
+      allow_change_price: Boolean(product.allowChangePrice),
+      is_open_product: Boolean(product.isOpenProduct),
+      allow_free: Boolean(product.allowFree),
       image_url: product.imageUrl,
       category_id: product.categoryId,
       menu_ids: JSON.parse(String(product.menuIds)),
@@ -3524,33 +3910,44 @@ async function getCatalog(env, deps, context, url) {
 __name(getCatalog, "getCatalog");
 function saleLineEdits(line) {
   const free = line.is_free === void 0 ? false : boolean(line.is_free, "is_free");
-  const discount = integer2(line.discount_minor ?? 0, "discount_minor", 0);
-  if (free && discount !== 0) invalid2("A free item cannot have a line discount");
+  const discount = integer(line.discount_minor ?? 0, "discount_minor", 0);
+  const discountBps = line.discount_bps == null ? null : integer(line.discount_bps, "discount_bps", 1, 1e4);
+  const discountNote = optionalText(line.discount_note, "discount note", 250);
+  const freeReason = optionalText(line.free_reason, "free item reason", 250);
+  if (free && (discount !== 0 || discountBps != null)) invalid("A free item cannot have a line discount");
+  if (discountNote != null && discount === 0 && discountBps == null)
+    invalid("A discount note requires a line discount");
+  if (!free && freeReason != null) invalid("A free item reason requires a free item");
   return {
-    base_price_override_minor: line.base_price_override_minor == null ? null : integer2(line.base_price_override_minor, "base_price_override_minor", 0),
+    base_price_override_minor: line.base_price_override_minor == null ? null : integer(line.base_price_override_minor, "base_price_override_minor", 0),
     is_free: free,
+    free_reason: freeReason,
     discount_minor: discount,
-    note: optionalText(line.note, "line note")
+    discount_bps: discountBps,
+    discount_note: discountNote,
+    note: optionalText(line.note, "line note"),
+    price_change_reason: optionalText(line.price_change_reason, "price change reason", 250)
   };
 }
 __name(saleLineEdits, "saleLineEdits");
-async function saleLines(env, deps, context, value, currency, taxMode, taxRate, taxRule) {
+async function saleLines(env, deps, context, value, currency, taxMode, taxRate, taxRule, saved = []) {
   const inputs = list(value, "lines", 60).map((entry) => {
-    const line = object2(entry);
+    const line = object(entry);
+    requireLinePermissions(context, line, saved.find((old) => line.line_key != null && old.line_key === line.line_key));
     const modifiers2 = list(line.modifier_ids ?? [], "modifier_ids", 120).map(
       (id2) => recordId(id2, "modifier ID")
     );
     if (new Set(modifiers2).size !== modifiers2.length)
-      invalid2("Modifier IDs must be distinct");
+      invalid("Modifier IDs must be distinct");
     return {
       productId: recordId(line.product_id, "product_id"),
       portionId: line.portion_id == null ? null : recordId(line.portion_id, "portion_id"),
       modifiers: modifiers2,
-      quantity: integer2(line.quantity, "quantity", 1, 999),
+      quantity: saleQuantity(line.quantity),
       edits: saleLineEdits(line)
     };
   });
-  if (!inputs.length) invalid2("A bill needs at least one line");
+  if (!inputs.length) invalid("A bill needs at least one line");
   const scope = catalogScope(context);
   const rows = await sql(
     context.db,
@@ -3597,8 +3994,8 @@ async function saleLines(env, deps, context, value, currency, taxMode, taxRate, 
       currency
     );
     const unitPrice = input.edits.is_free ? 0 : (input.edits.base_price_override_minor ?? base) + modifiers2.reduce((sum, option) => sum + option.price_minor, 0);
-    const gross = unitPrice * input.quantity;
-    if (gross < 0)
+    const gross = lineGross(unitPrice, input.quantity);
+    if (unitPrice < 0)
       conflict(
         "The selected options produce a negative line price",
         "INVALID_PRICING"
@@ -3621,11 +4018,348 @@ async function saleLines(env, deps, context, value, currency, taxMode, taxRate, 
       quantity: input.quantity,
       unit_price_minor: unitPrice,
       ...input.edits,
-      ...saleLineTotals(gross, taxMode, taxRate, taxRule, input.edits.discount_minor)
+      ...saleLineTotals(gross, taxMode, taxRate, taxRule, input.edits.discount_minor, input.edits.discount_bps)
     };
   });
 }
 __name(saleLines, "saleLines");
+
+// worker/posApiCustomers.ts
+var customerColumns = "id name external_reference is_walk_in phone_number address customer_group_id gender dob email photo customer_code is_membership allow_credit";
+var customerFrom = `FROM pos_customers c LEFT JOIN pos_customer_groups g
+    ON g.id=c.customer_group_id AND g.business_id=c.business_id
+  WHERE c.business_id=?`;
+var customerDetails = customerColumns.split(" ").map((key) => "c." + key).join(",") + ", g.name AS customer_group_name";
+var hasCustomerPhoto = "EXISTS (SELECT 1 FROM pos_customer_photos p WHERE p.customer_id=c.id)";
+var customerSelect = `SELECT ${customerDetails}, ${hasCustomerPhoto} AS has_uploaded_photo ${customerFrom}`;
+var groupSelect = "SELECT id,name FROM pos_customer_groups WHERE business_id=?";
+var customerOrder = "c.name COLLATE NOCASE,c.id";
+var customerFields = {
+  external_reference: 120,
+  customer_code: 120,
+  phone_number: 50,
+  address: 1e3,
+  customer_group_id: 80,
+  gender: 50,
+  dob: 10,
+  email: 254,
+  photo: 2048
+};
+function parseCustomer(body, creating) {
+  const fields2 = {};
+  if (creating || body.name !== void 0) fields2.name = string(body.name, "name");
+  for (const [field, limit] of Object.entries(customerFields)) {
+    if (body[field] !== void 0) fields2[field] = optionalText(body[field], field, limit);
+  }
+  if (fields2.customer_group_id) recordId(fields2.customer_group_id, "customer_group_id");
+  if (fields2.dob && !validBookingDate(fields2.dob)) invalid("Enter a valid date of birth (YYYY-MM-DD)");
+  if (fields2.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields2.email)) invalid("Enter a valid email address");
+  if (fields2.photo) {
+    const url = URL.parse(fields2.photo);
+    if (!url || !["https:", "http:"].includes(url.protocol) || url.username || url.password)
+      invalid("Enter an HTTP or HTTPS photo URL");
+  }
+  const flags = {};
+  for (const field of ["is_membership", "allow_credit"]) {
+    if (body[field] !== void 0) flags[field] = Number(boolean(body[field], field));
+  }
+  return { ...fields2, ...flags };
+}
+__name(parseCustomer, "parseCustomer");
+function customerWriteError(error3) {
+  if (String(error3).includes("pos_customer_membership_requires_code"))
+    invalid("Customer code is required for membership");
+  throw error3;
+}
+__name(customerWriteError, "customerWriteError");
+function groupCondition(businessId, group) {
+  return group ? { query: "EXISTS (SELECT 1 FROM pos_customer_groups WHERE business_id=? AND id=?)", params: [businessId, group] } : { query: "1", params: [] };
+}
+__name(groupCondition, "groupCondition");
+function customerWrite(db, businessId, record, creating, fields2) {
+  const columns = Object.keys(fields2);
+  if (!columns.length) return null;
+  const values = Object.values(fields2);
+  const group = groupCondition(businessId, fields2.customer_group_id);
+  return creating ? sql(
+    db,
+    `INSERT INTO pos_customers (id,business_id,${columns.join(",")})
+        SELECT ?,?,${columns.map(() => "?").join(",")} WHERE ${group.query}`,
+    record,
+    businessId,
+    ...values,
+    ...group.params
+  ) : sql(
+    db,
+    `UPDATE pos_customers SET ${columns.map((field) => field + "=?").join(",")}
+        WHERE business_id=? AND id=? AND ${group.query}`,
+    ...values,
+    businessId,
+    record,
+    ...group.params
+  );
+}
+__name(customerWrite, "customerWrite");
+var maxPhotoBytes = 256 * 1024;
+var maxEncodedPhotoBytes = 4 * Math.ceil(maxPhotoBytes / 3);
+var imageTypes = /* @__PURE__ */ new Set(["image/jpeg", "image/png", "image/webp"]);
+function validateCustomerPhoto(contentType, image) {
+  if (!imageTypes.has(contentType) || image.byteLength === 0 || image.byteLength > maxPhotoBytes)
+    invalid("Upload a JPG, PNG or WebP photo up to 256 KB");
+  const start = String.fromCharCode(...new Uint8Array(image, 0, Math.min(12, image.byteLength)));
+  const valid = contentType === "image/webp" ? start.startsWith("RIFF") && start.slice(8, 12) === "WEBP" : contentType === "image/png" ? start.startsWith("\x89PNG\r\n\n") : start.startsWith("\xFF\xD8\xFF");
+  if (!valid) invalid("Upload a valid JPG, PNG or WebP photo");
+  return { contentType, image };
+}
+__name(validateCustomerPhoto, "validateCustomerPhoto");
+function registerPhotoUpload(value) {
+  if (value === void 0) return;
+  const upload = object(value);
+  const contentType = string(upload.content_type, "photo content type");
+  const encoded = string(upload.image, "photo", maxEncodedPhotoBytes);
+  let decoded;
+  try {
+    decoded = atob(encoded);
+  } catch {
+    invalid("Invalid photo data");
+  }
+  return validateCustomerPhoto(contentType, Uint8Array.from(decoded, (byte) => byte.charCodeAt(0)).buffer);
+}
+__name(registerPhotoUpload, "registerPhotoUpload");
+async function customerUpload(request) {
+  const tooLarge = /* @__PURE__ */ __name(() => new PosError(413, "REQUEST_TOO_LARGE", "Customer photo upload is too large"), "tooLarge");
+  const maxRequestBytes = maxPhotoBytes + 32 * 1024;
+  if (Number(request.headers.get("content-length")) > maxRequestBytes) throw tooLarge();
+  if (!request.body) invalid("Send customer data and a photo");
+  let size = 0;
+  const limited = request.body.pipeThrough(new TransformStream({
+    transform(chunk, controller) {
+      size += chunk.byteLength;
+      if (size > maxRequestBytes) throw tooLarge();
+      controller.enqueue(chunk);
+    }
+  }));
+  const form = await new Response(limited, { headers: request.headers }).formData().catch((error3) => {
+    if (error3 instanceof PosError) throw error3;
+    invalid("Send customer data and a photo");
+  });
+  const data = form.get("customer");
+  const file = form.get("photo");
+  if (typeof data !== "string") invalid("Send customer data");
+  if (!(file instanceof File) || file.size === 0 || file.size > maxPhotoBytes || !imageTypes.has(file.type))
+    invalid("Upload a JPG, PNG or WebP photo up to 256 KB");
+  let body;
+  try {
+    body = JSON.parse(data);
+  } catch {
+    invalid("Malformed customer data");
+  }
+  return { body: object(body), upload: validateCustomerPhoto(file.type, await file.arrayBuffer()) };
+}
+__name(customerUpload, "customerUpload");
+async function customerPhoto(db, businessId, id2) {
+  const photo2 = await sql(db, `SELECT p.content_type,p.image FROM pos_customer_photos p
+    JOIN pos_customers c ON c.id=p.customer_id WHERE c.business_id=? AND c.id=?`, businessId, id2).first();
+  if (!photo2) missing("Customer photo");
+  return { contentType: photo2.content_type, bytes: new Uint8Array(photo2.image) };
+}
+__name(customerPhoto, "customerPhoto");
+async function readCustomerPhoto(db, businessId, id2) {
+  const { contentType, bytes } = await customerPhoto(db, businessId, id2);
+  return new Response(bytes, { headers: { "content-type": contentType } });
+}
+__name(readCustomerPhoto, "readCustomerPhoto");
+async function readRegisterCustomerPhoto(context, id2) {
+  const { contentType, bytes } = await customerPhoto(context.db, context.identity.business_id, id2);
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 8192)
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
+  return respond({ content_type: contentType, image: btoa(binary) });
+}
+__name(readRegisterCustomerPhoto, "readRegisterCustomerPhoto");
+async function saveCustomer(db, businessId, body, record, creating, upload) {
+  const fields2 = parseCustomer(body, creating);
+  if (upload) fields2.photo = null;
+  const statements = customerWrites(db, businessId, record, creating, fields2, upload);
+  if (!statements.length) return;
+  const [result] = await db.batch(statements).catch(customerWriteError);
+  if (result.meta.changes) return;
+  const group = fields2.customer_group_id;
+  if (group && !await sql(db, "SELECT 1 FROM pos_customer_groups WHERE business_id=? AND id=?", businessId, group).first())
+    invalid("Choose a customer group from this business");
+  if (!creating) missing("Customer");
+  conflict("The customer group changed. Refresh and retry.");
+}
+__name(saveCustomer, "saveCustomer");
+function customerWrites(db, businessId, record, creating, fields2, upload) {
+  const write = customerWrite(db, businessId, record, creating, fields2);
+  if (!write) return [];
+  const statements = [write];
+  if (upload) {
+    statements.push(sql(
+      db,
+      `INSERT INTO pos_customer_photos (customer_id,content_type,image)
+      SELECT ?,?,? WHERE changes()=1
+      ON CONFLICT(customer_id) DO UPDATE SET content_type=excluded.content_type,image=excluded.image`,
+      record,
+      upload.contentType,
+      upload.image
+    ));
+  } else if (fields2.photo !== void 0) {
+    statements.push(sql(db, "DELETE FROM pos_customer_photos WHERE customer_id=? AND changes()=1", record));
+  }
+  return statements;
+}
+__name(customerWrites, "customerWrites");
+var deletableCustomer = `FROM pos_customers AS customer
+  WHERE business_id=? AND id=? AND is_walk_in=0 AND NOT EXISTS (
+    SELECT 1 FROM pos_profiles WHERE business_id=customer.business_id AND (
+      json_extract(config_json,'$.default_customer_id')=customer.id OR
+      json_extract(pending_config_json,'$.default_customer_id')=customer.id
+    )
+  )`;
+async function customerDeleteError(db, businessId, id2) {
+  const walkIn = await sql(db, "SELECT is_walk_in FROM pos_customers WHERE business_id=? AND id=?", businessId, id2).first("is_walk_in");
+  if (walkIn === null) missing("Customer");
+  if (walkIn) conflict("The walk-in customer cannot be deleted");
+  conflict("Change the default customer in all POS profiles that use this customer before deleting");
+}
+__name(customerDeleteError, "customerDeleteError");
+async function registerCustomerDirectory(request, url, context, resource, id2, readOnly) {
+  const { db, identity: { business_id: businessId } } = context;
+  if (request.method === "GET") {
+    if (resource === "customer-groups")
+      return respond(await pageOf(db, url, "customer_groups", `${groupSelect} ORDER BY name,id`, [businessId]));
+    if (!id2)
+      return respond(await pageOf(db, url, "customers", `${customerSelect} ORDER BY c.is_walk_in DESC,${customerOrder}`, [businessId]));
+    const row = await sql(db, `${customerSelect} AND c.id=?`, businessId, id2).first();
+    if (!row) missing("Customer");
+    return respond(row);
+  }
+  if (resource !== "customers" || !(id2 ? ["PATCH", "DELETE"] : ["POST"]).includes(request.method))
+    return respond({ error: "Method not allowed", code: "METHOD_NOT_ALLOWED" }, 405);
+  const body = request.method === "DELETE" ? void 0 : await bodyOf(request, maxEncodedPhotoBytes + 32e3);
+  const command = await Command.read(request, context, body && { body, envelope: body });
+  if (command instanceof Response) return command;
+  if (readOnly)
+    throw new PosError(402, "SUBSCRIPTION_EXPIRED", "Customer changes require an active subscription");
+  try {
+    if (id2 && request.method === "DELETE") {
+      const params2 = [businessId, id2];
+      const eligible = `SELECT 1 ${deletableCustomer}`;
+      if (!await sql(db, eligible, ...params2).first())
+        return await customerDeleteError(db, businessId, id2);
+      return await command.commit(200, {
+        query: `EXISTS (${eligible})`,
+        params: params2,
+        allowStoreAuthority: true
+      }, [sql(db, `DELETE ${deletableCustomer}`, ...params2)], {
+        query: `SELECT json_object('success',json('true'))`,
+        params: []
+      });
+    }
+    const creating = !id2;
+    const record = id2 ?? newId("posc");
+    const fields2 = parseCustomer(command.body, creating);
+    const upload = registerPhotoUpload(command.body.photo_upload);
+    if (upload) fields2.photo = null;
+    const group = groupCondition(businessId, fields2.customer_group_id);
+    if (!await sql(db, `SELECT 1 WHERE ${group.query}`, ...group.params).first())
+      invalid("Choose a customer group from this business");
+    const matching = `${customerFrom} AND c.id=?`;
+    const params = [businessId, record];
+    if (!creating && !await sql(db, `SELECT 1 ${matching}`, ...params).first()) missing("Customer");
+    return await command.commit(creating ? 201 : 200, {
+      query: creating ? group.query : `${group.query} AND EXISTS (SELECT 1 ${matching})`,
+      params: creating ? group.params : [...group.params, ...params],
+      allowStoreAuthority: true
+    }, customerWrites(db, businessId, record, creating, fields2, upload), {
+      query: `SELECT ${jsonRow("c", customerColumns, { customer_group_name: "g.name", has_uploaded_photo: hasCustomerPhoto })} ${matching}`,
+      params
+    });
+  } catch (error3) {
+    const replay = await command.replay();
+    if (replay) return replay;
+    customerWriteError(error3);
+  }
+}
+__name(registerCustomerDirectory, "registerCustomerDirectory");
+var customerPhoneDigits = ["' '", "'+'", "'-'", "'('", "')'", "'.'", "char(160)"].reduce((value, separator) => `replace(${value},${separator},'')`, "c.phone_number");
+async function adminCustomerPage(db, url, businessId) {
+  const sortBy = choice(
+    url.searchParams.get("sort_by") ?? "name",
+    "sort_by",
+    ["name", "phone_number", "customer_code"]
+  );
+  const direction = choice(
+    url.searchParams.get("sort_direction") ?? "asc",
+    "sort_direction",
+    ["asc", "desc"]
+  );
+  const search = (url.searchParams.get("search") ?? "").trim();
+  if (search.length > 120) invalid("Customer search must be at most 120 characters");
+  const params = [businessId];
+  let filter = "";
+  if (search) {
+    const matches = [
+      "instr(lower(c.name),lower(?))>0",
+      "instr(lower(c.customer_code),lower(?))>0",
+      "instr(c.phone_number,?)>0"
+    ];
+    params.push(search, search, search);
+    const digits = /^[+\d\s().-]+$/.test(search) ? search.replace(/\D/g, "") : "";
+    if (digits) {
+      matches.push(`instr(${customerPhoneDigits},?)>0`);
+      params.push(digits);
+    }
+    filter = ` AND (${matches.join(" OR ")})`;
+  }
+  const order = sortBy === "name" ? `c.name COLLATE NOCASE ${direction},c.id` : `nullif(c.${sortBy},'') COLLATE NOCASE ${direction} NULLS LAST,${customerOrder}`;
+  return pageOf(db, url, "customers", `${customerSelect}${filter} ORDER BY ${order}`, params);
+}
+__name(adminCustomerPage, "adminCustomerPage");
+async function manageCustomerDirectory(request, url, db, businessId, resource, id2) {
+  const groups = resource === "customer-groups";
+  const entity = groups ? "Customer group" : "Customer";
+  const select = groups ? groupSelect : customerSelect;
+  const read2 = /* @__PURE__ */ __name((record2) => sql(db, select + (groups ? " AND id=?" : " AND c.id=?"), businessId, record2).first(), "read");
+  if (request.method === "GET") {
+    if (!id2) {
+      return respond(groups ? await pageOf(db, url, "customer_groups", `${groupSelect} ORDER BY name,id`, [businessId]) : await adminCustomerPage(db, url, businessId));
+    }
+    const existing = await read2(id2);
+    if (!existing) missing(entity);
+    return respond(existing);
+  }
+  if (request.method === "DELETE" && id2) {
+    if (groups) {
+      const result = await sql(db, "DELETE FROM pos_customer_groups WHERE business_id=? AND id=?", businessId, id2).run();
+      if (!result.meta.changes) missing(entity);
+    } else {
+      const result = await sql(db, `DELETE ${deletableCustomer}`, businessId, id2).run();
+      if (!result.meta.changes) await customerDeleteError(db, businessId, id2);
+    }
+    return respond({ success: true });
+  }
+  if (request.method !== (id2 ? "PATCH" : "POST"))
+    return respond({ error: "Method not allowed", code: "METHOD_NOT_ALLOWED" }, 405);
+  const record = id2 ?? newId(groups ? "poscg" : "posc");
+  if (groups) {
+    const body = await bodyOf(request);
+    if (body.name !== void 0 || !id2) {
+      const name = string(body.name, "name");
+      const result = id2 ? await sql(db, "UPDATE pos_customer_groups SET name=? WHERE business_id=? AND id=?", name, businessId, id2).run() : await sql(db, "INSERT INTO pos_customer_groups (id,business_id,name) VALUES (?,?,?)", record, businessId, name).run();
+      if (id2 && !result.meta.changes) missing(entity);
+    }
+  } else {
+    const data = request.headers.get("content-type")?.startsWith("multipart/form-data") ? await customerUpload(request) : { body: await bodyOf(request), upload: void 0 };
+    await saveCustomer(db, businessId, data.body, record, !id2, data.upload);
+  }
+  const saved = await read2(record);
+  if (!saved) missing(entity);
+  return respond(saved, id2 ? 200 : 201);
+}
+__name(manageCustomerDirectory, "manageCustomerDirectory");
 
 // worker/posApiDevices.ts
 var proofWindow = 120;
@@ -3639,7 +4373,7 @@ function issuePosToken(lifetime) {
 __name(issuePosToken, "issuePosToken");
 function hex(value, field, bytes) {
   if (typeof value !== "string" || value.length !== bytes * 2 || !/^[a-f0-9]+$/.test(value))
-    invalid2(`Invalid ${field}`);
+    invalid(`Invalid ${field}`);
   return value;
 }
 __name(hex, "hex");
@@ -3741,7 +4475,7 @@ async function renewDeviceSession(db, request) {
   const id2 = recordId(body.credential_id, "credential_id");
   const nonce = hex(body.nonce, "nonce", 32);
   const proof = hex(body.signature, "signature", 64);
-  const issuedAt = integer2(body.issued_at, "issued_at", 0);
+  const issuedAt = integer(body.issued_at, "issued_at", 0);
   const now = Math.floor(Date.now() / 1e3);
   if (Math.abs(now - issuedAt) > proofWindow) {
     throw new PosError(
@@ -3883,13 +4617,13 @@ __name(revokeDevice, "revokeDevice");
 
 // worker/posApiTaxRules.ts
 function readTaxRules(value) {
-  if (!Array.isArray(value)) invalid2("tax_rules must be an array");
+  if (!Array.isArray(value)) invalid("tax_rules must be an array");
   const ids = /* @__PURE__ */ new Set();
   return value.map((entry, index) => {
-    const rule = object2(entry);
+    const rule = object(entry);
     const prefix = "tax_rules[" + index + "].";
     const id2 = rule.id === void 0 ? newId("tax") : recordId(rule.id, prefix + "id");
-    if (ids.has(id2)) invalid2("Tax rule IDs must be unique within the profile");
+    if (ids.has(id2)) invalid("Tax rule IDs must be unique within the profile");
     ids.add(id2);
     const name = /* @__PURE__ */ __name((key) => {
       const value2 = rule[key];
@@ -3898,7 +4632,7 @@ function readTaxRules(value) {
     const rate = /* @__PURE__ */ __name((key) => {
       const value2 = rule[key];
       if (typeof value2 !== "number" || !Number.isFinite(value2) || value2 < 0 || value2 > 100) {
-        invalid2(prefix + key + " must be between 0 and 100");
+        invalid(prefix + key + " must be between 0 and 100");
       }
       return value2;
     }, "rate");
@@ -3924,9 +4658,145 @@ function readTaxRules(value) {
 }
 __name(readTaxRules, "readTaxRules");
 
+// worker/posApiShiftReports.ts
+var registerManager = /* @__PURE__ */ __name((role) => role === "manager" || role === "owner", "registerManager");
+function shiftNameColumns(alias) {
+  return `(SELECT display_name FROM users WHERE id=${alias}.opened_by) AS opened_by_name,
+    (SELECT display_name FROM users WHERE id=${alias}.closed_by) AS closed_by_name`;
+}
+__name(shiftNameColumns, "shiftNameColumns");
+function saleTotals(context, column, id2) {
+  return sql(
+    context.db,
+    `SELECT currency,secondary_exchange_rate AS exchange_rate,sum(total_minor) AS amount_minor,
+      sum(CASE WHEN reverses_sale_id IS NULL THEN 1 ELSE 0 END) AS paid_bills
+    FROM sales WHERE ${column}=? AND status='paid' GROUP BY currency,secondary_exchange_rate`,
+    id2
+  );
+}
+__name(saleTotals, "saleTotals");
+function shiftPayments(context, id2) {
+  return sql(
+    context.db,
+    `SELECT p.payment_type_id,max(p.payment_type_name) AS payment_type_name,p.payment_kind,p.currency,
+      sum(p.amount_minor) AS amount_minor,
+      sum(CASE WHEN s.reverses_sale_id IS NULL THEN p.amount_minor ELSE 0 END) AS payments_minor,
+      sum(CASE WHEN s.reverses_sale_id IS NOT NULL THEN p.amount_minor ELSE 0 END) AS reversals_minor
+    FROM sales s JOIN sale_payments p ON p.sale_id=s.id
+    WHERE s.shift_id=? AND s.status='paid'
+    GROUP BY p.payment_type_id,p.payment_kind,p.currency ORDER BY p.payment_type_id,p.currency`,
+    id2
+  );
+}
+__name(shiftPayments, "shiftPayments");
+async function shiftSummary(context, id2, drawerCounts) {
+  const [sales, payments, cash, activity, drawer] = await context.db.batch([
+    saleTotals(context, "shift_id", id2),
+    shiftPayments(context, id2),
+    sql(
+      context.db,
+      `SELECT currency,kind,sum(amount_minor) AS amount_minor FROM cash_floats
+      WHERE shift_id=? GROUP BY currency,kind`,
+      id2
+    ),
+    sql(
+      context.db,
+      `SELECT f.*,u.display_name AS created_by_name FROM cash_floats f
+      LEFT JOIN users u ON u.id=f.created_by WHERE f.shift_id=? AND f.kind<>'opening'
+      ORDER BY f.created_at DESC,f.id DESC LIMIT 10`,
+      id2
+    ),
+    ...drawerCounts == null ? [] : [drawerCounts]
+  ]);
+  return {
+    sales: sales.results,
+    payments: payments.results,
+    cash: cash.results.filter((row) => row.kind !== "opening" || registerManager(context.identity.role)),
+    movements: activity.results,
+    drawer_counts: drawer?.results ?? []
+  };
+}
+__name(shiftSummary, "shiftSummary");
+async function daySummary(context, id2) {
+  requireManager(context.identity.role);
+  const db = context.db;
+  const [sales, shifts, bills, discrepancies, registers] = await db.batch([
+    saleTotals(context, "working_day_id", id2),
+    sql(
+      db,
+      `SELECT s.id,s.profile_id,p.name AS profile_name,s.opened_at,s.closed_at,
+        ${shiftNameColumns("s")}
+      FROM cashier_shifts s JOIN pos_profiles p ON p.id=s.profile_id
+      WHERE s.working_day_id=? ORDER BY s.opened_at,s.id`,
+      id2
+    ),
+    sql(
+      db,
+      `SELECT s.id,s.profile_id,p.name AS profile_name,s.table_code FROM sales s
+      JOIN pos_profiles p ON p.id=s.profile_id WHERE s.working_day_id=? AND s.status IN ('open','submitted','bill_requested')
+      ORDER BY p.name,s.id`,
+      id2
+    ),
+    sql(
+      db,
+      `SELECT c.shift_id,c.payment_type_name,c.currency,c.variance_minor FROM cashier_shift_closing_counts c
+      JOIN cashier_shifts s ON s.id=c.shift_id WHERE s.working_day_id=? AND c.variance_minor<>0
+      ORDER BY s.opened_at,s.id,c.payment_type_id,c.currency`,
+      id2
+    ),
+    sql(db, `SELECT profile_id FROM sales WHERE working_day_id=? AND status='paid' GROUP BY profile_id`, id2)
+  ]);
+  return {
+    sales: sales.results,
+    shifts: shifts.results,
+    open_bills: bills.results,
+    register_count: new Set([...shifts.results, ...bills.results, ...registers.results].map((row) => row.profile_id)).size,
+    discrepancies: discrepancies.results
+  };
+}
+__name(daySummary, "daySummary");
+async function readShiftAudit(db, url, businessId) {
+  return respond(await pageOf(db, url, "events", `
+    WITH lifecycle AS MATERIALIZED (
+      SELECT id||':open' AS id,'open_day' AS action,opened_at AS occurred_at,opened_by AS actor_id,
+        branch_id,NULL AS profile_id,id AS reference,NULL AS reason,NULL AS reason_code,
+        NULL AS currency,NULL AS amount_minor,NULL AS counts_json,NULL AS original_actor_id
+      FROM working_days WHERE business_id=?1
+      UNION ALL SELECT id||':close','close_day',closed_at,closed_by,branch_id,NULL,id,NULL,NULL,NULL,NULL,NULL,NULL
+      FROM working_days WHERE business_id=?1 AND closed_at IS NOT NULL
+      UNION ALL SELECT id||':open','open_shift',opened_at,opened_by,branch_id,profile_id,id,NULL,NULL,NULL,NULL,NULL,NULL
+      FROM cashier_shifts WHERE business_id=?1
+      UNION ALL SELECT s.id||':close','close_shift',s.closed_at,s.closed_by,s.branch_id,s.profile_id,s.id,NULL,NULL,NULL,NULL,
+        (SELECT json_group_array(json_object('payment_type_name',payment_type_name,'currency',currency,
+          'expected_minor',expected_minor,'declared_minor',declared_minor,'variance_minor',variance_minor))
+          FROM cashier_shift_closing_counts WHERE shift_id=s.id),NULL
+      FROM cashier_shifts s WHERE s.business_id=?1 AND s.closed_at IS NOT NULL
+    ), adjustments AS MATERIALIZED (
+      SELECT r.id||':close','close_shift',r.previous_closed_at,r.previous_closed_by,s.branch_id,s.profile_id,s.id,
+        NULL,NULL,NULL,NULL,r.previous_counts_json,NULL
+      FROM cashier_shift_reopens r JOIN cashier_shifts s ON s.id=r.shift_id WHERE s.business_id=?1
+      UNION ALL SELECT r.id,'reopen_shift',r.reopened_at,r.reopened_by,s.branch_id,s.profile_id,s.id,r.reason,NULL,NULL,NULL,NULL,NULL
+      FROM cashier_shift_reopens r JOIN cashier_shifts s ON s.id=r.shift_id WHERE s.business_id=?1
+      UNION ALL SELECT f.id,f.kind,f.created_at,f.created_by,s.branch_id,s.profile_id,s.id,f.reason,f.reason_code,f.currency,f.amount_minor,NULL,NULL
+      FROM cash_floats f JOIN cashier_shifts s ON s.id=f.shift_id WHERE s.business_id=?1
+      UNION ALL SELECT r.command_id||':approve','recover_sync',r.approved_at,r.approved_by,r.branch_id,r.profile_id,
+        r.command_id,r.reason,NULL,NULL,NULL,NULL,r.operator_id
+      FROM pos_store_recoveries r WHERE r.business_id=?1
+    ), audit AS (
+      SELECT * FROM lifecycle UNION ALL SELECT * FROM adjustments
+    )
+    SELECT a.*,u.display_name AS actor_name,o.display_name AS original_actor_name,
+      b.name AS branch_name,p.name AS profile_name,business.timezone
+    FROM audit a LEFT JOIN users u ON u.id=a.actor_id LEFT JOIN users o ON o.id=a.original_actor_id
+    JOIN branches b ON b.id=a.branch_id LEFT JOIN pos_profiles p ON p.id=a.profile_id
+    JOIN businesses business ON business.id=b.business_id
+    ORDER BY a.occurred_at DESC,a.id DESC`, [businessId]));
+}
+__name(readShiftAudit, "readShiftAudit");
+
 // worker/posApiShifts.ts
-var dayColumns = "id branch_id business_date timezone opened_at opened_by closed_at closed_by";
-var shiftColumns = "id branch_id profile_id working_day_id opened_at opened_by closed_at closed_by activity_revision";
+var dayColumns = "id branch_id business_date timezone opened_at opened_by closed_at closed_by base_currency";
+var shiftColumns = "id branch_id profile_id working_day_id opened_at opened_by closed_at closed_by activity_revision base_currency exchange_rate note";
 var dayJson = jsonRow("d", dayColumns);
 var shiftJson = jsonRow("s", shiftColumns);
 function selectDay(context, id2) {
@@ -3940,13 +4810,13 @@ function selectDay(context, id2) {
   ).first();
 }
 __name(selectDay, "selectDay");
-function selectShift(context, id2) {
+function selectShift(context, id2, branch2 = false) {
   return sql(
     context.db,
-    `SELECT * FROM cashier_shifts WHERE business_id=? AND profile_id=?
+    `SELECT * FROM cashier_shifts WHERE business_id=? AND ${branch2 ? "branch_id" : "profile_id"}=?
     AND ${id2 ? "id=?" : "closed_at IS NULL"}`,
     context.identity.business_id,
-    context.profile.id,
+    branch2 ? context.profile.branch_id : context.profile.id,
     ...id2 ? [id2] : []
   ).first();
 }
@@ -3991,13 +4861,20 @@ var dayResult = /* @__PURE__ */ __name((id2) => ({
   query: `SELECT ${dayJson} FROM working_days d WHERE d.id=?`,
   params: [id2]
 }), "dayResult");
+var closingCounts = `SELECT payment_type_id,payment_type_name,currency,
+  expected_minor,declared_minor,variance_minor FROM cashier_shift_closing_counts`;
 var shiftResult = /* @__PURE__ */ __name((id2) => ({
   query: `SELECT ${jsonRow("s", shiftColumns, {
+    business_date: "coalesce(d.business_date,s.business_date,date(s.opened_at))",
+    opened_by_name: "(SELECT display_name FROM users WHERE id=s.opened_by)",
+    closed_by_name: "(SELECT display_name FROM users WHERE id=s.closed_by)",
+    profile_name: "p.name",
     closing_counts: `json((SELECT json_group_array(json_object('payment_type_id',payment_type_id,
       'payment_type_name',payment_type_name,'currency',currency,'expected_minor',expected_minor,
       'declared_minor',declared_minor,'variance_minor',variance_minor) ORDER BY payment_type_id,currency)
       FROM cashier_shift_closing_counts WHERE shift_id=s.id))`
-  })} AS value FROM cashier_shifts s WHERE s.id=?`,
+  })} AS value FROM cashier_shifts s JOIN pos_profiles p ON p.id=s.profile_id
+    LEFT JOIN working_days d ON d.id=s.working_day_id WHERE s.id=?`,
   params: [id2]
 }), "shiftResult");
 async function currentOperations(context) {
@@ -4005,14 +4882,14 @@ async function currentOperations(context) {
   const [day, shift] = await Promise.all([
     config.working_day_enabled ? sql(
       db,
-      `SELECT ${dayColumns.replaceAll(" ", ",")} FROM working_days
+      `SELECT d.*, ${shiftNameColumns("d")} FROM working_days d
       WHERE business_id=? AND branch_id=? AND closed_at IS NULL`,
       identity.business_id,
       profile.branch_id
     ).first() : null,
     config.cashier_shift_enabled ? sql(
       db,
-      `SELECT ${shiftColumns.replaceAll(" ", ",")} FROM cashier_shifts
+      `SELECT ${shiftColumns.replaceAll(" ", ",")}, ${shiftNameColumns("s")} FROM cashier_shifts s
       WHERE business_id=? AND profile_id=? AND closed_at IS NULL`,
       identity.business_id,
       profile.id
@@ -4021,11 +4898,68 @@ async function currentOperations(context) {
   return { working_day: day, cashier_shift: shift };
 }
 __name(currentOperations, "currentOperations");
+var latestShift = `s.id=(SELECT newer.id FROM cashier_shifts newer
+  WHERE newer.business_id=s.business_id AND newer.profile_id=s.profile_id
+  ORDER BY newer.opening_sequence DESC,newer.opened_at DESC,newer.id DESC LIMIT 1)`;
+var reopenEligible = `s.closed_at IS NOT NULL AND ${latestShift}
+  AND NOT EXISTS(SELECT 1 FROM cashier_shifts active
+    WHERE active.profile_id=s.profile_id AND active.closed_at IS NULL)
+  AND (s.working_day_id IS NULL OR EXISTS(SELECT 1 FROM working_days d
+    WHERE d.id=s.working_day_id AND d.closed_at IS NULL))`;
 async function readOperations(context, url, resource, id2, action) {
   const { db, identity, profile } = context;
   const days = resource === "working-days";
+  const manager = registerManager(identity.role);
+  const branch2 = manager && url.searchParams.get("scope") === "branch";
   if (!id2) {
     const table = days ? "working_days" : "cashier_shifts";
+    const date = url.searchParams.get("business_date");
+    const businessDate = "coalesce(d.business_date,s.business_date,(SELECT min(business_date) FROM sales WHERE shift_id=s.id),date(s.opened_at))";
+    if (!days && (date || branch2 || url.searchParams.has("closed"))) {
+      const filters = [`s.business_id=? AND s.${branch2 ? "branch_id" : "profile_id"}=?`];
+      const params = [identity.business_id, branch2 ? profile.branch_id : profile.id];
+      if (date) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) invalid("Choose a valid business date");
+        filters.push(`${businessDate}=?`);
+        params.push(date);
+      }
+      if (url.searchParams.has("closed")) filters.push("s.closed_at IS NOT NULL");
+      for (const column of ["profile_id", "opened_by"]) {
+        const filter = url.searchParams.get(column);
+        if (branch2 && filter) {
+          filters.push(`s.${column}=?`);
+          params.push(recordId(filter, column));
+        }
+      }
+      const data = await pageOf(
+        db,
+        url,
+        table,
+        `SELECT s.id,s.profile_id,s.working_day_id,s.opened_at,s.opened_by,s.closed_at,s.closed_by,s.note,
+          ${businessDate} AS business_date,p.name AS profile_name,${shiftNameColumns("s")}
+        FROM cashier_shifts s JOIN pos_profiles p ON s.profile_id=p.id
+        LEFT JOIN working_days d ON s.working_day_id=d.id
+        WHERE ${filters.join(" AND ")} ORDER BY s.opened_at DESC,s.id DESC`,
+        params
+      );
+      if (!branch2) return respond(data);
+      const [registers, operators] = await db.batch([
+        sql(
+          db,
+          "SELECT id,name FROM pos_profiles WHERE business_id=? AND branch_id=? ORDER BY name,id",
+          identity.business_id,
+          profile.branch_id
+        ),
+        sql(
+          db,
+          `SELECT DISTINCT s.opened_by AS id,u.display_name AS name FROM cashier_shifts s
+          LEFT JOIN users u ON u.id=s.opened_by WHERE s.business_id=? AND s.branch_id=? ORDER BY u.display_name,s.opened_by`,
+          identity.business_id,
+          profile.branch_id
+        )
+      ]);
+      return respond({ ...data, registers: registers.results, operators: operators.results });
+    }
     const columns = (days ? dayColumns : shiftColumns).replaceAll(" ", ",");
     return respond(
       await pageOf(
@@ -4037,6 +4971,11 @@ async function readOperations(context, url, resource, id2, action) {
         [identity.business_id, days ? profile.branch_id : profile.id]
       )
     );
+  }
+  if (days && action === "summary") {
+    const day = await selectDay(context, id2);
+    if (!day) missing("Working day");
+    return respond({ ...day, ...await daySummary(context, id2) });
   }
   if (days && !action) {
     const row2 = await sql(
@@ -4051,8 +4990,23 @@ async function readOperations(context, url, resource, id2, action) {
     return respond(row2);
   }
   if (days) missing("Endpoint");
-  const shift = await selectShift(context, id2);
+  const shift = await selectShift(context, id2, branch2 && action === "summary");
   if (!shift) missing("Cashier shift");
+  if (action === "summary") {
+    if (branch2 && !shift.closed_at && !await selectShift(context, id2)) missing("Cashier shift");
+    const result2 = shiftResult(id2);
+    const [details, summary, eligible] = await Promise.all([
+      sql(db, result2.query, ...result2.params).first("value"),
+      shiftSummary(context, id2, manager && !shift.closed_at ? expectedCounts(db, id2) : void 0),
+      manager && context.config.cashier_shift_enabled && context.config.working_day_enabled === Boolean(shift.working_day_id) ? sql(
+        db,
+        `SELECT 1 FROM cashier_shifts s WHERE s.id=? AND s.profile_id=? AND ${reopenEligible}`,
+        id2,
+        profile.id
+      ).first() : null
+    ]);
+    return respond({ ...JSON.parse(details), ...summary, tenders: shiftTenders(shift), can_reopen: eligible !== null });
+  }
   if (action === "cash-floats") {
     return respond(
       await pageOf(
@@ -4069,8 +5023,7 @@ async function readOperations(context, url, resource, id2, action) {
     if (shift.closed_at) {
       const { results } = await sql(
         db,
-        `SELECT payment_type_id,payment_type_name,currency,expected_minor,declared_minor,variance_minor
-        FROM cashier_shift_closing_counts WHERE shift_id=? ORDER BY payment_type_id,currency`,
+        `${closingCounts} WHERE shift_id=? ORDER BY payment_type_id,currency`,
         id2
       ).all();
       return respond({
@@ -4079,14 +5032,11 @@ async function readOperations(context, url, resource, id2, action) {
         counts: results
       });
     }
-    const [revision, totals] = await db.batch([
-      sql(db, "SELECT activity_revision FROM cashier_shifts WHERE id=?", id2),
-      expectedCounts(db, id2)
-    ]);
+    const { revision, rows } = await reconciliationSnapshot(db, id2);
     return respond({
       shift_id: id2,
-      activity_revision: revision.results[0].activity_revision,
-      counts: totals.results
+      activity_revision: revision.activity_revision,
+      counts: manager ? rows : rows.map(({ expected_minor, ...row2 }) => row2)
     });
   }
   if (action) missing("Endpoint");
@@ -4100,7 +5050,7 @@ __name(readOperations, "readOperations");
 async function writeDay(context, command, id2) {
   const { db, identity, profile, now } = context;
   const { business_id: businessId, user_id: actor } = identity;
-  requireManager(identity.role);
+  requirePosPermission(context, id2 ? "allow_close_working_day" : "allow_start_working_day");
   if (!id2) {
     if (!context.config.working_day_enabled)
       conflict("Working days are disabled on this profile", "FEATURE_DISABLED");
@@ -4112,19 +5062,20 @@ async function writeDay(context, command, id2) {
     const day2 = context.storeImport?.resourceId ?? newId("posd");
     return command.commit(
       201,
-      { query: "1", params: [], manager: true },
+      { query: "1", params: [] },
       [
         sql(
           db,
-          `INSERT INTO working_days(id,business_id,branch_id,business_date,timezone,opened_at,opened_by)
-        VALUES (?,?,?,?,?,?,?)`,
+          `INSERT INTO working_days(id,business_id,branch_id,business_date,timezone,opened_at,opened_by,base_currency)
+        VALUES (?,?,?,?,?,?,?,?)`,
           day2,
           businessId,
           profile.branch_id,
           context.localDate,
           identity.timezone,
           now,
-          actor
+          actor,
+          context.storeImport?.baseCurrency ?? identity.currency
         )
       ],
       dayResult(day2)
@@ -4134,7 +5085,7 @@ async function writeDay(context, command, id2) {
   if (!day) missing("Working day");
   if (day.closed_at) conflict("This working day is already closed");
   const canClose = `NOT EXISTS (SELECT 1 FROM cashier_shifts WHERE working_day_id=? AND closed_at IS NULL)
-    AND NOT EXISTS (SELECT 1 FROM sales WHERE working_day_id=? AND status='open')`;
+    AND NOT EXISTS (SELECT 1 FROM sales WHERE working_day_id=? AND status IN ('open','submitted','bill_requested'))`;
   const allowed = await sql(
     db,
     "SELECT " + canClose + " AS allowed",
@@ -4151,7 +5102,6 @@ async function writeDay(context, command, id2) {
     {
       query: `EXISTS (SELECT 1 FROM working_days WHERE id=? AND closed_at IS NULL) AND ${canClose}`,
       params: [id2, id2, id2],
-      manager: true,
       allowReadOnly: true
     },
     [
@@ -4198,6 +5148,52 @@ function expectedCounts(db, shiftId) {
   );
 }
 __name(expectedCounts, "expectedCounts");
+async function reconciliationSnapshot(db, id2) {
+  const [revision, totals] = await db.batch([
+    sql(db, "SELECT activity_revision,closed_at FROM cashier_shifts WHERE id=?", id2),
+    expectedCounts(db, id2)
+  ]);
+  return {
+    revision: revision.results[0],
+    rows: totals.results
+  };
+}
+__name(reconciliationSnapshot, "reconciliationSnapshot");
+function declaredCounts(body, rows) {
+  const input = list(body.counts, "counts", 1e3).map((raw) => {
+    const count = object(raw);
+    return {
+      payment_type_id: recordId(count.payment_type_id, "payment_type_id"),
+      currency: currencyOf(count.currency),
+      declared_minor: integer(count.declared_minor, "declared_minor", -MAX_AMOUNT),
+      expected_minor: count.expected_minor
+    };
+  });
+  const declared = new Map(input.map((entry) => [countKey(entry), entry]));
+  if (input.length !== rows.length || declared.size !== input.length || rows.some((row) => !declared.has(countKey(row))))
+    invalid("Send one declared amount for every payment type and currency in the reconciliation");
+  if (rows.some((row) => row.payment_kind === "cash" && declared.get(countKey(row)).declared_minor < 0))
+    invalid("Declared cash amounts must be zero or positive");
+  return declared;
+}
+__name(declaredCounts, "declaredCounts");
+async function reviewShift(context, id2, body) {
+  if (!await selectShift(context, id2)) missing("Cashier shift");
+  const { revision, rows } = await reconciliationSnapshot(context.db, id2);
+  if (revision.closed_at) conflict("This cashier shift is closed", "CASHIER_SHIFT_CLOSED");
+  if (integer(body.activity_revision, "activity_revision", 1) !== revision.activity_revision)
+    conflict("Refresh the shift reconciliation", "RECONCILIATION_CHANGED");
+  const declared = declaredCounts(body, rows);
+  return respond({
+    shift_id: id2,
+    activity_revision: revision.activity_revision,
+    counts: rows.map(({ expected_minor, ...row }) => {
+      const amount = declared.get(countKey(row)).declared_minor;
+      return { ...row, declared_minor: amount, variance_minor: amount - expected_minor };
+    })
+  });
+}
+__name(reviewShift, "reviewShift");
 function validateFloatTender(entry, types) {
   const currency = currencyOf(entry.currency);
   const id2 = recordId(entry.payment_type_id, "payment_type_id");
@@ -4205,11 +5201,18 @@ function validateFloatTender(entry, types) {
     (type2) => type2.id === id2 && type2.currency === currency
   );
   if (!type || !allowsCashFloat(type))
-    invalid2("Choose a payment type and currency that allow cash floats");
+    invalid("Choose a payment type and currency that allow cash floats");
   return { currency, payment_type_id: id2 };
 }
 __name(validateFloatTender, "validateFloatTender");
+function shiftTenders(shift) {
+  const types = JSON.parse(shift.payment_types_json);
+  return types.flatMap((type) => (type.currency ? [type.currency] : type.currencies ?? []).map((currency) => ({ payment_type_id: type.id, payment_type_name: type.name, currency })));
+}
+__name(shiftTenders, "shiftTenders");
 async function writeShift(context, command, id2, action) {
+  if (!id2) requirePosPermission(context, "allow_start_cashier_shift");
+  if (action === "close") requirePosPermission(context, "allow_close_cashier_shift");
   const { db, identity, profile, config, now } = context;
   const actor = identity.user_id;
   if (!id2) {
@@ -4232,22 +5235,29 @@ async function writeShift(context, command, id2, action) {
       "opening_cash",
       40
     ).map((raw) => {
-      const entry = object2(raw);
+      const entry = object(raw);
       return {
         ...validateFloatTender(entry, types),
-        amount_minor: integer2(entry.amount_minor, "amount_minor", 0)
+        amount_minor: integer(entry.amount_minor, "amount_minor", 0)
       };
     });
     const keys = new Set(opening.map(countKey));
     if (keys.size !== opening.length)
-      invalid2("Provide one opening balance per payment type and currency");
+      invalid("Provide one opening balance per payment type and currency");
+    const rawNote = command.body.note;
+    const note = optionalText(
+      typeof rawNote === "string" ? rawNote.trim() : rawNote,
+      "shift note"
+    );
     const shift2 = context.storeImport?.resourceId ?? newId("poss");
     const writes = [
       sql(
         db,
         `INSERT INTO cashier_shifts
-      (id,business_id,branch_id,profile_id,working_day_id,opened_at,opened_by,payment_types_json)
-      VALUES (?,?,?,?,?,?,?,?)`,
+      (id,business_id,branch_id,profile_id,working_day_id,opened_at,opened_by,payment_types_json,base_currency,exchange_rate,business_date,note,opening_sequence)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,(
+        SELECT coalesce(max(opening_sequence),0)+1 FROM cashier_shifts WHERE business_id=? AND profile_id=?
+      ))`,
         shift2,
         identity.business_id,
         profile.branch_id,
@@ -4255,7 +5265,13 @@ async function writeShift(context, command, id2, action) {
         day?.id ?? null,
         now,
         actor,
-        JSON.stringify(types)
+        JSON.stringify(types),
+        context.storeImport?.baseCurrency ?? identity.currency,
+        context.storeImport?.exchangeRate ?? String(identity.secondary_exchange_rate),
+        day?.business_date ?? context.localDate,
+        note,
+        identity.business_id,
+        profile.id
       )
     ];
     for (const type of types.filter(allowsCashFloat)) {
@@ -4286,6 +5302,24 @@ async function writeShift(context, command, id2, action) {
   }
   const shift = await selectShift(context, id2);
   if (!shift) missing("Cashier shift");
+  if (action === "reopen") {
+    requireManager(identity.role);
+    const reason = string(command.body.reason, "reason", 500);
+    const guard = `EXISTS(SELECT 1 FROM cashier_shifts s WHERE s.id=? AND ${reopenEligible})`;
+    if (!config.cashier_shift_enabled || config.working_day_enabled !== Boolean(shift.working_day_id) || !await sql(db, `SELECT ${guard} AS allowed`, id2).first("allowed"))
+      conflict("Only the latest eligible shift can be reopened", "SHIFT_REOPEN_UNAVAILABLE");
+    return command.commit(200, { query: guard, params: [id2], manager: true }, [
+      sql(db, `INSERT INTO cashier_shift_reopens
+        (id,shift_id,reopened_at,reopened_by,reason,previous_closed_at,previous_closed_by,previous_counts_json)
+        SELECT ?,s.id,?,?,?,s.closed_at,s.closed_by,
+          (SELECT json_group_array(json_object('payment_type_id',payment_type_id,'payment_type_name',payment_type_name,
+            'currency',currency,'expected_minor',expected_minor,'declared_minor',declared_minor,'variance_minor',variance_minor))
+            FROM cashier_shift_closing_counts WHERE shift_id=s.id)
+        FROM cashier_shifts s WHERE s.id=?`, newId("posr"), now, actor, reason, id2),
+      sql(db, "DELETE FROM cashier_shift_closing_counts WHERE shift_id=?", id2),
+      sql(db, "UPDATE cashier_shifts SET closed_at=NULL,closed_by=NULL,activity_revision=activity_revision+1 WHERE id=?", id2)
+    ], shiftResult(id2));
+  }
   if (shift.closed_at)
     conflict("This cashier shift is closed", "CASHIER_SHIFT_CLOSED");
   if (action === "cash-floats") {
@@ -4300,8 +5334,9 @@ async function writeShift(context, command, id2, action) {
       "cash_in",
       "cash_out"
     ]);
-    const amount = integer2(command.body.amount_minor, "amount_minor", 1);
+    const amount = integer(command.body.amount_minor, "amount_minor", 1);
     const reason = string(command.body.reason, "reason", 500);
+    const reasonCode = command.body.reason_code == null ? null : choice(command.body.reason_code, "reason_code", ["add_change", "safe_drop", "petty_cash", "correction", "other"]);
     const float = context.storeImport?.resourceId ?? newId("posf");
     return command.commit(
       201,
@@ -4309,8 +5344,8 @@ async function writeShift(context, command, id2, action) {
       [
         sql(
           db,
-          `INSERT INTO cash_floats(id,shift_id,payment_type_id,currency,kind,amount_minor,reason,created_at,created_by)
-        VALUES (?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO cash_floats(id,shift_id,payment_type_id,currency,kind,amount_minor,reason,created_at,created_by,reason_code)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`,
           float,
           id2,
           payment_type_id,
@@ -4319,7 +5354,8 @@ async function writeShift(context, command, id2, action) {
           amount,
           reason,
           now,
-          actor
+          actor,
+          reasonCode
         ),
         ...updateShiftActivity(context, shift)
       ],
@@ -4330,7 +5366,7 @@ async function writeShift(context, command, id2, action) {
       }
     );
   }
-  const revision = integer2(
+  const revision = integer(
     command.body.activity_revision,
     "activity_revision",
     1
@@ -4338,47 +5374,14 @@ async function writeShift(context, command, id2, action) {
   if (revision !== shift.activity_revision)
     conflict("Refresh the shift reconciliation", "RECONCILIATION_CHANGED");
   const { results } = await expectedCounts(db, id2).all();
-  const input = list(command.body.counts, "counts", 1e3).map((raw) => {
-    const count = object2(raw);
-    return {
-      payment_type_id: recordId(count.payment_type_id, "payment_type_id"),
-      currency: currencyOf(count.currency),
-      declared_minor: integer2(
-        count.declared_minor,
-        "declared_minor",
-        -MAX_AMOUNT
-      ),
-      expected_minor: context.storeImport ? integer2(
-        count.expected_minor,
-        "expected_minor",
-        Number.MIN_SAFE_INTEGER,
-        Number.MAX_SAFE_INTEGER
-      ) : void 0
-    };
-  });
-  const declared = new Map(
-    input.map((entry) => [countKey(entry), entry.declared_minor])
-  );
-  if (input.length !== results.length || declared.size !== input.length || results.some((row) => !declared.has(countKey(row)))) {
-    invalid2(
-      "Send one declared amount for every payment type and currency in the reconciliation"
-    );
-  }
+  const declared = declaredCounts(command.body, results);
   if (context.storeImport) {
-    const expected = new Map(
-      input.map((row) => [countKey(row), row.expected_minor])
-    );
-    if (results.some((row) => expected.get(countKey(row)) !== row.expected_minor)) {
+    if (results.some((row) => declared.get(countKey(row)).expected_minor !== row.expected_minor)) {
       conflict(
         "The saved drawer amounts differ from the server ledger",
         "RECONCILIATION_CHANGED"
       );
     }
-  }
-  if (results.some(
-    (row) => row.payment_kind === "cash" && declared.get(countKey(row)) < 0
-  )) {
-    invalid2("Declared cash amounts must be zero or positive");
   }
   return command.commit(
     200,
@@ -4405,7 +5408,7 @@ async function writeShift(context, command, id2, action) {
         JSON.stringify(
           results.map((row) => ({
             ...row,
-            declared_minor: declared.get(countKey(row))
+            declared_minor: declared.get(countKey(row)).declared_minor
           }))
         )
       ),
@@ -4434,12 +5437,13 @@ var salesColumns = `id branch_id profile_id working_day_id shift_id reverses_sal
   currency secondary_exchange_rate tax_mode tax_rate_bps ${amountFields} ${calculatedAmounts} table_id table_code
   table_label guest_cover customer_id customer_name note reason created_at created_by updated_at updated_by settled_at settled_by`;
 var lineColumns = `id line_number product_id product_code product_name portion_id portion_name
-  price_list_id quantity unit_price_minor ${amountFields} note`;
+  price_list_id quantity unit_price_minor ${amountFields} note price_change_reason free_reason discount_bps discount_note`;
 var savedLineColumns = `${lineColumns} base_price_override_minor is_free`;
 var paymentColumns = `id line_number payment_type_id payment_type_name payment_kind currency
   entry_type amount_minor reference reverses_payment_id`;
 var reversalId = "(SELECT r.id FROM sales r WHERE r.reverses_sale_id=s.id)";
-var lineJson = jsonRow("l", `${lineColumns} ${calculatedAmounts}`, {
+var orderColumns2 = "line_key order_session ordered_at ordered_by ordered_by_name";
+var lineJson = jsonRow("l", `${lineColumns} ${calculatedAmounts} status ${orderColumns2} void_reason`, {
   modifiers: "json(l.modifiers_json)",
   base_price_override_minor: "l.base_price_override_minor",
   is_free: "json(CASE WHEN l.is_free=1 THEN 'true' ELSE 'false' END)"
@@ -4449,13 +5453,15 @@ var saleJson = jsonRow("s", salesColumns, {
   tax_rule: "json(s.tax_rule_json)",
   reversed_by_sale_id: reversalId,
   receipt: "json(s.receipt_json)",
-  lines: `json((SELECT json_group_array(${lineJson} ORDER BY l.line_number) FROM sale_products l WHERE l.sale_id=s.id))`,
+  lines: `json((SELECT json_group_array(${lineJson} ORDER BY l.line_number) FROM sale_products l WHERE l.sale_id=s.id AND l.status<>'void'))`,
+  voided_lines: `json((SELECT json_group_array(${lineJson} ORDER BY l.ordered_at,l.rowid) FROM sale_products l WHERE l.sale_id=s.id AND l.status='void'))`,
   payments: `json((SELECT json_group_array(${paymentJson} ORDER BY p.line_number) FROM sale_payments p WHERE p.sale_id=s.id))`
 });
 var resultOf = /* @__PURE__ */ __name((id2) => ({
   query: `SELECT ${saleJson} AS value FROM sales s WHERE s.id=?`,
   params: [id2]
 }), "resultOf");
+var saleStatuses = ["open", "submitted", "bill_requested", "paid", "cancelled"];
 function sumAmounts(lines) {
   return Object.fromEntries(
     amountColumns.map((column) => [column, lines.reduce((sum, line) => sum + line[column], 0)])
@@ -4475,16 +5481,26 @@ __name(findSale, "findSale");
 function validateBusinessDate(value) {
   const parsed = /* @__PURE__ */ new Date(value + "T00:00:00Z");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== value)
-    invalid2("Invalid business_date");
+    invalid("Invalid business_date");
 }
 __name(validateBusinessDate, "validateBusinessDate");
+function billPostingDate(context, input, operatingDate) {
+  if (input == null) return operatingDate;
+  const value = string(input, "posting_date", 10);
+  validateBusinessDate(value);
+  if (value.startsWith("0000-")) invalid("Invalid posting_date");
+  if (context.config.cashier_shift_enabled && value !== operatingDate)
+    conflict("Posting date follows the required cashier shift", "POSTING_DATE_LOCKED");
+  return value;
+}
+__name(billPostingDate, "billPostingDate");
 async function readBusinessSales(db, url, businessId) {
   const filters = ["s.business_id=?"];
   const values = [businessId];
   const status = url.searchParams.get("status");
   const date = url.searchParams.get("business_date");
   if (status !== null) {
-    choice(status, "status", ["open", "paid", "cancelled"]);
+    choice(status, "status", saleStatuses);
     filters.push("s.status=?");
     values.push(status);
   }
@@ -4509,9 +5525,9 @@ async function readSellingOverview(db, businessId, date) {
   const { results } = await sql(db, `
     SELECT currency,
       COUNT(CASE WHEN status='paid' AND reverses_sale_id IS NULL THEN 1 END) AS completed_count,
-      COUNT(CASE WHEN status='open' THEN 1 END) AS open_count,
+      COUNT(CASE WHEN status IN ('open','submitted','bill_requested') THEN 1 END) AS open_count,
       SUM(CASE WHEN status='paid' THEN total_minor ELSE 0 END) AS net_minor
-    FROM sales WHERE business_id=? AND (status='open' OR (status='paid' AND business_date=?))
+    FROM sales WHERE business_id=? AND (status IN ('open','submitted','bill_requested') OR (status='paid' AND business_date=?))
     GROUP BY currency ORDER BY currency
   `, businessId, date).all();
   return respond({ business_date: date, currencies: results });
@@ -4531,6 +5547,12 @@ async function readSales(context, url, id2) {
     if (!row) missing("Sale");
     return respond(JSON.parse(row));
   }
+  if (url.searchParams.has("history")) {
+    if (url.searchParams.get("history") !== "active" || ["status", "business_date", "table_id", "shift_id", "working_day_id"].some((field) => url.searchParams.has(field))) {
+      invalid("Use history=active without other sales filters");
+    }
+    return readActiveSales(context, url);
+  }
   const filters = ["s.business_id=?", "s.profile_id=?"];
   const values = [identity.business_id, profile.id];
   for (const field of [
@@ -4543,7 +5565,7 @@ async function readSales(context, url, id2) {
     const value = url.searchParams.get(field);
     if (value === null) continue;
     if (field === "status")
-      choice(value, "status", ["open", "paid", "cancelled"]);
+      choice(value, "status", saleStatuses);
     else if (field === "business_date") validateBusinessDate(value);
     else recordId(value, field);
     filters.push(`s.${field}=?`);
@@ -4562,15 +5584,38 @@ async function readSales(context, url, id2) {
   );
 }
 __name(readSales, "readSales");
+async function readActiveSales(context, url) {
+  const { db, profile, identity, config } = context;
+  const { working_day: day, cashier_shift: shift } = await currentOperations(context);
+  const kind = config.cashier_shift_enabled ? "shift" : config.working_day_enabled ? "working_day" : "business_date";
+  const period = kind === "shift" ? shift : kind === "working_day" ? day : null;
+  const scopeId = kind === "business_date" ? context.localDate : period?.id;
+  const start = kind === "business_date" ? context.localDateStart : period?.opened_at;
+  const scope = typeof scopeId === "string" && typeof start === "string" && (kind !== "shift" || (shift?.working_day_id ?? null) === (day?.id ?? null)) && (!config.working_day_enabled || day) ? { profile_id: profile.id, kind, id: scopeId, opened_at: start } : null;
+  const paidScope = kind === "shift" ? "s.shift_id" : kind === "working_day" ? "s.working_day_id" : "s.business_date";
+  const columns = salesColumns.split(/\s+/).map((column) => "s." + column).join(",");
+  const page = await pageOf(db, url, "sales", `
+    SELECT ${columns},${reversalId} AS reversed_by_sale_id,
+      (SELECT COALESCE(SUM(l.quantity),0) FROM sale_products l WHERE l.sale_id=s.id AND l.status<>'void') AS item_quantity
+    FROM sales s WHERE s.business_id=? AND s.profile_id=? AND ? IS NOT NULL
+      AND (s.status IN ('open','submitted','bill_requested') OR (s.status='paid' AND ${paidScope}=?)
+        OR (s.status='cancelled' AND julianday(s.updated_at)>=julianday(?)
+            AND julianday(s.updated_at)<=julianday(?)))
+    ORDER BY CASE s.status WHEN 'paid' THEN COALESCE(s.settled_at,s.created_at)
+      ELSE s.updated_at END DESC,s.id DESC
+  `, [identity.business_id, profile.id, scope?.id ?? null, scope?.id ?? null, scope?.opened_at ?? null, context.now]);
+  return respond({ ...page, history_scope: scope });
+}
+__name(readActiveSales, "readActiveSales");
 async function chooseTable(context, input, previous) {
   const tableId = input === void 0 ? previous?.table_id ?? null : input === null ? null : recordId(input, "table_id");
   if (!tableId) {
     if (context.config.table_mode === "required")
-      invalid2("This profile requires a table");
+      invalid("This profile requires a table");
     return { id: null, code: null, label: null, check: false };
   }
   if (context.config.table_mode === "disabled")
-    invalid2("Tables are disabled on this profile");
+    invalid("Tables are disabled on this profile");
   if (tableId === previous?.table_id)
     return {
       id: tableId,
@@ -4610,14 +5655,14 @@ __name(chooseCustomer, "chooseCustomer");
 function openSaleGuard(guard, sale, revision) {
   return {
     ...guard,
-    query: `${guard.query} AND EXISTS (SELECT 1 FROM sales WHERE id=? AND status='open' AND revision=?)`,
+    query: `${guard.query} AND EXISTS (SELECT 1 FROM sales WHERE id=? AND status IN ('open','submitted','bill_requested') AND revision=?)`,
     params: [...guard.params, sale.id, revision]
   };
 }
 __name(openSaleGuard, "openSaleGuard");
-function assertRevision(sale, body) {
-  const revision = integer2(body.revision, "revision", 1);
-  if (sale.status !== "open")
+function assertRevision(sale, body, allowRequested = false) {
+  const revision = integer(body.revision, "revision", 1);
+  if (sale.status !== "open" && sale.status !== "submitted" && !(allowRequested && sale.status === "bill_requested"))
     conflict("This bill is no longer open", "BILL_CLOSED");
   if (revision !== sale.revision)
     conflict("Refresh the bill and use its current revision", "BILL_CHANGED");
@@ -4626,9 +5671,9 @@ function assertRevision(sale, body) {
 __name(assertRevision, "assertRevision");
 function assertExpectedContext(body, operating) {
   if (body.expected_context === void 0) return;
-  const expected = object2(body.expected_context);
+  const expected = object(body.expected_context);
   const date = string(expected.business_date, "business_date", 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) invalid2("Invalid business date");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) invalid("Invalid business date");
   const day = expected.working_day_id === null ? null : recordId(expected.working_day_id, "working_day_id");
   const shift = expected.shift_id === null ? null : recordId(expected.shift_id, "shift_id");
   if (date !== operating.businessDate || day !== (operating.day?.id ?? null) || shift !== (operating.shift?.id ?? null)) {
@@ -4639,22 +5684,34 @@ function assertExpectedContext(body, operating) {
   }
 }
 __name(assertExpectedContext, "assertExpectedContext");
-async function saveSale(env, deps, context, command, id2) {
+async function saveSale(env, deps, context, command, id2, submit = false) {
   const { db, identity, profile, config, now } = context;
   const actor = identity.user_id;
   const body = command.body;
   const existing = id2 ? await findSale(context, id2) : null;
-  if (id2 && !existing) missing("Sale");
-  const revision = existing ? assertRevision(existing, body) : 1;
+  if (body.cancel_print_bill === true && existing)
+    return saleAction(context, command, existing.id, "cancel-print-bill");
+  if (id2 && !existing && !submit) missing("Sale");
+  const revision = existing ? assertRevision(existing, submit ? { revision: existing.revision } : body) : 1;
   const operating = await operatingContext(context);
+  if (submit && !operating.day && !operating.shift && body.expected_context !== void 0) {
+    const submittedDate = string(object(body.expected_context).business_date, "business_date", 10);
+    validateBusinessDate(submittedDate);
+    if (submittedDate <= operating.businessDate) operating.businessDate = submittedDate;
+  }
   assertExpectedContext(body, operating);
   const { day, shift, businessDate } = operating;
+  const receiptData = existing ? object(JSON.parse(existing.receipt_json)) : {};
+  const requestedPostingDate = body.posting_date === void 0 ? config.cashier_shift_enabled ? null : receiptData.posting_date : body.posting_date;
+  const postingDate = billPostingDate(context, requestedPostingDate, businessDate);
   if (existing && (day?.id ?? null) !== existing.working_day_id)
     conflict("The bill belongs to a different working day");
   const currency = existing?.currency ?? identity.currency;
-  const taxRule = existing ? JSON.parse(existing.tax_rule_json ?? "null") : profileView(profile).config.default_tax_rule;
-  const taxMode = existing?.tax_mode ?? taxRule?.tax_mode ?? config.tax_mode;
-  const taxRate = existing?.tax_rate_bps ?? config.tax_rate_bps;
+  const taxSettings = registerTaxSettings(profile);
+  const keepSavedQuote = existing != null && body.lines === void 0;
+  const taxRule = keepSavedQuote ? JSON.parse(existing.tax_rule_json ?? "null") : taxSettings.default_tax_rule;
+  const taxMode = keepSavedQuote ? existing.tax_mode : taxRule?.tax_mode ?? taxSettings.tax_mode;
+  const taxRate = keepSavedQuote ? existing.tax_rate_bps : taxSettings.tax_rate_bps;
   const note = body.note === void 0 ? existing?.note ?? null : optionalText(body.note, "note");
   if (body.lines !== void 0 && currency !== identity.currency) {
     conflict(
@@ -4662,20 +5719,32 @@ async function saveSale(env, deps, context, command, id2) {
       "CURRENCY_CHANGED"
     );
   }
+  const savedLines = existing ? (await sql(
+    db,
+    "SELECT *,json(modifiers_json) AS modifiers FROM sale_products WHERE sale_id=? AND status<>'void'",
+    existing.id
+  ).all()).results.map((line) => ({
+    ...line,
+    modifiers: JSON.parse(String(line.modifiers))
+  })) : [];
   const [table, customer, lines] = await Promise.all([
     chooseTable(context, body.table_id, existing),
     chooseCustomer(context, body.customer_id, existing),
-    !existing || body.lines !== void 0 ? saleLines(env, deps, context, body.lines, currency, taxMode, taxRate, taxRule) : null
+    !existing || body.lines !== void 0 ? existing?.status === "submitted" && Array.isArray(body.lines) && !body.lines.length ? [] : saleLines(env, deps, context, body.lines, currency, taxMode, taxRate, taxRule, savedLines) : null
   ]);
-  const cover = table.id == null ? inputGuestCover(body.guest_cover, null) : body.guest_cover === void 0 ? existing?.table_id === table.id ? existing.guest_cover : null : inputGuestCover(body.guest_cover, table.id);
+  const cover = table.id == null ? inputGuestCover(body.guest_cover === void 0 && existing?.table_id == null ? existing?.guest_cover : body.guest_cover, null, config.prompt_guest_cover === true) : body.guest_cover === void 0 ? existing?.table_id === table.id ? existing.guest_cover : null : inputGuestCover(body.guest_cover, table.id);
   const amounts = lines ? sumAmounts(lines) : null;
   if (amounts && amounts.total_minor > MAX_AMOUNT)
     conflict("The bill exceeds the POS amount limit", "AMOUNT_LIMIT");
+  if (body.expected_total_minor !== void 0 && integer(body.expected_total_minor, "expected_total_minor", 0) !== (amounts?.total_minor ?? existing?.total_minor))
+    conflict("The sale total changed. Refresh the bill and review the total.", "PRICE_CHANGED");
   const sale = id2 ?? newId("possale");
   const guard = existing ? openSaleGuard(openGuard(day, shift), existing, revision) : openGuard(day, shift);
   if (lines) {
     guard.query += " AND EXISTS (SELECT 1 FROM businesses WHERE id=? AND menu_cache_version=?)";
     guard.params.push(identity.business_id, identity.catalog_version);
+    guard.query += " AND EXISTS (SELECT 1 FROM pos_profiles WHERE id=? AND config_json IS ? AND pending_config_json IS ?)";
+    guard.params.push(profile.id, profile.config_json, profile.pending_config_json);
   }
   if (table.check) {
     guard.query += ` AND EXISTS (SELECT 1 FROM restaurant_tables t JOIN table_groups g
@@ -4696,9 +5765,11 @@ async function saveSale(env, deps, context, command, id2) {
     writes.push(
       sql(
         db,
-        `UPDATE sales SET table_id=?,table_code=?,table_label=?,guest_cover=?,customer_id=?,customer_name=?,note=?,
+        `UPDATE sales SET status=?,table_id=?,table_code=?,table_label=?,guest_cover=?,customer_id=?,customer_name=?,note=?,business_date=?,receipt_json=?,
+      tax_mode=?,tax_rate_bps=?,tax_rule_json=?,
       ${amountColumns.map((column) => `${column}=COALESCE(?,${column})`).join(",")},
       revision=revision+1,updated_at=?,updated_by=? WHERE id=?`,
+        submit ? body.request_bill === true ? "bill_requested" : "submitted" : existing.status,
         table.id,
         table.code,
         table.label,
@@ -4706,6 +5777,11 @@ async function saveSale(env, deps, context, command, id2) {
         customer.id,
         customer.name,
         note,
+        requestedPostingDate == null && body.posting_date === void 0 ? existing.business_date : postingDate,
+        JSON.stringify({ ...receiptData, posting_date: requestedPostingDate == null ? null : postingDate }),
+        taxMode,
+        taxRate,
+        keepSavedQuote ? existing.tax_rule_json : taxRule ? JSON.stringify(taxRule) : null,
         ...amountColumns.map((column) => amounts?.[column] ?? null),
         now,
         actor,
@@ -4714,6 +5790,7 @@ async function saveSale(env, deps, context, command, id2) {
     );
   } else {
     const receipt = JSON.stringify({
+      ...requestedPostingDate == null ? {} : { posting_date: postingDate },
       business_name: identity.business_name,
       profile_name: profile.name,
       branch_name: profile.branch_name,
@@ -4726,13 +5803,14 @@ async function saveSale(env, deps, context, command, id2) {
         `INSERT INTO sales (id,business_id,branch_id,profile_id,working_day_id,status,business_date,
       currency,secondary_exchange_rate,tax_mode,tax_rate_bps,tax_rule_json,${amountColumns.join(",")},table_id,table_code,
       table_label,guest_cover,customer_id,customer_name,receipt_json,note,created_at,created_by,updated_at,updated_by)
-      VALUES (?,?,?,?,?,'open',?,?,?,?,?,?,${amountInserts},?,?,?,?,?,?,?,?,?,?,?,?)`,
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,${amountInserts},?,?,?,?,?,?,?,?,?,?,?,?)`,
         sale,
         identity.business_id,
         profile.branch_id,
         profile.id,
         day?.id ?? null,
-        businessDate,
+        submit ? body.request_bill === true ? "bill_requested" : "submitted" : "open",
+        postingDate,
         currency,
         String(identity.secondary_exchange_rate),
         taxMode,
@@ -4755,42 +5833,126 @@ async function saveSale(env, deps, context, command, id2) {
     );
   }
   if (lines) {
-    const serialized = JSON.stringify(lines);
-    if (new TextEncoder().encode(serialized).length > 384e3)
-      invalid2("The bill contains too much product and modifier data");
-    if (existing)
-      writes.push(sql(db, "DELETE FROM sale_products WHERE sale_id=?", sale));
-    writes.push(
-      sql(
-        db,
-        `INSERT INTO sale_products (sale_id,${savedLineColumns.replaceAll(/\s+/g, ",")},modifiers_json)
-      SELECT ?,${savedLineColumns.split(/\s+/).map((column) => `json_extract(value,'$.${column}')`).join(",")},
-        json_extract(value,'$.modifiers') FROM json_each(?)`,
-        sale,
-        serialized
-      )
-    );
+    writes.push(...await writeOrderLines(context, sale, lines, body, taxMode, taxRate, taxRule));
   }
   return command.commit(existing ? 200 : 201, guard, writes, resultOf(sale));
 }
 __name(saveSale, "saveSale");
+async function writeOrderLines(context, sale, lines, body, taxMode, taxRate, taxRule) {
+  const { db, identity, now } = context;
+  const session = newId("order");
+  const inputs = list(body.lines, "lines", 60);
+  const { results: prior } = await sql(db, `SELECT l.line_key,l.line_number,l.product_id,l.status,l.unit_price_minor
+    FROM sale_products l JOIN sales s ON s.id=l.sale_id
+    WHERE s.id=? AND s.business_id=? AND s.profile_id=?`, sale, identity.business_id, context.profile.id).all();
+  const priorKeys = new Map(prior.map((row) => [row.line_key, row]));
+  const keys = /* @__PURE__ */ new Set();
+  const serialized = JSON.stringify(lines.map((line, i) => {
+    const input = object(inputs[i]);
+    const legacyKey = `legacy_${i + 1}`;
+    const samePosition = prior.find((row) => row.line_number === i + 1 && row.product_id === line.product_id);
+    const key = input.line_key == null ? samePosition?.line_key ?? (priorKeys.has(legacyKey) ? newId("line") : legacyKey) : recordId(input.line_key, "line_key");
+    if (priorKeys.get(key)?.status === "void") conflict("This order line was voided", "BILL_CHANGED");
+    if (keys.has(key)) invalid("Duplicate order line");
+    keys.add(key);
+    const date = input.ordered_at == null ? now : string(input.ordered_at, "ordered_at", 40);
+    if (!Number.isFinite(Date.parse(date))) invalid("Invalid order date");
+    return {
+      ...line,
+      line_key: key,
+      order_session: recordId(input.order_session ?? session, "order_session"),
+      ordered_at: date,
+      ordered_by: identity.user_id,
+      ordered_by_name: identity.display_name
+    };
+  }));
+  if (new TextEncoder().encode(serialized).length > 384e3) invalid("The bill contains too much product and modifier data");
+  const columns = savedLineColumns.trim().split(/\s+/);
+  const insert = [...columns, ...orderColumns2.split(" ")];
+  const voidWrites = [];
+  const removedKeys = /* @__PURE__ */ new Set();
+  for (const raw of list(body.voided_lines ?? [], "voided_lines", 5e3)) {
+    const change = object(raw);
+    const key = recordId(change.line_key, "line_key");
+    const sourceKey = recordId(change.source_line_key, "source_line_key");
+    if (removedKeys.has(key) || keys.has(key)) invalid("Duplicate voided line");
+    removedKeys.add(key);
+    if (priorKeys.get(key)?.status === "void") continue;
+    const source = priorKeys.get(sourceKey);
+    if (!source || source.status !== "submitted" || key !== sourceKey && priorKeys.has(key)) {
+      conflict("The submitted item changed", "BILL_CHANGED");
+    }
+    const quantity = saleQuantity(change.quantity);
+    const reason = string(change.void_reason, "void_reason", 250);
+    const edits = saleLineEdits(change);
+    const amounts = saleLineTotals(
+      lineGross(source.unit_price_minor, quantity),
+      taxMode,
+      taxRate,
+      taxRule,
+      edits.discount_minor,
+      edits.discount_bps
+    );
+    const values = {
+      quantity,
+      ...amounts,
+      void_reason: reason,
+      discount_bps: edits.discount_bps,
+      discount_note: edits.discount_note
+    };
+    if (key === sourceKey) {
+      voidWrites.push(sql(db, `UPDATE sale_products SET ${Object.keys(values).map((c) => c + "=?").join(",")}
+        WHERE sale_id=? AND line_key=?`, ...Object.values(values), sale, key));
+    } else {
+      const fields2 = [...insert, "modifiers_json", "void_reason", "status"];
+      Object.assign(values, { id: newId("posl"), line_key: key, status: "void" });
+      const expressions = fields2.map((c) => c === "line_number" ? "-(SELECT MAX(rowid)+1 FROM sale_products)" : Object.hasOwn(values, c) ? "?" : c);
+      voidWrites.push(sql(
+        db,
+        `INSERT INTO sale_products(sale_id,${fields2.join(",")})
+        SELECT sale_id,${expressions.join(",")} FROM sale_products WHERE sale_id=? AND line_key=?`,
+        ...fields2.filter((c) => Object.hasOwn(values, c)).map((c) => values[c]),
+        sale,
+        sourceKey
+      ));
+    }
+  }
+  return [
+    sql(db, `DELETE FROM sale_products WHERE sale_id=? AND status='new'
+      AND line_key NOT IN (SELECT value FROM json_each(?))`, sale, JSON.stringify([...keys])),
+    sql(db, `UPDATE sale_products SET line_number=-rowid,
+      status=CASE WHEN line_key IN (SELECT value FROM json_each(?)) THEN status ELSE 'void' END
+      WHERE sale_id=? AND status<>'void'`, JSON.stringify([...keys]), sale),
+    ...voidWrites,
+    sql(
+      db,
+      `INSERT INTO sale_products(sale_id,${insert.join(",")},modifiers_json)
+      SELECT ?,${insert.map((c) => `json_extract(value,'$.${c}')`).join(",")},json_extract(value,'$.modifiers')
+      FROM json_each(?) WHERE true ON CONFLICT(sale_id,line_key) DO UPDATE SET
+      ${columns.filter((c) => c !== "id").map((c) => `${c}=excluded.${c}`).join(",")}, modifiers_json=excluded.modifiers_json`,
+      sale,
+      serialized
+    )
+  ];
+}
+__name(writeOrderLines, "writeOrderLines");
 function salePayments(input, types, sale) {
   const entries = list(input, "payments", 60).map((raw, index) => {
-    const entry = object2(raw);
+    const entry = object(raw);
     const id2 = recordId(entry.payment_type_id, "payment_type_id");
     const currency = currencyOf(entry.currency);
     const type = types.find(
       (type2) => type2.id === id2 && type2.currency === currency
     );
     if (!type)
-      invalid2("Use a payment type and currency accepted by this profile");
+      invalid("Use a payment type and currency accepted by this profile");
     const entryType = choice(entry.entry_type ?? "tender", "entry_type", [
       "tender",
       "change"
     ]);
     if (entryType === "change" && type.kind !== "cash")
-      invalid2("Change requires a cash payment type");
-    const amount = integer2(entry.amount_minor, "amount_minor", 1);
+      invalid("Change requires a cash payment type");
+    const amount = integer(entry.amount_minor, "amount_minor", 1);
     return {
       id: newId("pospay"),
       line_number: index + 1,
@@ -4812,7 +5974,7 @@ function salePayments(input, types, sale) {
       cash[entry.currency] += entry.amount_minor;
   }
   if (cash.USD < 0 || cash.KHR < 0)
-    invalid2("Change cannot exceed cash tendered in that currency");
+    invalid("Change cannot exceed cash tendered in that currency");
   const secondary = sale.currency === "USD" ? "KHR" : "USD";
   const paid = net[sale.currency] + secondaryToPrimary(
     net[secondary],
@@ -4839,8 +6001,9 @@ function insertSalePayments(db, id2, entries) {
 }
 __name(insertSalePayments, "insertSalePayments");
 async function checkout(context, command, sale, revision) {
+  requirePosPermission(context, "allow_process_payment");
   const { db, identity, now } = context;
-  const expected = integer2(
+  const expected = integer(
     command.body.expected_total_minor,
     "expected_total_minor",
     0
@@ -4850,6 +6013,8 @@ async function checkout(context, command, sale, revision) {
   const operating = await operatingContext(context);
   assertExpectedContext(command.body, operating);
   const { day, shift, businessDate } = operating;
+  const savedPostingDate = object(JSON.parse(sale.receipt_json)).posting_date;
+  const postingDate = billPostingDate(context, command.body.posting_date === void 0 ? context.config.cashier_shift_enabled ? null : savedPostingDate : command.body.posting_date, businessDate);
   if ((day?.id ?? null) !== sale.working_day_id)
     conflict("The bill belongs to a different working day");
   const entries = salePayments(
@@ -4867,7 +6032,7 @@ async function checkout(context, command, sale, revision) {
         `UPDATE sales SET status='paid',revision=revision+1,shift_id=?,business_date=?,
       updated_at=?,updated_by=?,settled_at=?,settled_by=? WHERE id=?`,
         shift?.id ?? null,
-        businessDate,
+        postingDate,
         now,
         identity.user_id,
         now,
@@ -4882,10 +6047,22 @@ async function checkout(context, command, sale, revision) {
   );
 }
 __name(checkout, "checkout");
-async function importStoreSale(context, command, types) {
+async function importStoreSale(context, command, types, status = "paid") {
   const { db, identity, profile, now } = context;
+  if (status === "paid") requirePosPermission(context, "allow_process_payment");
   const body = command.body;
   const id2 = context.storeImport.resourceId;
+  if (status === "submitted" && body.request_bill === true) status = "bill_requested";
+  const previous = await findSale(context, id2);
+  const savedLines = previous ? (await sql(
+    db,
+    "SELECT *,json(modifiers_json) AS modifiers FROM sale_products WHERE sale_id=? AND status<>'void' ORDER BY line_number",
+    id2
+  ).all()).results.map((line) => ({
+    ...line,
+    modifiers: JSON.parse(String(line.modifiers))
+  })) : [];
+  if (previous?.status === "bill_requested" && status !== "paid") conflict("Cancel Print Bill before editing this bill.", "BILL_REQUESTED");
   const currency = currencyOf(body.currency);
   const rate = string(body.exchange_rate, "exchange_rate", 80);
   const taxMode = choice(body.tax_mode, "tax_mode", [
@@ -4893,37 +6070,39 @@ async function importStoreSale(context, command, types) {
     "inclusive",
     "exclusive"
   ]);
-  const taxRate = integer2(body.tax_rate_bps, "tax_rate_bps", 0, 1e4);
+  const taxRate = integer(body.tax_rate_bps, "tax_rate_bps", 0, 1e4);
   const taxRule = body.tax_rule == null ? null : readTaxRules([body.tax_rule])[0];
   if (taxRule && taxMode !== taxRule.tax_mode)
-    invalid2("The saved tax rule must match tax_mode");
+    invalid("The saved tax rule must match tax_mode");
   const operating = await operatingContext(context);
   if (body.expected_context === void 0)
-    invalid2("The saved sale needs its operating context");
+    invalid("The saved sale needs its operating context");
   assertExpectedContext(body, operating);
   const { day, shift, businessDate } = operating;
+  const postingDate = billPostingDate(context, body.posting_date, businessDate);
   const lines = list(body.lines, "lines", 60).map((raw, index) => {
-    const line = object2(raw);
-    const quantity = integer2(line.quantity, "quantity", 1, 999);
-    const unit = integer2(line.unit_price_minor, "unit_price_minor", 0);
-    if (unit * quantity > MAX_AMOUNT) invalid2("The line exceeds the POS limit");
+    const line = object(raw);
+    const quantity = saleQuantity(line.quantity);
+    const unit = integer(line.unit_price_minor, "unit_price_minor", 0);
+    const gross = lineGross(unit, quantity);
     const edits = saleLineEdits(line);
-    const amounts2 = saleLineTotals(unit * quantity, taxMode, taxRate, taxRule, edits.discount_minor);
-    if (amounts2.subtotal_minor !== line.subtotal_minor || amounts2.tax_minor !== line.tax_minor || amounts2.total_minor !== line.total_minor || ["tax_1_amount", "tax_2_amount", "tax_3_amount"].some(
+    requireLinePermissions(context, { ...line, ...edits }, savedLines.find((old) => line.line_key != null && old.line_key === line.line_key));
+    const amounts2 = saleLineTotals(gross, taxMode, taxRate, taxRule, edits.discount_minor, edits.discount_bps);
+    if (amounts2.subtotal_minor !== line.subtotal_minor || amounts2.discount_minor !== edits.discount_minor || amounts2.tax_minor !== line.tax_minor || amounts2.total_minor !== line.total_minor || ["tax_1_amount", "tax_2_amount", "tax_3_amount"].some(
       (column) => line[column] !== void 0 && amounts2[column] !== line[column]
     ) || line.total_tax_amount !== void 0 && amounts2.tax_minor !== line.total_tax_amount || line.total_amount !== void 0 && amounts2.total_minor !== line.total_amount) {
-      invalid2("The saved line amounts do not match the saved price and tax");
+      invalid("The saved line amounts do not match the saved price and tax");
     }
     const modifiers2 = list(line.modifiers ?? [], "modifiers", 120).map(
       (rawModifier) => {
-        const modifier = object2(rawModifier);
+        const modifier = object(rawModifier);
         return {
           id: recordId(modifier.id, "modifier_id"),
           group_id: recordId(modifier.group_id, "group_id"),
           label_km: optionalText(modifier.label_km, "modifier label", 250) ?? "",
           label_en: optionalText(modifier.label_en, "modifier label", 250) ?? "",
           label_zh: optionalText(modifier.label_zh, "modifier label", 250) ?? "",
-          price_minor: integer2(
+          price_minor: integer(
             modifier.price_minor,
             "modifier price",
             -MAX_AMOUNT
@@ -4932,10 +6111,10 @@ async function importStoreSale(context, command, types) {
       }
     );
     if (new Set(modifiers2.map((modifier) => modifier.id)).size !== modifiers2.length) {
-      invalid2("Use distinct modifiers for each line");
+      invalid("Use distinct modifiers for each line");
     }
     const editedUnit = edits.is_free ? 0 : edits.base_price_override_minor == null ? unit : edits.base_price_override_minor + modifiers2.reduce((sum, option) => sum + option.price_minor, 0);
-    if (editedUnit !== unit) invalid2("The saved unit price does not match the line edits");
+    if (editedUnit !== unit) invalid("The saved unit price does not match the line edits");
     return {
       id: newId("posl"),
       line_number: index + 1,
@@ -4952,12 +6131,13 @@ async function importStoreSale(context, command, types) {
       modifiers: modifiers2
     };
   });
-  if (!lines.length) invalid2("A bill needs at least one line");
+  if (!lines.length && !["submitted", "bill_requested"].includes(previous?.status ?? ""))
+    invalid("A bill needs at least one line");
   const amounts = sumAmounts(lines);
   if (amounts.total_minor > MAX_AMOUNT || amounts.total_minor !== body.total_minor) {
-    invalid2("The saved total must match the lines");
+    invalid("The saved total must match the lines");
   }
-  const entries = salePayments(body.payments, types, {
+  const entries = status !== "paid" ? [] : salePayments(body.payments, types, {
     currency,
     secondary_exchange_rate: rate,
     total_minor: amounts.total_minor
@@ -4969,12 +6149,13 @@ async function importStoreSale(context, command, types) {
   ]);
   const table = body.table_id == null ? null : recordId(body.table_id, "table_id");
   if (tableMode === "required" && !table || tableMode === "disabled" && table) {
-    invalid2("The table does not match the saved profile mode");
+    invalid("The table does not match the saved profile mode");
   }
-  const cover = inputGuestCover(body.guest_cover, table);
+  const cover = inputGuestCover(body.guest_cover, table, context.config.prompt_guest_cover === true);
   const customer = recordId(body.customer_id, "customer_id");
-  const receipt = object2(body.receipt);
-  const template = object2(receipt.template);
+  const note = optionalText(body.note, "sale note", 500);
+  const receipt = object(body.receipt);
+  const template = object(receipt.template);
   const savedReceipt = {
     business_name: string(receipt.business_name, "business name", 250),
     profile_name: optionalText(receipt.profile_name, "profile name", 250) ?? profile.name,
@@ -4984,15 +6165,61 @@ async function importStoreSale(context, command, types) {
       footer: optionalText(template.footer, "receipt footer", 500) ?? "",
       show_tax: boolean(template.show_tax, "show_tax")
     },
-    copies: integer2(receipt.copies, "copies", 1, 10)
+    copies: integer(receipt.copies, "copies", 1, 10)
   };
+  if (previous?.status === "bill_requested") {
+    const equal = /* @__PURE__ */ __name((a, b) => {
+      if (a === b) return true;
+      if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((value, i) => equal(value, b[i]));
+      if (a && b && typeof a === "object" && typeof b === "object") {
+        const left = a, right = b;
+        const keys = Object.keys(left).sort();
+        return keys.join() === Object.keys(right).sort().join() && keys.every((key) => equal(left[key], right[key]));
+      }
+      return false;
+    }, "equal");
+    const columns = [
+      "product_id",
+      "portion_id",
+      "price_list_id",
+      "quantity",
+      "unit_price_minor",
+      "subtotal_minor",
+      "discount_minor",
+      "discount_bps",
+      "tax_minor",
+      "total_minor",
+      "note",
+      "base_price_override_minor",
+      "price_change_reason",
+      "free_reason",
+      "discount_note"
+    ];
+    const unchanged = lines.length === savedLines.length && lines.every((line, i) => {
+      const old = savedLines[i], next = line;
+      return columns.every((key) => (next[key] ?? null) === (old[key] ?? null)) && Boolean(next.is_free) === Boolean(old.is_free) && equal(next.modifiers, old.modifiers) && object(body.lines[i]).line_key === old.line_key;
+    });
+    const voids = list(body.voided_lines ?? [], "voided_lines", 120).map(object);
+    const oldVoids = (await sql(db, "SELECT * FROM sale_products WHERE sale_id=? AND status='void'", id2).all()).results;
+    const unchangedVoids = voids.every((line) => {
+      const old = oldVoids.find((row) => row.line_key === line.line_key);
+      return old != null && ["quantity", "discount_minor", "discount_bps", "discount_note", "void_reason"].every((key) => (line[key] ?? null) === (old[key] ?? null));
+    });
+    if (!unchanged || !unchangedVoids || currency !== previous.currency || rate !== previous.secondary_exchange_rate || taxMode !== previous.tax_mode || taxRate !== previous.tax_rate_bps || !equal(taxRule, JSON.parse(previous.tax_rule_json ?? "null")) || table !== previous.table_id || cover !== previous.guest_cover || customer !== previous.customer_id || note !== previous.note || postingDate !== previous.business_date)
+      conflict("Cancel Print Bill before editing this bill.", "BILL_REQUESTED");
+  }
   const guard = openGuard(day, shift);
+  guard.query += previous ? " AND EXISTS (SELECT 1 FROM sales WHERE id=? AND revision=? AND status=?)" : " AND NOT EXISTS (SELECT 1 FROM sales WHERE id=?)";
+  guard.params.push(...previous ? [id2, previous.revision, previous.status] : [id2]);
   guard.query += ` AND NOT EXISTS (
     SELECT 1 FROM restaurant_tables WHERE id=? AND (business_id<>? OR branch_id<>?)
   ) AND NOT EXISTS (
     SELECT 1 FROM pos_customers WHERE id=? AND business_id<>?
   ) AND NOT EXISTS (
     SELECT 1 FROM products WHERE id IN (SELECT value FROM json_each(?)) AND business_id<>?
+  ) AND NOT EXISTS (
+    SELECT 1 FROM sales WHERE id=?
+      AND (business_id<>? OR profile_id<>? OR status NOT IN ('submitted','bill_requested') OR working_day_id IS NOT ?)
   )`;
   guard.params.push(
     table,
@@ -5001,7 +6228,11 @@ async function importStoreSale(context, command, types) {
     customer,
     identity.business_id,
     JSON.stringify(lines.map((line) => line.product_id)),
-    identity.business_id
+    identity.business_id,
+    id2,
+    identity.business_id,
+    profile.id,
+    day?.id ?? null
   );
   return command.commit(
     201,
@@ -5011,16 +6242,26 @@ async function importStoreSale(context, command, types) {
         db,
         `INSERT INTO sales (id,business_id,branch_id,profile_id,working_day_id,shift_id,status,business_date,
         currency,secondary_exchange_rate,tax_mode,tax_rate_bps,tax_rule_json,${amountColumns.join(",")},
-        table_id,table_code,table_label,guest_cover,customer_id,customer_name,receipt_json,
+        table_id,table_code,table_label,guest_cover,customer_id,customer_name,receipt_json,note,
         created_at,created_by,updated_at,updated_by,settled_at,settled_by)
-        VALUES (?,?,?,?,?,?,'paid',?,?,?,?,?,?,${amountInserts},?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,${amountInserts},?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET status=excluded.status,revision=sales.revision+1,
+          shift_id=excluded.shift_id,business_date=excluded.business_date,
+          tax_mode=excluded.tax_mode,tax_rate_bps=excluded.tax_rate_bps,tax_rule_json=excluded.tax_rule_json,
+          ${amountColumns.map((column) => `${column}=excluded.${column}`).join(",")},
+          table_id=excluded.table_id,table_code=excluded.table_code,table_label=excluded.table_label,
+          guest_cover=excluded.guest_cover,customer_id=excluded.customer_id,customer_name=excluded.customer_name,
+          ${body.note === void 0 ? "" : "note=excluded.note,"}
+          receipt_json=excluded.receipt_json,updated_at=excluded.updated_at,updated_by=excluded.updated_by,
+          settled_at=excluded.settled_at,settled_by=excluded.settled_by`,
         id2,
         identity.business_id,
         profile.branch_id,
         profile.id,
         day?.id ?? null,
-        shift?.id ?? null,
-        businessDate,
+        status === "paid" ? shift?.id ?? null : null,
+        status,
+        postingDate,
         currency,
         rate,
         taxMode,
@@ -5034,32 +6275,29 @@ async function importStoreSale(context, command, types) {
         customer,
         string(body.customer_name, "customer name", 250),
         JSON.stringify(savedReceipt),
+        note,
         now,
         identity.user_id,
         now,
         identity.user_id,
-        now,
-        identity.user_id
+        status === "paid" ? now : null,
+        status === "paid" ? identity.user_id : null
       ),
-      sql(
-        db,
-        `INSERT INTO sale_products (sale_id,${savedLineColumns.replaceAll(/\s+/g, ",")},modifiers_json)
-      SELECT ?,${savedLineColumns.split(/\s+/).map((column) => `json_extract(value,'$.${column}')`).join(",")},
-        json_extract(value,'$.modifiers') FROM json_each(?)`,
-        id2,
-        JSON.stringify(lines)
-      ),
-      insertSalePayments(db, id2, entries),
-      ...updateShiftActivity(context, shift)
+      ...await writeOrderLines(context, id2, lines, body, taxMode, taxRate, taxRule),
+      ...status === "paid" ? [
+        insertSalePayments(db, id2, entries),
+        ...updateShiftActivity(context, shift),
+        promoteProfile(context)
+      ] : []
     ],
     resultOf(id2)
   );
 }
 __name(importStoreSale, "importStoreSale");
-function inputGuestCover(value, tableId) {
+function inputGuestCover(value, tableId, acceptsCounter = false) {
   if (value == null) return null;
-  if (tableId == null) invalid2("A guest count requires a table");
-  return integer2(value, "guest_cover", 1, 1e3);
+  if (tableId == null && !acceptsCounter) invalid("A guest count requires a table or guest-cover profile");
+  return integer(value, "guest_cover", 1, 1e3);
 }
 __name(inputGuestCover, "inputGuestCover");
 async function reverse(context, command, original) {
@@ -5070,10 +6308,10 @@ async function reverse(context, command, original) {
     conflict("Only an original paid sale can be reversed");
   const operating = await operatingContext(context);
   if (context.storeImport && (command.body.expected_context === void 0 || command.body.expected_total_minor === void 0)) {
-    invalid2("The reversal needs its operating context and original total");
+    invalid("The reversal needs its operating context and original total");
   }
   assertExpectedContext(command.body, operating);
-  if (command.body.expected_total_minor !== void 0 && integer2(command.body.expected_total_minor, "expected_total_minor", 0) !== original.total_minor) {
+  if (command.body.expected_total_minor !== void 0 && integer(command.body.expected_total_minor, "expected_total_minor", 0) !== original.total_minor) {
     conflict("The original paid total does not match", "BILL_CHANGED");
   }
   if (await sql(
@@ -5119,10 +6357,10 @@ async function reverse(context, command, original) {
       sql(
         db,
         `INSERT INTO sale_products(id,sale_id,line_number,product_id,product_code,product_name,portion_id,portion_name,
-      price_list_id,modifiers_json,quantity,unit_price_minor,${amountColumns.join(",")},note,base_price_override_minor,is_free)
+      price_list_id,modifiers_json,quantity,unit_price_minor,${amountColumns.join(",")},note,base_price_override_minor,is_free,price_change_reason,free_reason,discount_bps,discount_note)
       SELECT 'posl_'||lower(hex(randomblob(16))),?,line_number,product_id,product_code,product_name,portion_id,portion_name,
-        price_list_id,modifiers_json,-quantity,unit_price_minor,${amountReversal},note,base_price_override_minor,is_free
-      FROM sale_products WHERE sale_id=?`,
+        price_list_id,modifiers_json,-quantity,unit_price_minor,${amountReversal},note,base_price_override_minor,is_free,price_change_reason,free_reason,discount_bps,discount_note
+      FROM sale_products WHERE sale_id=? AND status<>'void'`,
         sale,
         original.id
       ),
@@ -5145,7 +6383,26 @@ async function saleAction(context, command, id2, action) {
   const sale = await findSale(context, id2);
   if (!sale) missing("Sale");
   if (action === "reverse") return reverse(context, command, sale);
-  const revision = assertRevision(sale, command.body);
+  if (action === "request-bill" || action === "cancel-print-bill") {
+    if (action === "cancel-print-bill") requirePosPermission(context, "allow_cancel_print_bill");
+    const revision2 = context.storeImport ? sale.revision : integer(command.body.revision, "revision", 1);
+    const allowed = action === "request-bill" ? ["open", "submitted"] : ["bill_requested"];
+    if (!allowed.includes(sale.status) || revision2 !== sale.revision)
+      conflict("The bill status changed. Refresh the bill.", "BILL_CHANGED");
+    const next = action === "request-bill" ? "bill_requested" : "submitted";
+    return command.commit(200, {
+      query: "EXISTS (SELECT 1 FROM sales WHERE id=? AND status=? AND revision=?)",
+      params: [id2, sale.status, revision2]
+    }, [sql(
+      context.db,
+      "UPDATE sales SET status=?,revision=revision+1,updated_at=?,updated_by=? WHERE id=?",
+      next,
+      context.now,
+      context.identity.user_id,
+      id2
+    )], resultOf(id2));
+  }
+  const revision = assertRevision(sale, context.storeImport && action === "cancel" ? { revision: sale.revision } : command.body, action === "checkout");
   if (action === "checkout") return checkout(context, command, sale, revision);
   const reason = string(command.body.reason, "reason", 500);
   const guard = openSaleGuard(
@@ -5172,139 +6429,42 @@ async function saleAction(context, command, id2, action) {
 }
 __name(saleAction, "saleAction");
 
-// worker/posApiStaff.ts
-function staffUsername(value) {
-  const username = string(value, "username", 40);
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$/.test(username)) {
-    invalid2(
-      "Use 2\u201340 letters, digits, dots, hyphens or underscores, starting with a letter or digit"
-    );
-  }
-  return username.toLowerCase();
-}
-__name(staffUsername, "staffUsername");
-var eligibleStaff = `m.business_id=? AND m.role<>'owner' AND (
-  m.role='manager' OR EXISTS (
-    SELECT 1 FROM pos_profile_grants g
-    WHERE g.business_id=m.business_id AND g.profile_id=? AND g.user_id=m.user_id
-  )
-)`;
-async function resolveStaffUsername(context, request) {
-  requireManager(context.identity.role);
-  const { username } = await bodyOf(request);
-  const member = await sql(
-    context.db,
-    `SELECT u.email FROM memberships m JOIN users u ON u.id=m.user_id
-    WHERE ${eligibleStaff} AND m.pos_username=?`,
-    context.identity.business_id,
-    context.profile.id,
-    staffUsername(username)
-  ).first();
-  if (!member) missing("Staff username");
-  return respond(member);
-}
-__name(resolveStaffUsername, "resolveStaffUsername");
-async function listStaffUsernames(context, url) {
-  requireManager(context.identity.role);
-  return respond(
-    await pageOf(
-      context.db,
-      url,
-      "staff",
-      `SELECT m.user_id,u.display_name AS name,m.role,m.pos_username AS username
-    FROM memberships m JOIN users u ON u.id=m.user_id
-    WHERE ${eligibleStaff} ORDER BY u.display_name COLLATE NOCASE,m.user_id`,
-      [context.identity.business_id, context.profile.id]
-    )
-  );
-}
-__name(listStaffUsernames, "listStaffUsernames");
-async function setStaffUsername(context, request, userId) {
-  requireManager(context.identity.role);
-  const command = await Command.read(request, context);
-  if (command instanceof Response) return command;
-  const username = command.body.username === null ? null : staffUsername(command.body.username);
-  const { db, identity, profile } = context;
-  const matching = `FROM memberships m WHERE ${eligibleStaff} AND m.user_id=?`;
-  const params = [identity.business_id, profile.id, userId];
-  if (!await sql(db, `SELECT 1 ${matching}`, ...params).first())
-    missing("Staff member");
-  try {
-    return await command.commit(
-      200,
-      {
-        query: `EXISTS (SELECT 1 ${matching})`,
-        params,
-        manager: true,
-        allowReadOnly: true,
-        allowStoreAuthority: true
-      },
-      [
-        sql(
-          db,
-          "UPDATE memberships SET pos_username=? WHERE business_id=? AND user_id=?",
-          username,
-          identity.business_id,
-          userId
-        )
-      ],
-      {
-        query: `SELECT json_object('user_id',m.user_id,'username',m.pos_username) ${matching}`,
-        params
-      }
-    );
-  } catch (error3) {
-    const replay = await command.replay();
-    if (replay) return replay;
-    if (error3 instanceof Error && error3.message.includes(
-      "UNIQUE constraint failed: memberships.business_id, memberships.pos_username"
-    )) {
-      conflict(
-        "That username is already in use in this business",
-        "POS_USERNAME_TAKEN"
-      );
-    }
-    throw error3;
-  }
-}
-__name(setStaffUsername, "setStaffUsername");
-
 // worker/posApiReceiptTemplates.ts
 function readTemplate(value) {
-  const row = object2(value);
+  const row = object(value);
   const type = choice(row.type, "receipt template type", posReceiptTypes);
-  if (!Array.isArray(row.fields)) invalid2("Receipt template fields must be an array");
-  const fields = row.fields.map(
+  if (!Array.isArray(row.fields)) invalid("Receipt template fields must be an array");
+  const fields2 = row.fields.map(
     (field) => choice(field, "receipt template field", posReceiptFields[type])
   );
-  if (new Set(fields).size !== fields.length) invalid2("Receipt template fields must be unique");
+  if (new Set(fields2).size !== fields2.length) invalid("Receipt template fields must be unique");
   const limits = posReceiptLimits;
   const base = {
     id: recordId(row.id, "receipt template ID"),
     name: string(row.name, "receipt template name"),
     language: choice(row.language, "receipt language", posReceiptLanguages),
-    paper_width_mm: integer2(row.paper_width_mm, "paper width", limits.width.min, limits.width.max),
-    print_copies: integer2(row.print_copies, "print copies", limits.copies.min, limits.copies.max),
+    paper_width_mm: integer(row.paper_width_mm, "paper width", limits.width.min, limits.width.max),
+    print_copies: integer(row.print_copies, "print copies", limits.copies.min, limits.copies.max),
     title: optionalText(row.title, "receipt title", 120) ?? "",
     footer: optionalText(row.footer, "receipt footer", 500) ?? "",
     text_size: choice(row.text_size, "receipt text size", posReceiptTextSizes),
     heading_alignment: choice(row.heading_alignment, "receipt heading alignment", posReceiptAlignments),
-    fields
+    fields: fields2
   };
   if (type !== "qr_label") {
-    if (row.qr !== void 0) invalid2("QR label settings require a QR label template");
+    if (row.qr !== void 0) invalid("QR label settings require a QR label template");
     return { ...base, type };
   }
-  const qr = object2(row.qr);
-  const labelHeight = integer2(
+  const qr = object(row.qr);
+  const labelHeight = integer(
     qr.label_height_mm,
     "label height",
     limits.labelHeight.min,
     limits.labelHeight.max
   );
-  const size = integer2(qr.size_mm, "QR size", limits.qrSize.min, limits.qrSize.max);
+  const size = integer(qr.size_mm, "QR size", limits.qrSize.min, limits.qrSize.max);
   if (size > Math.min(base.paper_width_mm, labelHeight))
-    invalid2("The QR code must fit the label width and height");
+    invalid("The QR code must fit the label width and height");
   const target = choice(qr.target, "QR target", posQrTargets);
   const customUrl = optionalText(qr.custom_url, "custom QR URL", 1e3) ?? "";
   if (target === "custom_url") {
@@ -5312,10 +6472,10 @@ function readTemplate(value) {
     try {
       url = new URL(customUrl);
     } catch {
-      invalid2("Enter an absolute HTTP or HTTPS URL for the QR label");
+      invalid("Enter an absolute HTTP or HTTPS URL for the QR label");
     }
     if (!/^https?:\/\//i.test(customUrl) || !["http:", "https:"].includes(url.protocol))
-      invalid2("Enter an absolute HTTP or HTTPS URL for the QR label");
+      invalid("Enter an absolute HTTP or HTTPS URL for the QR label");
   }
   return {
     ...base,
@@ -5333,12 +6493,12 @@ __name(readTemplate, "readTemplate");
 function readReceiptSettings(input, saved) {
   let templates = saved?.receipt_templates ?? [];
   if (input.receipt_templates !== void 0) {
-    if (!Array.isArray(input.receipt_templates)) invalid2("receipt_templates must be an array");
+    if (!Array.isArray(input.receipt_templates)) invalid("receipt_templates must be an array");
     templates = input.receipt_templates.map(readTemplate);
   }
   const byId = new Map(templates.map((template) => [template.id, template]));
-  if (byId.size !== templates.length) invalid2("Receipt template IDs must be unique within the profile");
-  const requested = input.default_receipt_templates === void 0 ? {} : object2(input.default_receipt_templates);
+  if (byId.size !== templates.length) invalid("Receipt template IDs must be unique within the profile");
+  const requested = input.default_receipt_templates === void 0 ? {} : object(input.default_receipt_templates);
   for (const key of Object.keys(requested))
     choice(key, "receipt default type", posReceiptTypes);
   const defaults = { ...emptyPosReceiptDefaults };
@@ -5347,7 +6507,7 @@ function readReceiptSettings(input, saved) {
     const id2 = value === void 0 ? saved?.default_receipt_templates?.[type] : value === null ? null : recordId(value, "default receipt template ID");
     const template = id2 ? byId.get(id2) : void 0;
     if (value != null && template?.type !== type)
-      invalid2("Choose a receipt template of the matching type from this profile");
+      invalid("Choose a receipt template of the matching type from this profile");
     defaults[type] = template?.type === type ? template.id : null;
   }
   return { receipt_templates: templates, default_receipt_templates: defaults };
@@ -5366,20 +6526,20 @@ async function findProfile(db, businessId, profileId) {
 }
 __name(findProfile, "findProfile");
 async function readConfig(db, businessId, branchId, currency, value, walkIn, saved) {
-  const input = object2(value);
+  const input = object(value);
   const tableMode = choice(input.table_mode ?? "disabled", "table_mode", [
     "disabled",
     "optional",
     "required"
   ]);
   const promptGuestCover = boolean(input.prompt_guest_cover ?? false, "prompt_guest_cover");
-  const colors = input.table_status_colors == null ? {} : object2(input.table_status_colors);
+  const colors = input.table_status_colors == null ? {} : object(input.table_status_colors);
   const tableStatusColors = { ...posTableStatusColors };
   for (const status of posTableStatuses) {
     const color = colors[status];
     if (color === void 0) continue;
     if (typeof color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(color))
-      invalid2(`table_status_colors.${status} must be a six-digit hex color`);
+      invalid(`table_status_colors.${status} must be a six-digit hex color`);
     tableStatusColors[status] = color.toUpperCase();
   }
   const tableGroups = input.table_group_ids == null ? null : list(input.table_group_ids, "table_group_ids", 500).map(
@@ -5387,13 +6547,13 @@ async function readConfig(db, businessId, branchId, currency, value, walkIn, sav
   );
   if (tableGroups) {
     if (!tableGroups.length || new Set(tableGroups).size !== tableGroups.length)
-      invalid2("Choose distinct table groups or use all groups");
+      invalid("Choose distinct table groups or use all groups");
     const count = await sql(db, `
       SELECT count(*) AS count FROM table_groups
       WHERE business_id=? AND branch_id=? AND is_active=1
         AND id IN (SELECT value FROM json_each(?))
     `, businessId, branchId, JSON.stringify(tableGroups)).first("count");
-    if (count !== tableGroups.length) invalid2("Choose active table groups from this branch");
+    if (count !== tableGroups.length) invalid("Choose active table groups from this branch");
   }
   const catalogMode = choice(input.catalog_mode ?? "category", "catalog_mode", [
     "category",
@@ -5403,7 +6563,7 @@ async function readConfig(db, businessId, branchId, currency, value, walkIn, sav
     (id2) => recordId(id2, "selected_ids")
   );
   if (selected && (!selected.length || new Set(selected).size !== selected.length)) {
-    invalid2("selected_ids must be null or a nonempty list of distinct IDs");
+    invalid("selected_ids must be null or a nonempty list of distinct IDs");
   }
   if (selected) {
     const count = await sql(
@@ -5414,7 +6574,7 @@ async function readConfig(db, businessId, branchId, currency, value, walkIn, sav
       JSON.stringify(selected)
     ).first("count");
     if (count !== selected.length)
-      invalid2("Choose active menus or categories from this business");
+      invalid("Choose active menus or categories from this business");
   }
   const defaultMenu = input.default_menu_id == null ? null : recordId(input.default_menu_id, "default_menu_id");
   if (defaultMenu && (catalogMode !== "menu" || !selected?.includes(defaultMenu) || !await sql(
@@ -5423,11 +6583,11 @@ async function readConfig(db, businessId, branchId, currency, value, walkIn, sav
     businessId,
     defaultMenu
   ).first())) {
-    invalid2("Choose a selected top-level menu as the default");
+    invalid("Choose a selected top-level menu as the default");
   }
   const types = list(input.payment_types, "payment_types", 20).map((value2) => {
-    const type = object2(value2);
-    if ("currencies" in type) invalid2("Use a single currency for each payment type");
+    const type = object(value2);
+    if ("currencies" in type) invalid("Use a single currency for each payment type");
     return {
       id: recordId(type.id, "payment type ID"),
       currency: currencyOf(type.currency),
@@ -5435,17 +6595,17 @@ async function readConfig(db, businessId, branchId, currency, value, walkIn, sav
     };
   });
   if (!types.length || new Set(types.map((type) => type.id)).size !== types.length) {
-    invalid2("Choose at least one payment type and list each type once");
+    invalid("Choose at least one payment type and list each type once");
   }
   if (!types.some((type) => type.currency === currency)) {
-    invalid2("At least one payment type must accept the business currency");
+    invalid("At least one payment type must accept the business currency");
   }
   const defaultType = recordId(
     input.default_payment_type_id,
     "default_payment_type_id"
   );
   if (!types.some((type) => type.id === defaultType))
-    invalid2("The default payment type must be accepted");
+    invalid("The default payment type must be accepted");
   const { results: storedTypes } = await sql(
     db,
     `SELECT id,kind,currency FROM pos_payment_types
@@ -5456,13 +6616,13 @@ async function readConfig(db, businessId, branchId, currency, value, walkIn, sav
   const paymentTypesById = new Map(storedTypes.map((type) => [type.id, type]));
   const cashCurrencies = types.flatMap((type) => {
     const stored = paymentTypesById.get(type.id);
-    if (!stored) invalid2("Choose payment types from this business");
+    if (!stored) invalid("Choose payment types from this business");
     if (stored.currency && type.currency !== stored.currency)
-      invalid2(`This payment type accepts only ${stored.currency}`);
+      invalid(`This payment type accepts only ${stored.currency}`);
     return stored.kind === "cash" ? [type.currency] : [];
   });
   if (new Set(cashCurrencies).size !== cashCurrencies.length)
-    invalid2("Configure at most one cash payment type per currency");
+    invalid("Configure at most one cash payment type per currency");
   const customerId = input.default_customer_id == null ? walkIn : recordId(input.default_customer_id, "default_customer_id");
   if (customerId !== walkIn && !await sql(
     db,
@@ -5470,17 +6630,17 @@ async function readConfig(db, businessId, branchId, currency, value, walkIn, sav
     businessId,
     customerId
   ).first())
-    invalid2("Choose a customer from this business");
-  const template = input.receipt_template == null ? {} : object2(input.receipt_template);
+    invalid("Choose a customer from this business");
+  const template = input.receipt_template == null ? {} : object(input.receipt_template);
   const taxMode = choice(input.tax_mode ?? "disabled", "tax_mode", posTaxModes);
-  const taxRate = integer2(input.tax_rate_bps ?? 0, "tax_rate_bps", 0, 1e4);
+  const taxRate = integer(input.tax_rate_bps ?? 0, "tax_rate_bps", 0, 1e4);
   if (taxMode === "disabled" && taxRate)
-    invalid2("A disabled tax rule must have a zero rate");
+    invalid("A disabled tax rule must have a zero rate");
   const taxRules = input.tax_rules === void 0 ? saved?.tax_rules ?? [] : readTaxRules(input.tax_rules);
   const defaultTaxRuleId = input.default_tax_rule_id === void 0 ? saved?.default_tax_rule_id : input.default_tax_rule_id === null ? null : recordId(input.default_tax_rule_id, "default_tax_rule_id");
   const defaultTaxRule = taxRules.find(({ id: id2 }) => id2 === defaultTaxRuleId);
   if (input.default_tax_rule_id != null && !defaultTaxRule)
-    invalid2("Choose a default tax rule from this profile");
+    invalid("Choose a default tax rule from this profile");
   const cashierShiftEnabled = boolean(input.cashier_shift_enabled ?? false, "cashier_shift_enabled");
   return {
     working_day_enabled: boolean(
@@ -5503,7 +6663,7 @@ async function readConfig(db, businessId, branchId, currency, value, walkIn, sav
       footer: optionalText(template.footer, "receipt footer", 500) ?? "",
       show_tax: boolean(template.show_tax ?? true, "show_tax")
     },
-    print_copies: integer2(input.print_copies ?? 1, "print_copies", 1, 10),
+    print_copies: integer(input.print_copies ?? 1, "print_copies", 1, 10),
     ...readReceiptSettings(input, saved),
     tax_mode: taxMode,
     tax_rate_bps: taxRate,
@@ -5600,6 +6760,13 @@ async function updatePaymentType(db, businessId, id2, name, group, kind, currenc
   }
 }
 __name(updatePaymentType, "updatePaymentType");
+function missingDefaultCustomer(config, businessId) {
+  return `json_extract(${config},'$.default_customer_id') IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM pos_customers c WHERE c.business_id=${businessId}
+      AND c.id=json_extract(${config},'$.default_customer_id')
+  )`;
+}
+__name(missingDefaultCustomer, "missingDefaultCustomer");
 async function profileSetup(request, url, db, businessId, id2) {
   if (request.method === "GET" && !id2) {
     const page = await pageOf(
@@ -5632,7 +6799,7 @@ async function profileSetup(request, url, db, businessId, id2) {
   const active = body.is_active === void 0 ? profile?.is_active ?? 1 : Number(boolean(body.is_active, "is_active"));
   const branchId = profile?.branch_id ?? recordId(body.branch_id, "branch_id");
   if (profile && body.branch_id !== void 0 && body.branch_id !== branchId)
-    invalid2("A profile's branch is fixed");
+    invalid("A profile's branch is fixed");
   const business2 = await sql(
     db,
     `SELECT business.currency FROM branches b JOIN businesses business ON business.id=b.business_id
@@ -5641,7 +6808,7 @@ async function profileSetup(request, url, db, businessId, id2) {
     branchId,
     active
   ).first();
-  if (!business2) invalid2("Choose an active branch from this business");
+  if (!business2) invalid("Choose an active branch from this business");
   const walkIn = "walkin_" + businessId;
   const saved = profile && profileView(profile, true);
   const config = body.config === void 0 && profile ? null : JSON.stringify(
@@ -5670,7 +6837,8 @@ async function profileSetup(request, url, db, businessId, id2) {
         db,
         `INSERT INTO pos_profiles
       (id,business_id,branch_id,name,is_active,config_json)
-      SELECT ?1,?2,?3,?4,?5,?6 WHERE NOT (${incompatiblePaymentConfig("?6", "?2")})`,
+      SELECT ?1,?2,?3,?4,?5,?6 WHERE NOT (${incompatiblePaymentConfig("?6", "?2")})
+        AND NOT (${missingDefaultCustomer("?6", "?2")})`,
         profileId,
         businessId,
         branchId,
@@ -5679,7 +6847,7 @@ async function profileSetup(request, url, db, businessId, id2) {
         config
       )
     ]);
-    if (!result.meta.changes) conflict("The payment type changed. Refresh and retry.");
+    if (!result.meta.changes) conflict("A payment type or default customer changed. Refresh and retry.");
   } else {
     const canDeactivate = `${idleProfile} AND NOT EXISTS (
       SELECT 1 FROM pos_store_authorities a
@@ -5701,7 +6869,8 @@ async function profileSetup(request, url, db, businessId, id2) {
         WHEN ${idleProfile} THEN NULL ELSE ?3 END,
       version=version+CASE WHEN (?3 IS NOT NULL AND ${idleProfile}) OR is_active<>?2 THEN 1 ELSE 0 END
       WHERE business_id=?4 AND id=?5 AND (?2=1 OR (${canDeactivate}))
-        AND NOT (${incompatiblePaymentConfig("?3", "?4")})`,
+        AND NOT (${incompatiblePaymentConfig("?3", "?4")})
+        AND NOT (${missingDefaultCustomer("?3", "?4")})`,
         name,
         active,
         config,
@@ -5710,6 +6879,13 @@ async function profileSetup(request, url, db, businessId, id2) {
       )
     ]);
     if (!result.meta.changes) {
+      if (config && await sql(
+        db,
+        `SELECT ${missingDefaultCustomer("?1", "?2")} AS missing`,
+        config,
+        businessId
+      ).first("missing"))
+        conflict("The default customer changed. Refresh and retry.");
       if (active) conflict("The payment type changed. Refresh and retry.");
       conflict("Resolve open POS activity before deactivating this profile");
     }
@@ -5728,7 +6904,7 @@ async function grants(request, db, businessId, profileId) {
       (id2) => recordId(id2, "user ID")
     );
     if (new Set(userIds).size !== userIds.length)
-      invalid2("Grant IDs must be distinct");
+      invalid("Grant IDs must be distinct");
     const ids = JSON.stringify(userIds);
     const count = await sql(
       db,
@@ -5737,7 +6913,7 @@ async function grants(request, db, businessId, profileId) {
       businessId,
       ids
     ).first("count");
-    if (count !== userIds.length) invalid2("Choose staff from this business");
+    if (count !== userIds.length) invalid("Choose staff from this business");
     await db.batch([
       sql(
         db,
@@ -5773,104 +6949,65 @@ async function grants(request, db, businessId, profileId) {
   return respond({ user_ids: rows.results.map((row) => row.user_id) });
 }
 __name(grants, "grants");
-async function directory(request, url, db, businessId, resource, id2) {
-  const customers = resource === "customers";
-  const table = customers ? "pos_customers" : "pos_payment_types";
-  const columns = customers ? "id,name,external_reference,is_walk_in" : "id,name,kind,currency,payment_type_group";
-  const select = `SELECT ${columns} FROM ${table} WHERE business_id=?`;
-  if (request.method === "GET" && !id2) {
-    return respond(
-      await pageOf(
-        db,
-        url,
-        resource.replace("-", "_"),
-        select + " ORDER BY id",
-        [businessId]
-      )
-    );
-  }
+async function paymentDirectory(request, url, db, businessId, id2) {
+  const select = "SELECT id,name,kind,currency,payment_type_group FROM pos_payment_types WHERE business_id=?";
+  if (request.method === "GET" && !id2)
+    return respond(await pageOf(db, url, "payment_types", select + " ORDER BY id", [businessId]));
   const existing = id2 ? await sql(db, select + " AND id=?", businessId, id2).first() : null;
-  if (id2 && !existing) missing(customers ? "Customer" : "Payment type");
+  if (id2 && !existing) missing("Payment type");
   if (request.method === "GET") return respond(existing);
-  if (!id2 && request.method !== "POST" || id2 && request.method !== "PATCH") {
-    return respond(
-      { error: "Method not allowed", code: "METHOD_NOT_ALLOWED" },
-      405
-    );
-  }
+  if (request.method !== (id2 ? "PATCH" : "POST"))
+    return respond({ error: "Method not allowed", code: "METHOD_NOT_ALLOWED" }, 405);
   const body = await bodyOf(request);
   const name = string(body.name ?? existing?.name, "name");
-  const record = id2 ?? newId(customers ? "posc" : "pospmt");
-  if (customers) {
-    const reference2 = body.external_reference === void 0 ? existing?.external_reference ?? null : optionalText(body.external_reference, "external_reference", 120);
-    if (id2)
-      await sql(
-        db,
-        `UPDATE pos_customers SET name=?,external_reference=? WHERE business_id=? AND id=?`,
-        name,
-        reference2,
-        businessId,
-        id2
-      ).run();
-    else
-      await sql(
-        db,
-        "INSERT INTO pos_customers(id,business_id,name,external_reference) VALUES (?,?,?,?)",
-        record,
-        businessId,
-        name,
-        reference2
-      ).run();
-  } else {
-    const previous = existing;
-    const group = body.payment_type_group === void 0 ? null : choice(body.payment_type_group, "payment type group", paymentTypeGroups);
-    const legacyKind = body.kind === void 0 ? null : choice(body.kind, "kind", ["cash", "card", "qr", "other"]);
-    if (group && legacyKind && paymentKindByGroup[group] !== legacyKind)
-      invalid2("The kind does not match the payment type group");
-    if (previous && !group && legacyKind && legacyKind !== previous.kind)
-      invalid2("Use the payment type group to change the kind");
-    const kind = group ? paymentKindByGroup[group] : previous?.kind ?? legacyKind;
-    if (!kind) invalid2("Choose a payment type group");
-    const currency = body.currency === void 0 ? previous?.currency ?? null : currencyOf(body.currency);
-    if (id2 && previous) {
-      if (currency !== previous.currency || kind !== previous.kind) {
-        await updatePaymentType(db, businessId, id2, name, group, kind, currency, previous);
-      } else {
-        const result = await sql(
-          db,
-          `UPDATE pos_payment_types SET name=?1,payment_type_group=COALESCE(?2,payment_type_group)
-          WHERE business_id=?3 AND id=?4 AND (?2 IS NULL OR kind=?5)
-            AND (?6=0 OR currency IS ?7)`,
-          name,
-          group,
-          businessId,
-          id2,
-          previous.kind,
-          Number(body.currency !== void 0),
-          previous.currency
-        ).run();
-        if (!result.meta.changes) conflict("The payment type changed. Refresh and retry.");
-      }
+  const record = id2 ?? newId("pospmt");
+  const group = body.payment_type_group === void 0 ? null : choice(body.payment_type_group, "payment type group", paymentTypeGroups);
+  const legacyKind = body.kind === void 0 ? null : choice(body.kind, "kind", ["cash", "card", "qr", "other"]);
+  if (group && legacyKind && paymentKindByGroup[group] !== legacyKind)
+    invalid("The kind does not match the payment type group");
+  if (existing && !group && legacyKind && legacyKind !== existing.kind)
+    invalid("Use the payment type group to change the kind");
+  const kind = group ? paymentKindByGroup[group] : existing?.kind ?? legacyKind;
+  if (!kind) invalid("Choose a payment type group");
+  const currency = body.currency === void 0 ? existing?.currency ?? null : currencyOf(body.currency);
+  if (id2 && existing) {
+    if (currency !== existing.currency || kind !== existing.kind) {
+      await updatePaymentType(db, businessId, id2, name, group, kind, currency, existing);
     } else {
-      await sql(
+      const result = await sql(
         db,
-        `INSERT INTO pos_payment_types(id,business_id,name,kind,currency,payment_type_group)
-        VALUES (?,?,?,?,?,?)`,
-        record,
-        businessId,
+        `UPDATE pos_payment_types SET name=?1,payment_type_group=COALESCE(?2,payment_type_group)
+        WHERE business_id=?3 AND id=?4 AND (?2 IS NULL OR kind=?5)
+          AND (?6=0 OR currency IS ?7)`,
         name,
-        kind,
-        currency,
-        group ?? defaultPaymentGroup[kind]
+        group,
+        businessId,
+        id2,
+        existing.kind,
+        Number(body.currency !== void 0),
+        existing.currency
       ).run();
+      if (!result.meta.changes) conflict("The payment type changed. Refresh and retry.");
     }
+  } else {
+    await sql(
+      db,
+      `INSERT INTO pos_payment_types(id,business_id,name,kind,currency,payment_type_group)
+      VALUES (?,?,?,?,?,?)`,
+      record,
+      businessId,
+      name,
+      kind,
+      currency,
+      group ?? defaultPaymentGroup[kind]
+    ).run();
   }
   return respond(
     await sql(db, select + " AND id=?", businessId, record).first(),
     id2 ? 200 : 201
   );
 }
-__name(directory, "directory");
+__name(paymentDirectory, "paymentDirectory");
 async function profileOptions(db, businessId) {
   const [branches, tableGroups, categories, menus, payments, customers] = await Promise.all([
     sql(db, `SELECT id,name FROM branches WHERE business_id=? AND is_active=1 ORDER BY is_default DESC,name,id`, businessId).all(),
@@ -5909,10 +7046,13 @@ async function handlePosSetup(request, url, db, auth, path, businessDate) {
     if (request.method === "GET") {
       if (path === "/overview") return await readSellingOverview(db, auth.businessId, businessDate());
       if (path === "/sales") return await readBusinessSales(db, url, auth.businessId);
+      if (path === "/shift-audit") return await readShiftAudit(db, url, auth.businessId);
       if (path === "/profile-options") return await profileOptions(db, auth.businessId);
+      const photo2 = path.match(/^\/customers\/([a-zA-Z0-9_-]{1,80})\/photo$/);
+      if (photo2) return await readCustomerPhoto(db, auth.businessId, photo2[1]);
     }
     const match = path.match(
-      /^\/(profiles|payment-types|customers)(?:\/([a-zA-Z0-9_-]{1,80})(\/grants)?)?$/
+      /^\/(profiles|payment-types|customers|customer-groups)(?:\/([a-zA-Z0-9_-]{1,80})(\/grants)?)?$/
     );
     if (!match) missing("Endpoint");
     const [, resource, id2, grantPath] = match;
@@ -5920,7 +7060,9 @@ async function handlePosSetup(request, url, db, auth, path, businessDate) {
       return await (grantPath ? grants(request, db, auth.businessId, id2) : profileSetup(request, url, db, auth.businessId, id2));
     }
     if (grantPath) missing("Endpoint");
-    return await directory(request, url, db, auth.businessId, resource, id2);
+    if (resource === "customers" || resource === "customer-groups")
+      return await manageCustomerDirectory(request, url, db, auth.businessId, resource, id2);
+    return await paymentDirectory(request, url, db, auth.businessId, id2);
   } catch (error3) {
     return errorResponse(error3);
   }
@@ -5955,7 +7097,7 @@ __name(ownsAuthority, "ownsAuthority");
 var branchIsIdle = `
   NOT EXISTS (SELECT 1 FROM working_days WHERE business_id=?1 AND branch_id=?2 AND closed_at IS NULL)
   AND NOT EXISTS (SELECT 1 FROM cashier_shifts WHERE business_id=?1 AND branch_id=?2 AND closed_at IS NULL)
-  AND NOT EXISTS (SELECT 1 FROM sales WHERE business_id=?1 AND branch_id=?2 AND status='open')`;
+  AND NOT EXISTS (SELECT 1 FROM sales WHERE business_id=?1 AND branch_id=?2 AND status IN ('open','submitted','bill_requested'))`;
 var ownerSession = `EXISTS (
   SELECT 1 FROM pos_sessions s
   JOIN pos_device_credentials device ON device.id=s.device_credential_id AND device.device_id=?3 AND device.public_key=?5
@@ -6035,7 +7177,7 @@ async function manageStoreAuthority(context, request) {
   }
   const input = await bodyOf(request);
   const epoch = recordId(input.epoch, "epoch");
-  const sequence = integer2(input.last_sequence, "last_sequence", 0);
+  const sequence = integer(input.last_sequence, "last_sequence", 0);
   if (!existing || existing.epoch !== epoch) return respond({ ok: true });
   if (!ownsAuthority(existing, device)) {
     conflict(
@@ -6072,7 +7214,7 @@ async function recoverStoreOperation(context, request, deps, readOnly) {
   const profileId = recordId(input.profile_id, "profile_id");
   const operator = recordId(input.operator_id, "operator_id");
   const reason = string(input.reason, "reason", 500);
-  const operation = object2(input.operation);
+  const operation = object(input.operation);
   const profile = await findProfile(
     context.db,
     context.identity.business_id,
@@ -6121,13 +7263,13 @@ __name(listStoreRecoveries, "listStoreRecoveries");
 async function savedTenderTypes(context, value) {
   const ids = /* @__PURE__ */ new Set();
   const types = list(value, "payment_types", 20).flatMap((raw) => {
-    const row = object2(raw);
+    const row = object(raw);
     const id2 = recordId(row.id, "payment type ID");
-    if (ids.has(id2)) invalid2("Use distinct payment types");
+    if (ids.has(id2)) invalid("Use distinct payment types");
     ids.add(id2);
     const currencies = row.currency === void 0 ? list(row.currencies, "currencies", 2).map(currencyOf) : [currencyOf(row.currency)];
     if (!currencies.length || new Set(currencies).size !== currencies.length) {
-      invalid2("Use distinct currencies for a payment type");
+      invalid("Use distinct currencies for a payment type");
     }
     const type = {
       id: id2,
@@ -6144,7 +7286,7 @@ async function savedTenderTypes(context, value) {
   });
   const drawerCurrencies = types.filter((row) => row.kind === "cash").map((row) => row.currency);
   if (!types.length || new Set(drawerCurrencies).size !== drawerCurrencies.length) {
-    invalid2("Use distinct payment types and one cash drawer per currency");
+    invalid("Use distinct payment types and one cash drawer per currency");
   }
   const invalidType = await sql(
     context.db,
@@ -6155,7 +7297,7 @@ async function savedTenderTypes(context, value) {
     context.identity.business_id
   ).first();
   if (invalidType)
-    invalid2(invalidType.business_id === context.identity.business_id ? `This payment type accepts only ${invalidType.currency}` : "Use payment types from this business");
+    invalid(invalidType.business_id === context.identity.business_id ? `This payment type accepts only ${invalidType.currency}` : "Use payment types from this business");
   return types;
 }
 __name(savedTenderTypes, "savedTenderTypes");
@@ -6182,20 +7324,27 @@ async function importOperation(context, request, deps, readOnly, raw, recovery) 
     "close_day",
     "open_shift",
     "close_shift",
+    "reopen_shift",
     "cash_movement",
     "checkout",
+    "submit_sale",
+    "cancel_print_bill",
+    "cancel_sale",
     "reversal"
   ]);
   const epoch = recordId(raw.epoch, "epoch");
-  const sequence = integer2(raw.sequence, "sequence", 1);
+  const sequence = integer(raw.sequence, "sequence", 1);
   const resourceId = recordId(raw.resource_id, "resource_id");
   const timestamp2 = string(raw.occurred_at, "occurred_at", 32);
   const occurredAt = new Date(timestamp2);
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3,6})?Z$/.test(timestamp2) || !Number.isFinite(occurredAt.valueOf()) || occurredAt.valueOf() > Date.now() + 3e5) {
-    invalid2("Use an occurred_at timestamp from the register clock");
+    invalid("Use an occurred_at timestamp from the register clock");
   }
-  const body = object2(raw.payload);
-  const settings = object2(raw.settings);
+  const body = object(raw.payload);
+  const settings = object(raw.settings);
+  const exchangeRate = body.exchange_rate == null ? void 0 : string(body.exchange_rate, "exchange_rate", 80);
+  if (exchangeRate != null && (!Number.isFinite(Number(exchangeRate)) || Number(exchangeRate) <= 0))
+    invalid("The stored exchange rate must be positive");
   const authority = await storeAuthority(context);
   if (!authority || authority.epoch !== epoch || !ownsAuthority(authority, await currentDevice(context))) {
     conflict(
@@ -6219,7 +7368,14 @@ async function importOperation(context, request, deps, readOnly, raw, recovery) 
     },
     now: occurredAt.toISOString(),
     localDate: deps.localDate(occurredAt, authority.timezone),
-    storeImport: { epoch, sequence, resourceId, recovery }
+    storeImport: {
+      epoch,
+      sequence,
+      resourceId,
+      recovery,
+      baseCurrency: body.base_currency == null ? void 0 : currencyOf(body.base_currency),
+      exchangeRate
+    }
   };
   const command = await Command.read(request, imported, {
     envelope: raw,
@@ -6257,7 +7413,7 @@ async function importOperation(context, request, deps, readOnly, raw, recovery) 
       );
     }
   }
-  if (readOnly && kind !== "close_day" && kind !== "close_shift") {
+  if (readOnly && kind !== "close_day" && kind !== "close_shift" && kind !== "cancel_sale") {
     throw new PosError(
       402,
       "SUBSCRIPTION_EXPIRED",
@@ -6278,6 +7434,8 @@ async function importOperation(context, request, deps, readOnly, raw, recovery) 
         return await writeShift(imported, command);
       case "close_shift":
         return await writeShift(imported, command, resourceId, "close");
+      case "reopen_shift":
+        return await writeShift(imported, command, resourceId, "reopen");
       case "cash_movement":
         return await writeShift(
           imported,
@@ -6291,6 +7449,12 @@ async function importOperation(context, request, deps, readOnly, raw, recovery) 
           command,
           await savedTenderTypes(imported, body.payment_types)
         );
+      case "cancel_print_bill":
+        return await saleAction(imported, command, resourceId, "cancel-print-bill");
+      case "submit_sale":
+        return await importStoreSale(imported, command, [], "submitted");
+      case "cancel_sale":
+        return await saleAction(imported, command, resourceId, "cancel");
       case "reversal":
         return await saleAction(
           imported,
@@ -6417,7 +7581,7 @@ async function authenticate(request, db) {
   if (!token) unauthenticated();
   const identity = await sql(
     db,
-    `SELECT s.business_id,b.name AS business_name,s.user_id,u.display_name,m.role,s.profile_id,
+    `SELECT s.business_id,b.name AS business_name,s.user_id,u.display_name,u.permissions,m.role,s.profile_id,
     b.timezone,b.currency,b.secondary_exchange_rate,b.menu_cache_version AS catalog_version,b.pricing_mode,
     b.default_price_list_id,s.credential_version,s.token_hash,sub.status AS subscriptionStatus,
     sub.current_period_end_at AS currentPeriodEndAt,
@@ -6507,16 +7671,24 @@ async function tables(context, url) {
     const { page, limit } = pagination(url);
     return respond({ tables: [], page, page_size: limit, has_more: false });
   }
-  return respond(
-    await pageOf(
-      context.db,
-      url,
-      "tables",
-      `SELECT t.id,t.code,t.label,t.group_id,g.name AS group_name,
+  const result = await pageOf(
+    context.db,
+    url,
+    "tables",
+    `WITH table_sales AS (
+      SELECT table_id,MIN(id) AS open_sale_id,
+        json_group_array(json_object('id',id,'guest_cover',guest_cover,'total_minor',total_minor))
+          FILTER (WHERE status IN ('submitted','bill_requested')) AS submitted_sales
+      FROM sales WHERE business_id=?2 AND profile_id=?1 AND table_id IS NOT NULL AND status IN ('open','submitted','bill_requested')
+      GROUP BY table_id
+    )
+    SELECT t.id,t.code,t.label,t.group_id,g.name AS group_name,
     s.id AS open_sale_id,s.guest_cover,bk.arrival_at AS booking_arrival_at,bk.pax AS booking_pax,
+    COALESCE(ts.submitted_sales,'[]') AS submitted_sales,
     CASE WHEN s.id IS NOT NULL THEN 'occupied' WHEN bk.id IS NOT NULL THEN 'booked' ELSE 'available' END AS status
     FROM restaurant_tables t JOIN table_groups g ON g.id=t.group_id AND g.business_id=t.business_id AND g.branch_id=t.branch_id
-    LEFT JOIN sales s ON s.business_id=t.business_id AND s.profile_id=?1 AND s.table_id=t.id AND s.status='open'
+    LEFT JOIN table_sales ts ON ts.table_id=t.id
+    LEFT JOIN sales s ON s.id=ts.open_sale_id
     LEFT JOIN bookings bk ON bk.id=(
       SELECT reservation.id FROM bookings reservation
       WHERE reservation.business_id=t.business_id AND reservation.branch_id=t.branch_id
@@ -6529,29 +7701,68 @@ async function tables(context, url) {
     WHERE t.business_id=?2 AND t.branch_id=?3 AND t.is_active=1 AND g.is_active=1
       AND (?4 IS NULL OR selected.key IS NOT NULL)
     ORDER BY selected.key,g.sort_order,g.name,g.id,t.sort_order,t.id`,
-      [
-        context.profile.id,
-        context.identity.business_id,
-        context.profile.branch_id,
-        context.config.table_group_ids ? JSON.stringify(context.config.table_group_ids) : null,
-        context.now
-      ]
-    )
+    [
+      context.profile.id,
+      context.identity.business_id,
+      context.profile.branch_id,
+      context.config.table_group_ids ? JSON.stringify(context.config.table_group_ids) : null,
+      context.now
+    ]
   );
+  return respond({
+    ...result,
+    tables: result.tables.map((row) => ({
+      ...row,
+      submitted_sales: JSON.parse(row.submitted_sales)
+    }))
+  });
 }
 __name(tables, "tables");
 function posProfileView(profile) {
   const settings = profileView(profile);
-  const { print_copies, tax_mode, tax_rate_bps, ...config } = settings.config;
+  const { print_copies, tax_mode: _mode, tax_rate_bps: _rate, ...config } = settings.config;
+  const pending = profile.pending_config_json ? JSON.parse(profile.pending_config_json) : null;
+  const { tax_mode, tax_rate_bps, ...taxSettings } = registerTaxSettings(profile);
   return {
     ...settings,
     config: {
       ...config,
-      ...!config.default_tax_rule && tax_mode !== "disabled" && tax_rate_bps > 0 ? { legacy_tax: { tax_mode, tax_rate_bps } } : {}
+      ...taxSettings,
+      table_status_colors: { ...config.table_status_colors, ...pending?.table_status_colors },
+      ...!taxSettings.default_tax_rule && tax_mode !== "disabled" && tax_rate_bps > 0 ? { legacy_tax: { tax_mode, tax_rate_bps } } : {}
     }
   };
 }
 __name(posProfileView, "posProfileView");
+function registerConfig(profile) {
+  const active = JSON.parse(profile.config_json);
+  if (active.catalog_mode !== "menu" || !profile.pending_config_json)
+    return active;
+  const pending = JSON.parse(profile.pending_config_json);
+  if (pending.catalog_mode !== "menu") return active;
+  const selectedIds = active.selected_ids && pending.selected_ids ? [.../* @__PURE__ */ new Set([...active.selected_ids, ...pending.selected_ids])] : null;
+  return { ...active, selected_ids: selectedIds };
+}
+__name(registerConfig, "registerConfig");
+async function registerDefaultMenu({ db, identity, profile, config }) {
+  const saved = config.default_menu_id ?? null;
+  if (config.catalog_mode !== "menu" || !profile.pending_config_json)
+    return saved;
+  const pending = JSON.parse(profile.pending_config_json);
+  if (pending.catalog_mode !== "menu") return saved;
+  const menu = pending.default_menu_id;
+  if (menu === null) return null;
+  if (!menu || menu === saved || config.selected_ids && !config.selected_ids.includes(menu))
+    return saved;
+  const available = await sql(
+    db,
+    "SELECT 1 FROM menus WHERE business_id=? AND id=? AND parent_id IS NULL AND is_active=1 AND deleted_in_admin=0",
+    identity.business_id,
+    menu
+  ).first();
+  return available ? menu : saved;
+}
+__name(registerDefaultMenu, "registerDefaultMenu");
 async function handlePosApi(request, env, deps) {
   try {
     const url = new URL(request.url);
@@ -6604,11 +7815,25 @@ async function handlePosApi(request, env, deps) {
       db,
       identity,
       profile,
-      config: JSON.parse(profile.config_json),
+      config: registerConfig(profile),
       now: now.toISOString(),
       localDate: deps.localDate(now, identity.timezone)
     };
     const { readOnly } = deps.subscription(identity);
+    const pendingCommand = path.match(/^\/commands\/([a-zA-Z0-9_-]{8,128})$/);
+    if (pendingCommand && request.method === "GET") {
+      const row = await sql(
+        db,
+        `SELECT response_json,response_status FROM pos_commands
+        WHERE business_id=? AND profile_id=? AND actor_id=? AND idempotency_key=?`,
+        identity.business_id,
+        profile.id,
+        identity.user_id,
+        pendingCommand[1]
+      ).first();
+      if (!row) missing("Command");
+      return respond({ result: JSON.parse(row.response_json), status: row.response_status });
+    }
     if (path === "/auth/resolve-username")
       return request.method === "POST" ? await resolveStaffUsername(context, request) : methodNotAllowed();
     if (path === "/staff")
@@ -6626,17 +7851,20 @@ async function handlePosApi(request, env, deps) {
       return request.method === "GET" ? await listStoreRecoveries(context, url) : methodNotAllowed();
     if (path === "/context") {
       if (request.method !== "GET") return methodNotAllowed();
-      const [current, accepted, authority] = await Promise.all([
+      const settings = posProfileView(profile);
+      const [current, accepted, authority, defaultMenu] = await Promise.all([
         currentOperations(context),
         paymentTypes(context),
-        storeAuthority(context)
+        storeAuthority(context),
+        registerDefaultMenu(context)
       ]);
-      const settings = posProfileView(profile);
       return respond({
         profile: {
           ...settings,
           config: {
             ...settings.config,
+            selected_ids: context.config.selected_ids ?? null,
+            default_menu_id: defaultMenu,
             payment_types: accepted.map((type) => ({
               id: type.id,
               payment_type: type.name,
@@ -6648,7 +7876,8 @@ async function handlePosApi(request, env, deps) {
         operator: {
           id: identity.user_id,
           name: identity.display_name,
-          role: identity.role
+          role: identity.role,
+          permissions: userPermissions(identity.permissions, identity.role)
         },
         business: {
           id: identity.business_id,
@@ -6663,13 +7892,27 @@ async function handlePosApi(request, env, deps) {
         read_only: readOnly,
         store_authority_required: authority !== null,
         capabilities: {
+          user_permissions: true,
+          bill_request_lock: true,
           sale_context_guard: true,
           device_sessions: true,
           store_operations: true,
           store_recovery: true,
           reversal_context_guard: true,
           staff_usernames: true,
-          cart_line_edits: true
+          cart_line_edits: true,
+          bill_information: true,
+          submit_orders: true,
+          order_line_history: true,
+          order_line_void_reasons: true,
+          price_change_reasons: true,
+          free_item_reasons: true,
+          item_discount_details: true,
+          sale_notes: true,
+          shift_management: true,
+          customer_directory: true,
+          customer_photo_upload: true,
+          customer_credit: true
         },
         ...current
       });
@@ -6687,38 +7930,44 @@ async function handlePosApi(request, env, deps) {
       return request.method === "GET" ? await getCatalog(env, deps, context, url) : methodNotAllowed();
     if (path === "/tables")
       return request.method === "GET" ? await tables(context, url) : methodNotAllowed();
-    if (path === "/customers") {
-      if (request.method !== "GET") return methodNotAllowed();
-      return respond(
-        await pageOf(
-          db,
-          url,
-          "customers",
-          `SELECT id,name,external_reference,is_walk_in
-        FROM pos_customers WHERE business_id=? ORDER BY is_walk_in DESC,name,id`,
-          [identity.business_id]
-        )
+    const customerPhoto2 = path.match(/^\/customers\/([a-zA-Z0-9_-]{1,80})\/photo$/);
+    if (customerPhoto2)
+      return request.method === "GET" ? await readRegisterCustomerPhoto(context, customerPhoto2[1]) : methodNotAllowed();
+    const customer = path.match(/^\/customers(?:\/([a-zA-Z0-9_-]{1,80}))?$/);
+    if (customer || path === "/customer-groups")
+      return await registerCustomerDirectory(
+        request,
+        url,
+        context,
+        customer ? "customers" : "customer-groups",
+        customer?.[1],
+        readOnly
       );
-    }
     const match = path.match(
       /^\/(working-days|cashier-shifts|sales)(?:\/([a-zA-Z0-9_-]{1,80})(?:\/([a-z-]+))?)?$/
     );
     if (!match) missing("Endpoint");
     const [, resource, id2, action] = match;
     if (resource === "sales") {
-      if (action && !["checkout", "cancel", "reverse"].includes(action))
+      if (action && !["checkout", "cancel", "reverse", "submit", "request-bill", "cancel-print-bill"].includes(action))
         missing("Endpoint");
-      if (request.method === "GET" && !action)
+      if (request.method === "GET" && !action) {
+        if (!id2 && url.searchParams.get("history") === "active" && !context.config.cashier_shift_enabled && !context.config.working_day_enabled) {
+          context.localDateStart = deps.startOfLocalDate(context.localDate, identity.timezone);
+        }
         return await readSales(context, url, id2);
+      }
       if (!id2 && request.method !== "POST" || id2 && request.method !== (action ? "POST" : "PATCH")) {
         return methodNotAllowed();
       }
     } else {
-      const actions = resource === "working-days" ? ["close"] : ["close", "cash-floats", "reconciliation"];
+      const actions = resource === "working-days" ? ["close", "summary"] : ["close", "cash-floats", "reconciliation", "summary", "reopen"];
       if (action && !actions.includes(action)) missing("Endpoint");
-      if (request.method === "GET" && action !== "close")
+      if (request.method === "GET" && action !== "close" && action !== "reopen")
         return await readOperations(context, url, resource, id2, action);
-      if (request.method !== "POST" || id2 && (!action || action === "reconciliation"))
+      if (resource === "cashier-shifts" && id2 && action === "reconciliation" && request.method === "POST")
+        return await reviewShift(context, id2, await bodyOf(request));
+      if (request.method !== "POST" || id2 && (!action || action === "reconciliation" || action === "summary"))
         return methodNotAllowed();
     }
     const command = await Command.read(request, context);
@@ -6741,11 +7990,38 @@ async function handlePosApi(request, env, deps) {
         return await writeDay(context, command, id2);
       if (resource === "cashier-shifts")
         return await writeShift(context, command, id2, action);
+      if (action === "submit") return await saveSale(env, deps, context, command, id2, true);
       if (action) return await saleAction(context, command, id2, action);
       return await saveSale(env, deps, context, command, id2);
     } catch (error3) {
       const replay = await command.replay();
       if (replay) return replay;
+      if (id2 && action === "close" && String(error3).includes("POS_STATE_CONFLICT")) {
+        if (resource === "cashier-shifts") {
+          const current = await sql(
+            db,
+            `SELECT activity_revision FROM cashier_shifts
+            WHERE business_id=? AND profile_id=? AND id=? AND closed_at IS NULL`,
+            identity.business_id,
+            profile.id,
+            id2
+          ).first("activity_revision");
+          if (current != null && current !== command.body.activity_revision)
+            conflict("Refresh the shift reconciliation", "RECONCILIATION_CHANGED");
+        } else if (resource === "working-days") {
+          const blocked = await sql(
+            db,
+            `SELECT 1 FROM working_days d
+            WHERE d.business_id=? AND d.branch_id=? AND d.id=? AND d.closed_at IS NULL
+              AND (EXISTS(SELECT 1 FROM cashier_shifts WHERE working_day_id=d.id AND closed_at IS NULL)
+                OR EXISTS(SELECT 1 FROM sales WHERE working_day_id=d.id AND status IN ('open','submitted','bill_requested')))`,
+            identity.business_id,
+            profile.branch_id,
+            id2
+          ).first();
+          if (blocked) conflict("Close the working day's shifts and bills", "WORKING_DAY_HAS_ACTIVITY");
+        }
+      }
       throw error3;
     }
   } catch (error3) {
@@ -7418,8 +8694,8 @@ var telegramExamples = {
 var businessJson = `json_object('id',b.id,'name',b.name,'slug',b.slug,'currency',b.currency,'timezone',b.timezone)`;
 var branchJson = `CASE WHEN br.id IS NOT NULL THEN
   json_object('id',br.id,'name',br.name,'slug',br.slug,'address',br.address,'phone',br.phone) END`;
-function parseFields(row, fields) {
-  for (const name of fields) {
+function parseFields(row, fields2) {
+  for (const name of fields2) {
     const value = row[name];
     if (typeof value === "string")
       row[name] = JSON.parse(value);
@@ -8106,11 +9382,11 @@ function arrivalSlots(date, business2, blockedDates, now) {
     hourCycle: "h23"
   });
   function localStamp(instant) {
-    const fields = Object.fromEntries(
+    const fields2 = Object.fromEntries(
       formatter.formatToParts(instant).map(({ type, value }) => [type, value])
     );
     return Date.parse(
-      `${fields.year}-${fields.month}-${fields.day}T${fields.hour}:${fields.minute}:00Z`
+      `${fields2.year}-${fields2.month}-${fields2.day}T${fields2.hour}:${fields2.minute}:00Z`
     );
   }
   __name(localStamp, "localStamp");
@@ -8518,6 +9794,8 @@ __name(adminBookings, "adminBookings");
 var branchResetOptions = {
   orders: "Orders",
   sales: "POS sales",
+  workingDays: "Working days",
+  cashierShifts: "Cashier shifts",
   bookings: "Bookings",
   tables: "Tables",
   tableGroups: "Table groups",
@@ -8527,6 +9805,8 @@ var branchResetOptions = {
 var businessResetOptions = {
   orders: "Orders across all branches",
   sales: "POS sales across all branches",
+  workingDays: "Working days across all branches",
+  cashierShifts: "Cashier shifts across all branches",
   products: "Products",
   menus: "Menus",
   categories: "Categories",
@@ -8553,6 +9833,15 @@ function targetsFor(scope, selections) {
   const targets = [];
   const add = /* @__PURE__ */ __name((name, where = own) => targets.push({ name, where }), "add");
   const resetScope = scope === "business" ? own : branchOnly;
+  const workingDays = selected("workingDays");
+  const cashierShifts = selected("cashierShifts") || workingDays;
+  const dayIds = `SELECT id FROM working_days WHERE ${resetScope}`;
+  const shiftsWhere = selected("cashierShifts") ? resetScope : `${resetScope} AND working_day_id IN (${dayIds})`;
+  const shiftIds = `SELECT id FROM cashier_shifts WHERE ${shiftsWhere}`;
+  const relatedSales = [];
+  if (workingDays) relatedSales.push(`working_day_id IN (${dayIds})`);
+  if (cashierShifts) relatedSales.push(`shift_id IN (${shiftIds})`);
+  const salesWhere = selected("sales") ? resetScope : `${resetScope} AND (${relatedSales.join(" OR ")})`;
   const orders = selected("orders");
   const tables2 = selected("tables") || selected("tableGroups");
   const bookings = selected("bookings");
@@ -8577,17 +9866,33 @@ function targetsFor(scope, selections) {
     add("order_products", `order_id IN (${orderIds})`);
     add("orders", ordersWhere);
   }
-  if (selected("sales")) {
-    const saleIds = `SELECT id FROM sales WHERE ${resetScope}`;
-    add("pos_commands", `${own} AND EXISTS (
-      SELECT 1 FROM sales WHERE ${resetScope} AND sales.profile_id=pos_commands.profile_id
+  if (selected("sales") || cashierShifts) {
+    const saleIds = `SELECT id FROM sales WHERE ${salesWhere}`;
+    const commands = [`EXISTS (
+      SELECT 1 FROM sales WHERE ${salesWhere} AND sales.profile_id=pos_commands.profile_id
         AND sales.id=json_extract(pos_commands.response_json,'$.id')
         AND json_type(pos_commands.response_json,'$.lines')='array'
-    )`);
+    )`];
+    if (cashierShifts) {
+      commands.push(`EXISTS (SELECT 1 FROM cashier_shifts WHERE ${shiftsWhere}
+        AND profile_id=pos_commands.profile_id AND (
+          id=json_extract(pos_commands.response_json,'$.id') OR
+          id=json_extract(pos_commands.response_json,'$.shift_id')
+        ))`);
+    }
+    if (workingDays) commands.push(`json_extract(pos_commands.response_json,'$.id') IN (${dayIds})
+      AND profile_id IN (SELECT id FROM pos_profiles WHERE ${resetScope})`);
+    add("pos_commands", `${own} AND (${commands.map((condition) => `(${condition})`).join(" OR ")})`);
     add("sale_products", `sale_id IN (${saleIds})`);
     add("sale_payments", `sale_id IN (${saleIds})`);
-    add("sales", resetScope);
+    add("sales", salesWhere);
   }
+  if (cashierShifts) {
+    for (const name of ["cash_floats", "cashier_shift_closing_counts", "cashier_shift_reopens"])
+      add(name, `shift_id IN (${shiftIds})`);
+    add("cashier_shifts", shiftsWhere);
+  }
+  if (workingDays) add("working_days", resetScope);
   if (bookings) add("bookings", branchOnly);
   if (tables2) add("restaurant_tables", branchOnly);
   if (selected("tableGroups")) add("table_groups", branchOnly);
@@ -8678,6 +9983,10 @@ var menuOrderReference = /* @__PURE__ */ __name((resettingBusinessOrders) => `EX
 function tenantChecks(targets) {
   const checks = [];
   for (const { name, where } of targets) {
+    if (name === "sales") checks.push(`NOT EXISTS (
+      SELECT 1 FROM sales WHERE reverses_sale_id IN (SELECT id FROM sales WHERE ${where})
+        AND id NOT IN (SELECT id FROM sales WHERE ${where})
+    )`);
     const relations = name === "orders" ? [["telegram_order_deliveries", "order_id"]] : name === "products" ? [["product_images", "product_id"], ["product_prices", "product_id"]] : name === "categories" ? [["categories", "parent_id"]] : [];
     for (const [table, key] of relations) {
       checks.push(`NOT EXISTS (SELECT 1 FROM ${table} WHERE business_id<>?1
@@ -8716,6 +10025,11 @@ async function resetBusinessData(env, actor, businessId, action, input) {
   const remainingMenuOrders = menuOrderReference(scope === "business" && selected.has("orders"));
   const targets = targetsFor(scope, selected);
   const sales = targets.find(({ name }) => name === "sales");
+  const resettingOperations = selected.has("workingDays") || selected.has("cashierShifts");
+  const commandReset = JSON.stringify({
+    code: resettingOperations ? "POS_DATA_RESET" : "SALE_RESET",
+    error: resettingOperations ? "This POS working day, shift or sale was cleared by an administrator." : "This POS sale was cleared by an administrator."
+  });
   if (sendDeletedWebhooks && !targets.some(({ name }) => name === "orders" || name === "bookings"))
     return fail(400, "Select a reset that removes orders or bookings to send Deleted webhooks.");
   const ownership = tenantChecks(targets);
@@ -8723,7 +10037,7 @@ async function resetBusinessData(env, actor, businessId, action, input) {
   if (ownership.length) {
     const sql2 = `SELECT (${ownership.join(" AND ")}) AS valid`;
     if (!await db.prepare(sql2).bind(...scopeBindings(sql2, businessId, branchId)).first("valid"))
-      blockers.push("A related record belongs to another business. This selection cannot be reset.");
+      blockers.push("A related record outside this reset references the selection. Include its data in the reset or reset it first.");
   }
   if (deleting && blockers.length) return fail(409, blockers[0]);
   const snapshots = await readSnapshot(db, targets, businessId, branchId);
@@ -8796,8 +10110,7 @@ async function resetBusinessData(env, actor, businessId, action, input) {
           SELECT shift_id FROM sales WHERE ${sales.where}
         ) AND ${guarded}`).bind(businessId, branchId, auditId)] : [],
       ...snapshots.map(({ name, where }) => {
-        const statement = name === "pos_commands" ? `UPDATE pos_commands SET response_status=410,
-              response_json='{"code":"SALE_RESET","error":"This POS sale was cleared by an administrator."}'` : `DELETE FROM ${name}`;
+        const statement = name === "pos_commands" ? `UPDATE pos_commands SET response_status=410,response_json='${commandReset}'` : `DELETE FROM ${name}`;
         return db.prepare(`${statement} WHERE (${where}) AND ${guarded}`).bind(businessId, branchId, auditId);
       }),
       db.prepare(`UPDATE businesses SET menu_cache_version=menu_cache_version+1,updated_at=CURRENT_TIMESTAMP
@@ -8873,12 +10186,12 @@ function publicRule(row) {
 __name(publicRule, "publicRule");
 function filterConditions(input, table, event, contact) {
   if (!Array.isArray(input) || input.length > 12) throw new Error("The filter must be a JSON array of up to 12 conditions.");
-  const fields = webhookFields(table, contact);
+  const fields2 = webhookFields(table, contact);
   return input.map((condition) => {
-    if (!condition || typeof condition !== "object" || Array.isArray(condition) || typeof condition.field !== "string" || !Object.hasOwn(fields, condition.field) || fields[condition.field] === "items" || !["eq", "neq", "in", "changed"].includes(condition.op) || Object.keys(condition).some((key) => !["field", "op", "value"].includes(key)))
+    if (!condition || typeof condition !== "object" || Array.isArray(condition) || typeof condition.field !== "string" || !Object.hasOwn(fields2, condition.field) || fields2[condition.field] === "items" || !["eq", "neq", "in", "changed"].includes(condition.op) || Object.keys(condition).some((key) => !["field", "op", "value"].includes(key)))
       throw new Error("Each condition needs an allowed field and operator.");
     const { field, op, value } = condition;
-    const valid = /* @__PURE__ */ __name((item) => item === null || (fields[field] === "number" ? typeof item === "number" && Number.isFinite(item) : typeof item === "string" && item.length <= 400), "valid");
+    const valid = /* @__PURE__ */ __name((item) => item === null || (fields2[field] === "number" ? typeof item === "number" && Number.isFinite(item) : typeof item === "string" && item.length <= 400), "valid");
     if (op === "changed") {
       if (event !== "updated" || Object.hasOwn(condition, "value"))
         throw new Error("Changed is available only for Updated and takes no value.");
@@ -9156,7 +10469,7 @@ function localDateKey(date, timeZone) {
   return `${value.year}-${value.month}-${value.day}`;
 }
 __name(localDateKey, "localDateKey");
-function endOfLocalDateUtc(value, timeZone) {
+function endOfLocalDateUtc(value, timeZone, dayOffset = 1) {
   if (!LOCAL_DATE_PATTERN.test(value)) return null;
   const [year, month, day] = value.split("-").map(Number);
   const parsed = new Date(Date.UTC(year, month - 1, day));
@@ -9167,7 +10480,7 @@ function endOfLocalDateUtc(value, timeZone) {
   } catch {
     return null;
   }
-  const target = Date.UTC(year, month - 1, day + 1);
+  const target = Date.UTC(year, month - 1, day + dayOffset);
   let guess = target;
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -10387,6 +11700,15 @@ function parseSortOrder(value) {
 }
 __name(parseSortOrder, "parseSortOrder");
 async function productOptions(body, db, businessId) {
+  const posFields = ["allowDiscount", "allowChangePrice", "isOpenProduct", "allowFree"];
+  for (const field of posFields) {
+    const value = body[field];
+    if (value !== void 0 && typeof value !== "boolean" && value !== 0 && value !== 1)
+      return { error: `${field} must be a boolean` };
+  }
+  const posOptions = Object.fromEntries(posFields.map(
+    (field) => [field, body[field] === void 0 ? null : Number(body[field])]
+  ));
   const unit = String(body.unit ?? "").trim().slice(0, 40);
   const rawPortions = Array.isArray(body.portions) ? body.portions : [];
   const rawGroups = Array.isArray(body.modifierGroups) ? body.modifierGroups : [];
@@ -10462,7 +11784,7 @@ async function productOptions(body, db, businessId) {
     return { error: "Product options are too large" };
   if (!await ownsPortionBranches(db, businessId, portions2))
     return { error: "Choose portion branches that belong to this business" };
-  return { unit, portions: portions2, modifierGroups: modifierGroups2 };
+  return { unit, portions: portions2, modifierGroups: modifierGroups2, posOptions };
 }
 __name(productOptions, "productOptions");
 function productPriceRange(portions2, fallbackPrice) {
@@ -10534,9 +11856,11 @@ function controlPagesForResource(path, method) {
       return ["reports"];
     case "pos":
       if (path === `${posAdminPath}/overview`) return ["sellingOverview"];
-      if (path === `${posAdminPath}/sales`) return ["salesList"];
+      if (path === `${posAdminPath}/sales` || path === `${posAdminPath}/shift-audit`) return ["salesList"];
       if (path === `${posAdminPath}/payment-types` || path.startsWith(`${posAdminPath}/payment-types/`))
         return ["posPaymentTypes"];
+      if (/^\/api\/admin\/pos\/(customers|customer-groups)(?:\/|$)/.test(path))
+        return ["posCustomers"];
       return ["posProfiles"];
     case "tables":
     case "table-groups":
@@ -11794,6 +13118,7 @@ async function handle(request, env, execution) {
       return result.status === "verified" ? result.account : null;
     }, "verifyCredentials"),
     localDate: localDateKey,
+    startOfLocalDate: /* @__PURE__ */ __name((date, timezone) => endOfLocalDateUtc(date, timezone, 0), "startOfLocalDate"),
     subscription: /* @__PURE__ */ __name((identity) => subscriptionSummary(identity, identity.timezone), "subscription"),
     pricing: resolvePriceList,
     priceMap,
@@ -12263,7 +13588,7 @@ async function handle(request, env, execution) {
   const telegramAccess = (telegramPath || workspaceAccessPath) && await canManageTelegramNotifications(env.DB, auth);
   if (telegramPath) return telegramAccess ? adminTelegramNotifications(request, env, path, auth.businessId) : json3({ error: "Telegram notifications are unavailable for this account or plan" }, 403);
   const accessibleControlPages = controlPageIds.filter(
-    (page) => page === "bookings" ? bookingAccess.visible : page === "telegramNotifications" ? telegramAccess : sellingControlPages.includes(page) ? canAccessSelling && !disabledControlPages.has(page) : !disabledControlPages.has(page) && (page !== "orders" && page !== "reports" || canViewBusinessActivity)
+    (page) => page === "users" ? auth.role === "owner" && auth.sessionType === "customer" : page === "bookings" ? bookingAccess.visible : page === "telegramNotifications" ? telegramAccess : sellingControlPages.includes(page) ? canAccessSelling && !disabledControlPages.has(page) : !disabledControlPages.has(page) && (page !== "orders" && page !== "reports" || canViewBusinessActivity)
   );
   if (request.method === "GET" && path === "/api/admin/workspace-access")
     return json3({ accessibleControlPages });
@@ -12289,6 +13614,8 @@ async function handle(request, env, execution) {
       402
     );
   }
+  if (path === "/api/admin/users" || path.startsWith("/api/admin/users/"))
+    return adminUsers(request, url, env.DB, auth, (proof) => credentialHash(proof, env.AUTH_PEPPER));
   if (path === "/api/admin/integrations/pos")
     return handlePosIntegration(request, env, auth);
   if (isPosAdminPath(path))
@@ -12565,17 +13892,17 @@ async function handle(request, env, execution) {
       if (!saved2.meta.changes) return json3({ error: "The menu changed. Reopen it and try again." }, 409);
       return json3({ id: menuId });
     }
-    const fields = [parentId, nameKm, nameEn, nameZh, sortOrder2, imageMediaId, isActive];
+    const fields2 = [parentId, nameKm, nameEn, nameZh, sortOrder2, imageMediaId, isActive];
     const write = existingId ? db.prepare(`WITH RECURSIVE ancestors(id,parent_id) AS (
           SELECT id,parent_id FROM menus WHERE business_id=? AND id=?
           UNION SELECT m.id,m.parent_id FROM menus m JOIN ancestors a ON a.parent_id=m.id WHERE m.business_id=?
         ) UPDATE menus SET parent_id=?,name_km=?,name_en=?,name_zh=?,sort_order=?,image_media_id=?,is_active=?
         WHERE id=? AND business_id=? AND source='local' AND NOT EXISTS (SELECT 1 FROM ancestors WHERE id=?)
           AND (? IS NULL OR EXISTS (SELECT 1 FROM ancestors JOIN menus parent USING (id)
-            WHERE parent.id=? AND parent.deleted_in_admin=0))`).bind(businessId, parentId, businessId, ...fields, menuId, businessId, menuId, parentId, parentId) : db.prepare(`INSERT INTO menus (id,business_id,slug,parent_id,name_km,name_en,name_zh,sort_order,image_media_id,is_active)
+            WHERE parent.id=? AND parent.deleted_in_admin=0))`).bind(businessId, parentId, businessId, ...fields2, menuId, businessId, menuId, parentId, parentId) : db.prepare(`INSERT INTO menus (id,business_id,slug,parent_id,name_km,name_en,name_zh,sort_order,image_media_id,is_active)
         SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10
         WHERE ?4 IS NULL OR EXISTS (SELECT 1 FROM menus WHERE business_id=?2 AND id=?4 AND deleted_in_admin=0)
-        ON CONFLICT (business_id,slug) DO NOTHING`).bind(menuId, businessId, slug2, ...fields);
+        ON CONFLICT (business_id,slug) DO NOTHING`).bind(menuId, businessId, slug2, ...fields2);
     const [saved] = await db.batch([
       write,
       publicMenuVersionStatement(db, businessId, true),
@@ -13106,14 +14433,14 @@ async function handle(request, env, execution) {
   }
   if (request.method === "POST" && path === "/api/admin/price-lists") {
     const body = await readJson(request);
-    const fields = priceListFields(body);
-    if ("error" in fields) return json3({ error: fields.error }, 400);
-    if (fields.scheduleEnabled) {
+    const fields2 = priceListFields(body);
+    if ("error" in fields2) return json3({ error: fields2.error }, 400);
+    if (fields2.scheduleEnabled) {
       const overlap = await overlappingPriceList(
         env,
         auth.businessId,
-        String(fields.scheduleStartLocal),
-        String(fields.scheduleEndLocal)
+        String(fields2.scheduleStartLocal),
+        String(fields2.scheduleEndLocal)
       );
       if (overlap)
         return json3({ error: `Schedule overlaps ${overlap.name}` }, 409);
@@ -13127,10 +14454,10 @@ async function handle(request, env, execution) {
       ).bind(
         priceListId,
         auth.businessId,
-        fields.name,
-        fields.scheduleEnabled ? 1 : 0,
-        fields.scheduleStartLocal,
-        fields.scheduleEndLocal
+        fields2.name,
+        fields2.scheduleEnabled ? 1 : 0,
+        fields2.scheduleStartLocal,
+        fields2.scheduleEndLocal
       ).run();
     } catch {
       return json3({ error: "A price list with this name already exists" }, 409);
@@ -13149,15 +14476,15 @@ async function handle(request, env, execution) {
     ).bind(priceListId, auth.businessId).first();
     if (!existing) return json3({ error: "Price list not found" }, 404);
     const body = await readJson(request);
-    const fields = priceListFields(body, Boolean(existing.isNormal));
-    if ("error" in fields) return json3({ error: fields.error }, 400);
+    const fields2 = priceListFields(body, Boolean(existing.isNormal));
+    if ("error" in fields2) return json3({ error: fields2.error }, 400);
     const isArchived = existing.isNormal ? false : Boolean(body.isArchived);
-    if (fields.scheduleEnabled && !isArchived) {
+    if (fields2.scheduleEnabled && !isArchived) {
       const overlap = await overlappingPriceList(
         env,
         auth.businessId,
-        String(fields.scheduleStartLocal),
-        String(fields.scheduleEndLocal),
+        String(fields2.scheduleStartLocal),
+        String(fields2.scheduleEndLocal),
         priceListId
       );
       if (overlap)
@@ -13175,7 +14502,7 @@ async function handle(request, env, execution) {
           },
           409
         );
-      if (fields.scheduleEnabled && String(fields.scheduleEndLocal) > localDateTimeNow(String(business2?.timezone || "Asia/Phnom_Penh")))
+      if (fields2.scheduleEnabled && String(fields2.scheduleEndLocal) > localDateTimeNow(String(business2?.timezone || "Asia/Phnom_Penh")))
         return json3(
           { error: "Disable the current or future schedule before archiving" },
           409
@@ -13187,10 +14514,10 @@ async function handle(request, env, execution) {
           schedule_end_local=?,is_archived=?,updated_at=CURRENT_TIMESTAMP
          WHERE id=? AND business_id=?`
       ).bind(
-        existing.isNormal ? "Normal Rate" : fields.name,
-        fields.scheduleEnabled ? 1 : 0,
-        fields.scheduleStartLocal,
-        fields.scheduleEndLocal,
+        existing.isNormal ? "Normal Rate" : fields2.name,
+        fields2.scheduleEnabled ? 1 : 0,
+        fields2.scheduleStartLocal,
+        fields2.scheduleEndLocal,
         isArchived ? 1 : 0,
         priceListId,
         auth.businessId
@@ -13814,6 +15141,8 @@ async function handle(request, env, execution) {
             product.image_url AS imageUrl,
             product.primary_media_id AS primaryMediaId,
             product.is_featured AS isFeatured,
+            product.allow_discount AS allowDiscount, product.allow_change_price AS allowChangePrice,
+            product.is_open_product AS isOpenProduct, product.allow_free AS allowFree,
              product.is_available AS isAvailable, product.sort_order AS sortOrder,
              product.created_at AS createdAt, product.updated_at AS updatedAt
            FROM products product WHERE ${whereSql}
@@ -14044,8 +15373,8 @@ async function handle(request, env, execution) {
         `INSERT INTO products
          (id,business_id,category_id,code,rating,name,name_km,name_en,name_zh,slug,description,
           price_cents,max_price,unit,portions_json,modifier_groups_json,image_url,primary_media_id,
-          is_featured,is_available,sort_order)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          is_featured,is_available,sort_order,allow_discount,allow_change_price,is_open_product,allow_free)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       ).bind(
         productId,
         auth.businessId,
@@ -14071,7 +15400,11 @@ async function handle(request, env, execution) {
         primaryMediaId || null,
         body.isFeatured ? 1 : 0,
         body.isAvailable === false ? 0 : 1,
-        sortOrder2
+        sortOrder2,
+        options.posOptions.allowDiscount ?? 1,
+        options.posOptions.allowChangePrice ?? 1,
+        options.posOptions.isOpenProduct ?? 0,
+        options.posOptions.allowFree ?? 1
       ),
       ...mediaIds.map(
         (mediaId, index) => env.DB.prepare(
@@ -14446,7 +15779,10 @@ async function handle(request, env, execution) {
         `UPDATE products SET code=?, rating=?, category_id=?, name=?, name_km=?, name_en=?, name_zh=?,
           slug=?, description=?, price_cents=?, max_price=?, unit=?, portions_json=?, modifier_groups_json=?,
          image_url=?, primary_media_id=?,
-         is_featured=?, is_available=?, sort_order=?, updated_at=CURRENT_TIMESTAMP
+         is_featured=?, is_available=?, sort_order=?,
+         allow_discount=COALESCE(?,allow_discount), allow_change_price=COALESCE(?,allow_change_price),
+         is_open_product=COALESCE(?,is_open_product), allow_free=COALESCE(?,allow_free),
+         updated_at=CURRENT_TIMESTAMP
          WHERE id=? AND business_id=?`
       ).bind(
         code,
@@ -14472,6 +15808,10 @@ async function handle(request, env, execution) {
         body.isFeatured ? 1 : 0,
         body.isAvailable === false ? 0 : 1,
         sortOrder2,
+        options.posOptions.allowDiscount,
+        options.posOptions.allowChangePrice,
+        options.posOptions.isOpenProduct,
+        options.posOptions.allowFree,
         productId,
         auth.businessId
       ),
@@ -14499,8 +15839,8 @@ async function handle(request, env, execution) {
   }
   if (request.method === "POST" && path === "/api/admin/banners") {
     const body = await readJson(request);
-    const fields = bannerFields(body);
-    if ("error" in fields) return json3({ error: fields.error }, 400);
+    const fields2 = bannerFields(body);
+    if ("error" in fields2) return json3({ error: fields2.error }, 400);
     const bannerId = id("ban");
     await env.DB.prepare(
       `INSERT INTO banners
@@ -14510,15 +15850,15 @@ async function handle(request, env, execution) {
     ).bind(
       bannerId,
       auth.businessId,
-      fields.title,
-      fields.subtitle,
-      fields.imageUrl,
-      fields.detailText,
-      fields.ctaLabel,
-      fields.ctaUrl,
-      fields.isActive,
-      fields.startsAt,
-      fields.endsAt
+      fields2.title,
+      fields2.subtitle,
+      fields2.imageUrl,
+      fields2.detailText,
+      fields2.ctaLabel,
+      fields2.ctaUrl,
+      fields2.isActive,
+      fields2.startsAt,
+      fields2.endsAt
     ).run();
     await invalidatePublicMenu(env, auth.businessId);
     return json3({ id: bannerId }, 201);
@@ -14531,22 +15871,22 @@ async function handle(request, env, execution) {
     ).bind(bannerId, auth.businessId).first();
     if (!existing) return json3({ error: "Banner not found" }, 404);
     const body = await readJson(request);
-    const fields = bannerFields(body);
-    if ("error" in fields) return json3({ error: fields.error }, 400);
+    const fields2 = bannerFields(body);
+    if ("error" in fields2) return json3({ error: fields2.error }, 400);
     await env.DB.prepare(
       `UPDATE banners SET title=?,subtitle=?,image_url=?,detail_text=?,
         cta_label=?,cta_url=?,is_active=?,starts_at=?,ends_at=?
        WHERE id=? AND business_id=?`
     ).bind(
-      fields.title,
-      fields.subtitle,
-      fields.imageUrl,
-      fields.detailText,
-      fields.ctaLabel,
-      fields.ctaUrl,
-      fields.isActive,
-      fields.startsAt,
-      fields.endsAt,
+      fields2.title,
+      fields2.subtitle,
+      fields2.imageUrl,
+      fields2.detailText,
+      fields2.ctaLabel,
+      fields2.ctaUrl,
+      fields2.isActive,
+      fields2.startsAt,
+      fields2.endsAt,
       bannerId,
       auth.businessId
     ).run();
@@ -15194,7 +16534,7 @@ async function executeBusinessClone(env, context, actorEmail) {
        (id,business_id,category_id,name,slug,description,price_cents,max_price,
         image_url,calories,prep_minutes,is_featured,is_available,sort_order,
         name_km,name_en,name_zh,primary_media_id,code,unit,portions_json,
-        modifier_groups_json,rating)
+        modifier_groups_json,rating,allow_discount,allow_change_price,is_open_product,allow_free)
        SELECT json_extract(value,'$.id'),?,json_extract(value,'$.category_id'),
         json_extract(value,'$.name'),json_extract(value,'$.slug'),
         json_extract(value,'$.description'),json_extract(value,'$.price_cents'),
@@ -15205,7 +16545,11 @@ async function executeBusinessClone(env, context, actorEmail) {
         json_extract(value,'$.name_en'),json_extract(value,'$.name_zh'),
         json_extract(value,'$.primary_media_id'),json_extract(value,'$.code'),
         json_extract(value,'$.unit'),json_extract(value,'$.portions_json'),
-        json_extract(value,'$.modifier_groups_json'),json_extract(value,'$.rating')
+        json_extract(value,'$.modifier_groups_json'),json_extract(value,'$.rating'),
+        COALESCE(json_extract(value,'$.allow_discount'),1),
+        COALESCE(json_extract(value,'$.allow_change_price'),1),
+        COALESCE(json_extract(value,'$.is_open_product'),0),
+        COALESCE(json_extract(value,'$.allow_free'),1)
        FROM json_each(?)`,
       targetId
     )
@@ -15430,6 +16774,7 @@ var SuperAdminService = class extends WorkerEntrypoint {
     const limits = input.limits === void 0 ? null : parsePlanLimits(input.limits);
     if (input.limits !== void 0 && !limits)
       return rpcFailure(400, "Enter valid whole-number plan limits or leave them blank");
+    const hasUserLimit = limits !== null && Object.hasOwn(input.limits, "users");
     const pos = input.pos === void 0 ? null : parsePlanPos(input.pos);
     if (input.pos !== void 0 && !pos)
       return rpcFailure(400, "Choose whether to include POS and enter whole-number POS limits or leave them blank");
@@ -15447,13 +16792,14 @@ var SuperAdminService = class extends WorkerEntrypoint {
     const priceId = id("price");
     const limitValues = limits ? [limits.branches, limits.menus, limits.products, limits.dailyOrders] : [null, null, null, null];
     const limitUpdate = limits ? ",max_branches=?,max_menus=?,max_products=?,max_daily_orders=?" : "";
+    const userLimitUpdate = hasUserLimit ? ",max_users=?" : "";
     const posValues = pos ? [Number(pos.enabled), pos.profiles, pos.dailySales] : [0, null, null];
     const posUpdate = pos ? ",pos_enabled=?,max_pos_profiles=?,max_daily_pos_sales=?" : "";
     const planStatement = planId ? db.prepare(`UPDATE subscription_plans SET name=?,description=?,features_json=?,
-          is_active=?,is_public=?,display_order=?,updated_at=CURRENT_TIMESTAMP${limitUpdate}${posUpdate} WHERE id=?`).bind(...planValues, ...limits ? limitValues : [], ...pos ? posValues : [], recordId2) : db.prepare(`INSERT INTO subscription_plans
+          is_active=?,is_public=?,display_order=?,updated_at=CURRENT_TIMESTAMP${limitUpdate}${userLimitUpdate}${posUpdate} WHERE id=?`).bind(...planValues, ...limits ? limitValues : [], ...hasUserLimit ? [limits.users] : [], ...pos ? posValues : [], recordId2) : db.prepare(`INSERT INTO subscription_plans
           (id,code,name,description,features_json,is_active,is_public,display_order,
-           max_branches,max_menus,max_products,max_daily_orders,pos_enabled,max_pos_profiles,max_daily_pos_sales)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(recordId2, recordSlug(name, "plan", recordId2), ...planValues, ...limitValues, ...posValues);
+           max_branches,max_menus,max_products,max_daily_orders,max_users,pos_enabled,max_pos_profiles,max_daily_pos_sales)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(recordId2, recordSlug(name, "plan", recordId2), ...planValues, ...limitValues, limits?.users ?? null, ...posValues);
     const writes = [
       planStatement,
       db.prepare(`UPDATE subscription_plan_prices SET is_active=0,updated_at=CURRENT_TIMESTAMP
@@ -15478,7 +16824,7 @@ var SuperAdminService = class extends WorkerEntrypoint {
           features,
           amountMinor,
           billingInterval: interval,
-          ...limits ? { limits } : {},
+          ...limits ? { limits: input.limits } : {},
           ...pos ? { pos } : {}
         }
       )
@@ -15868,7 +17214,7 @@ var SuperAdminService = class extends WorkerEntrypoint {
       return rpcFailure(400, "Business ID is invalid");
     if (!validAccountEmail(normalizedAdminEmail(actorEmail)))
       return rpcFailure(403, "Super-admin identity is invalid");
-    const [business2, members, counts] = await Promise.all([
+    const [business2, members2, counts] = await Promise.all([
       this.env.DB.prepare(
         `SELECT b.id,b.name,b.slug,b.tagline,b.description,b.phone,b.address,
           b.email AS contactEmail,b.website_url AS websiteUrl,
@@ -15914,7 +17260,7 @@ var SuperAdminService = class extends WorkerEntrypoint {
         enableSubmitOrder: Boolean(business2.enableSubmitOrder),
         disabledControlPages: jsonArray(disabledControlPagesJson)
       },
-      members: members.results,
+      members: members2.results,
       counts
     });
   }
@@ -16078,7 +17424,9 @@ var SuperAdminService = class extends WorkerEntrypoint {
         role: "manager",
         createdAt
       });
-    } catch {
+    } catch (error3) {
+      const limit = planLimitError(error3);
+      if (limit) return rpcFailure(409, limit.error, limit.code);
       return rpcFailure(
         409,
         "Email is already in use",

@@ -9,6 +9,7 @@ import '../core/pricing.dart';
 import '../core/register_database.dart';
 import '../core/register_shift_reports.dart';
 import '../features/register/register_controller.dart';
+import '../features/shifts/widgets/open_shift_dialog_widget.dart';
 import '../shared/forms/app_selection_field.dart';
 import '../shared/forms/app_text_field.dart';
 import '../shared/surface_card.dart';
@@ -153,23 +154,6 @@ class _ShiftViewState extends State<ShiftView> {
         ),
   ];
 
-  Future<void> _openShift() async {
-    final dayId = (controller.context['working_day'] as Map?)?['id'];
-    final rows = floatTypes;
-    final amounts = rows.isEmpty
-        ? <Json>[]
-        : await showDialog<List<Json>>(
-            context: context,
-            builder: (_) => _CountDialog(rows, opening: true),
-          );
-    if (amounts != null) {
-      await controller.operation(ApiEndpoint.cashierShifts, {
-        'opening_cash': amounts,
-        'day_id': dayId,
-      });
-    }
-  }
-
   Future<void> _cashMovement(String id, String kind) async {
     final input = await showDialog<Json>(
       context: context,
@@ -200,9 +184,8 @@ class _ShiftViewState extends State<ShiftView> {
       ];
       final counts = await showDialog<List<Json>>(
         context: context,
-        builder: (_) => _CountDialog(
+        builder: (_) => _ClosingCountDialog(
           rows,
-          opening: false,
           initial: entered,
           changed: changed,
         ),
@@ -269,6 +252,22 @@ class _ShiftViewState extends State<ShiftView> {
       if (controller.message.value != 'RECONCILIATION_CHANGED') return;
       await controller.refreshRegister();
       changed = true;
+    }
+  }
+
+  Future<void> _closeDay(String id) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('close_day'.tr),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text('cancel'.tr)),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text('confirm'.tr)),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await controller.operation(ApiEndpoint.closeWorkingDayFor(id), {});
     }
   }
 
@@ -447,12 +446,8 @@ class _ShiftViewState extends State<ShiftView> {
         paired = controller.paired.value,
         online = controller.online.value;
     final commandPending = controller.commandPending.value;
-    final connected =
-        (store ? !paired || online : !paired && online) &&
-        !controller.busy.value &&
-        !commandPending &&
-        !controller.storeAuthorityPending;
-    final canOpen = connected && settings['read_only'] != true;
+    final connected = controller.operatingCommandsAvailable;
+    final canOpen = controller.canOpenOperatingSession;
     final unsent =
         !store &&
         shiftId != null &&
@@ -582,7 +577,7 @@ class _ShiftViewState extends State<ShiftView> {
                 ] else if (!manager)
                   Text('shift_wait_for_manager'.tr),
               ],
-              action: manager
+              action: (day == null ? controller.allowsAction("allow_start_working_day") : controller.allowsAction("allow_close_working_day"))
                   ? (day == null
                         ? RegisterButton(
                             'open_day',
@@ -594,7 +589,7 @@ class _ShiftViewState extends State<ShiftView> {
                                 : null,
                           )
                         : OutlinedButton.icon(
-                            onPressed: () => _reviewDay(dayId!, connected),
+                            onPressed: connected ? () => manager ? _reviewDay(dayId!, connected) : _closeDay(dayId!) : null,
                             icon: const Icon(Icons.checklist),
                             label: Text('shift_review_day'.tr),
                           ))
@@ -613,6 +608,8 @@ class _ShiftViewState extends State<ShiftView> {
                     'shift_opened_by',
                     shiftPerson({...shift, ...?summary}, 'opened_by'),
                   ),
+                  if (shift['note'] case final String note when note.isNotEmpty)
+                    _detail('cart_note', note),
                   if (operator != null && operator.id != shift['opened_by'])
                     _detail('shift_signed_in', operator.displayName),
                   if (unsent) Text('UNSYNCED_SHIFT_SALES'.tr),
@@ -622,11 +619,13 @@ class _ShiftViewState extends State<ShiftView> {
               action: shift == null
                   ? RegisterButton(
                       'open_shift',
-                      onPressed: canOpen && !needsDay ? _openShift : null,
+                      onPressed: canOpen && !needsDay && controller.allowsAction("allow_start_cashier_shift")
+                          ? () => OpenShiftDialogWidget.open(context, controller)
+                          : null,
                     )
                   : RegisterButton(
                       'close_shift',
-                      onPressed: connected && !unsent
+                      onPressed: connected && !unsent && controller.allowsAction("allow_close_cashier_shift")
                           ? () => _closeShift(shiftId!)
                           : null,
                     ),
@@ -813,24 +812,22 @@ class _CashMovementDialogState extends State<_CashMovementDialog> {
 
 typedef _CountRow = ({String id, String name, String currency, bool cash});
 
-class _CountDialog extends StatefulWidget {
-  const _CountDialog(
+class _ClosingCountDialog extends StatefulWidget {
+  const _ClosingCountDialog(
     this.rows, {
-    required this.opening,
     this.initial = const {},
     this.changed = false,
   });
 
   final List<_CountRow> rows;
-  final bool opening;
   final Map<String, int> initial;
   final bool changed;
 
   @override
-  State<_CountDialog> createState() => _CountDialogState();
+  State<_ClosingCountDialog> createState() => _ClosingCountDialogState();
 }
 
-class _CountDialogState extends State<_CountDialog> {
+class _ClosingCountDialogState extends State<_ClosingCountDialog> {
   late final inputs = widget.rows
       .map((row) => TextEditingController(text: _editableAmount(row)))
       .toList();
@@ -867,7 +864,7 @@ class _CountDialogState extends State<_CountDialog> {
       counts.add({
         'payment_type_id': row.id,
         'currency': row.currency,
-        (widget.opening ? 'amount_minor' : 'declared_minor'): amount,
+        'declared_minor': amount,
       });
     }
     Navigator.pop(context, counts);
@@ -875,7 +872,7 @@ class _CountDialogState extends State<_CountDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: Text((widget.opening ? 'opening_cash' : 'shift_enter_count').tr),
+    title: Text('shift_enter_count'.tr),
     content: SizedBox(
       width: 420,
       child: SingleChildScrollView(
@@ -886,12 +883,7 @@ class _CountDialogState extends State<_CountDialog> {
           children: [
             if (invalid) const RegisterNotice('INVALID_AMOUNT'),
             if (widget.changed) const RegisterNotice('RECONCILIATION_CHANGED'),
-            Text(
-              (widget.opening
-                      ? 'shift_opening_instructions'
-                      : 'shift_count_instructions')
-                  .tr,
-            ),
+            Text('shift_count_instructions'.tr),
             for (final (index, row) in widget.rows.indexed)
               AppTextField(
                 controller: inputs[index],
@@ -912,10 +904,7 @@ class _CountDialogState extends State<_CountDialog> {
         onPressed: () => Navigator.pop(context),
         child: Text('back'.tr),
       ),
-      RegisterButton(
-        widget.opening ? 'open_shift' : 'shift_review_count',
-        onPressed: submit,
-      ),
+      RegisterButton('shift_review_count', onPressed: submit),
     ],
   );
 }

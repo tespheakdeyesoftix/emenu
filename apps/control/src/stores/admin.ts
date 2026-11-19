@@ -7,7 +7,7 @@ import { catalogReaderPages, controlPageIds, priceListReaderPages, sellingContro
 import { telegramOrderQuery } from "../utils/telegramOrderLink";
 
 export class ControlRequestError extends Error {
-  constructor(message: string, readonly status: number, readonly serverMessage?: string) {
+  constructor(message: string, readonly status: number, readonly serverMessage?: string, readonly serverCode?: string) {
     super(message);
   }
 }
@@ -18,7 +18,7 @@ function workspacePages(workspace: { accessibleControlPages?: ControlPage[]; rol
   // The previous production API returned the role from /overview.
   const { role } = workspace;
   if (role !== "owner" && role !== "manager" && role !== "editor") return [];
-  return controlPageIds.filter((page) => !sellingControlPages.includes(page) && page !== "orders" && page !== "reports" && page !== "bookings" && page !== "telegramNotifications");
+  return controlPageIds.filter((page) => !sellingControlPages.includes(page) && page !== "orders" && page !== "reports" && page !== "bookings" && page !== "telegramNotifications" && (page !== "users" || role === "owner"));
 }
 
 export type Business = {
@@ -467,16 +467,23 @@ export const useAdminStore = defineStore("admin", {
         }
         throw new ControlRequestError(
           khmerError(payload.error), response.status, typeof payload.error === "string" ? payload.error : undefined,
+          typeof payload.code === "string" ? payload.code : undefined,
         );
       }
       return payload;
     },
     async requestWorkspace(path: "workspace" | "workspace-access") {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12_000);
       try {
-        return await this.request(`/api/admin/${path}`);
-      } catch (error) {
-        if (!(error instanceof ControlRequestError) || error.status !== 404) throw error;
-        return this.request("/api/admin/overview");
+        try {
+          return await this.request(`/api/admin/${path}`, { signal: controller.signal });
+        } catch (error) {
+          if (!(error instanceof ControlRequestError) || error.status !== 404) throw error;
+          return await this.request("/api/admin/overview", { signal: controller.signal });
+        }
+      } finally {
+        clearTimeout(timer);
       }
     },
     async refreshWorkspaceAccess() {

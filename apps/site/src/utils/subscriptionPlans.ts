@@ -11,6 +11,7 @@ const quantity = (value: number | null) =>
 
 export function publicPlanLimits({ limits, pos }: PlanOffer) {
   return [
+    `គណនីអ្នកប្រើ (រួមទាំងម្ចាស់)៖ ${quantity(limits.users ?? null)}`,
     `សាខា៖ ${quantity(limits.branches)}`,
     `ម៉ឺនុយ និងម៉ឺនុយរង៖ ${quantity(limits.menus)}`,
     `ផលិតផល៖ ${quantity(limits.products)}`,

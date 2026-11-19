@@ -14,7 +14,7 @@ extension HeldBillMethods on SaleService {
     if (bill != null) {
       final saved = jsonObject(jsonDecode(bill.payload));
       return saved['table_status'] as String? ??
-          (saved['status'] == 'submitted' ? 'occupied' : 'hold');
+          (saved['status'] == 'bill_requested' ? 'bill_requested' : saved['status'] == 'submitted' ? 'occupied' : 'hold');
     }
     return cart.any((line) => line.submitted) || voidedLines.isNotEmpty
         ? 'occupied'
@@ -24,6 +24,27 @@ extension HeldBillMethods on SaleService {
   bool isHeldTable(String id) => heldBills.any(
     (bill) => bill.tableId == id && bill.id != _activeBill.value?.id,
   );
+
+  Future<bool> printBill() async {
+    if (!canSubmit) return false;
+    if ((context['capabilities'] as Map?)?['bill_request_lock'] != true) {
+      message.value = 'SERVER_UPGRADE_REQUIRED';
+      return false;
+    }
+    return _saveOpenOrder('bill_requested', returnToTables: tableMode == 'required', submit: true);
+  }
+
+  Future<void> cancelPrintBill() async {
+    final bill = _activeBill.value;
+    if (bill == null || !billRequested || !allowsAction('allow_cancel_print_bill')) return;
+    await register.run(() async {
+      await register.sendCommand(RegisterAction.hold, {
+        'bill_id': bill.id, 'bill_revision': bill.revision, 'cancel_print_bill': true,
+      });
+      clearCart();
+      register.wakeSaleSync();
+    });
+  }
 
   Future<bool> submitOrder() async {
     if (!canSubmit) return false;

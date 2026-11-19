@@ -1,3 +1,4 @@
+import { requirePosPermission, requireLinePermissions } from "./posPermissions";
 import type { PosTaxRule } from "../../../shared/posProfile";
 import type { Env } from "./index";
 import { lineGross, saleLineEdits, saleLines, saleLineTotals, saleQuantity, secondaryToPrimary } from "./posApiCatalog";
@@ -76,7 +77,7 @@ const resultOf = (id: string) => ({
   params: [id],
 });
 
-const saleStatuses = ["open", "submitted", "paid", "cancelled"] as const;
+const saleStatuses = ["open", "submitted", "bill_requested", "paid", "cancelled"] as const;
 type Sale = {
   id: string;
   status: typeof saleStatuses[number];
@@ -167,9 +168,9 @@ export async function readSellingOverview(db: D1Database, businessId: string, da
   const { results } = await sql(db, `
     SELECT currency,
       COUNT(CASE WHEN status='paid' AND reverses_sale_id IS NULL THEN 1 END) AS completed_count,
-      COUNT(CASE WHEN status IN ('open','submitted') THEN 1 END) AS open_count,
+      COUNT(CASE WHEN status IN ('open','submitted','bill_requested') THEN 1 END) AS open_count,
       SUM(CASE WHEN status='paid' THEN total_minor ELSE 0 END) AS net_minor
-    FROM sales WHERE business_id=? AND (status IN ('open','submitted') OR (status='paid' AND business_date=?))
+    FROM sales WHERE business_id=? AND (status IN ('open','submitted','bill_requested') OR (status='paid' AND business_date=?))
     GROUP BY currency ORDER BY currency
   `, businessId, date).all();
   return respond({ business_date: date, currencies: results });
@@ -252,7 +253,7 @@ async function readActiveSales(context: PosContext, url: URL) {
     SELECT ${columns},${reversalId} AS reversed_by_sale_id,
       (SELECT COALESCE(SUM(l.quantity),0) FROM sale_products l WHERE l.sale_id=s.id AND l.status<>'void') AS item_quantity
     FROM sales s WHERE s.business_id=? AND s.profile_id=? AND ? IS NOT NULL
-      AND (s.status IN ('open','submitted') OR (s.status='paid' AND ${paidScope}=?)
+      AND (s.status IN ('open','submitted','bill_requested') OR (s.status='paid' AND ${paidScope}=?)
         OR (s.status='cancelled' AND julianday(s.updated_at)>=julianday(?)
             AND julianday(s.updated_at)<=julianday(?)))
     ORDER BY CASE s.status WHEN 'paid' THEN COALESCE(s.settled_at,s.created_at)
@@ -325,14 +326,14 @@ async function chooseCustomer(
 function openSaleGuard(guard: Guard, sale: Sale, revision: number): Guard {
   return {
     ...guard,
-    query: `${guard.query} AND EXISTS (SELECT 1 FROM sales WHERE id=? AND status IN ('open','submitted') AND revision=?)`,
+    query: `${guard.query} AND EXISTS (SELECT 1 FROM sales WHERE id=? AND status IN ('open','submitted','bill_requested') AND revision=?)`,
     params: [...guard.params, sale.id, revision],
   };
 }
 
-function assertRevision(sale: Sale, body: Record<string, unknown>) {
+function assertRevision(sale: Sale, body: Record<string, unknown>, allowRequested = false) {
   const revision = integer(body.revision, "revision", 1);
-  if (sale.status !== "open" && sale.status !== "submitted")
+  if (sale.status !== "open" && sale.status !== "submitted" && !(allowRequested && sale.status === "bill_requested"))
     conflict("This bill is no longer open", "BILL_CLOSED");
   if (revision !== sale.revision)
     conflict("Refresh the bill and use its current revision", "BILL_CHANGED");
@@ -377,6 +378,8 @@ export async function saveSale(
   const actor = identity.user_id;
   const body = command.body;
   const existing = id ? await findSale(context, id) : null;
+  if (body.cancel_print_bill === true && existing)
+    return saleAction(context, command, existing.id, "cancel-print-bill");
   if (id && !existing && !submit) missing("Sale");
   const revision = existing
     ? assertRevision(existing, submit ? { revision: existing.revision } : body)
@@ -414,13 +417,18 @@ export async function saveSale(
       "CURRENCY_CHANGED",
     );
   }
+  const savedLines: Record<string, unknown>[] = existing ? (await sql(db,
+    "SELECT *,json(modifiers_json) AS modifiers FROM sale_products WHERE sale_id=? AND status<>'void'",
+    existing.id).all<Record<string, unknown>>()).results.map(line => ({
+      ...line, modifiers: JSON.parse(String(line.modifiers)),
+    })) : [];
   const [table, customer, lines] = await Promise.all([
     chooseTable(context, body.table_id, existing),
     chooseCustomer(context, body.customer_id, existing),
     !existing || body.lines !== undefined
       ? existing?.status === "submitted" && Array.isArray(body.lines) && !body.lines.length
         ? []
-        : saleLines(env, deps, context, body.lines, currency, taxMode, taxRate, taxRule)
+        : saleLines(env, deps, context, body.lines, currency, taxMode, taxRate, taxRule, savedLines)
       : null,
   ]);
   const cover = table.id == null
@@ -469,7 +477,7 @@ export async function saveSale(
       tax_mode=?,tax_rate_bps=?,tax_rule_json=?,
       ${amountColumns.map((column) => `${column}=COALESCE(?,${column})`).join(",")},
       revision=revision+1,updated_at=?,updated_by=? WHERE id=?`,
-        submit ? "submitted" : existing.status,
+        submit ? (body.request_bill === true ? "bill_requested" : "submitted") : existing.status,
         table.id,
         table.code,
         table.label,
@@ -509,7 +517,7 @@ export async function saveSale(
         profile.branch_id,
         profile.id,
         day?.id ?? null,
-        submit ? "submitted" : "open",
+        submit ? (body.request_bill === true ? "bill_requested" : "submitted") : "open",
         postingDate,
         currency,
         String(identity.secondary_exchange_rate),
@@ -701,6 +709,7 @@ async function checkout(
   sale: Sale,
   revision: number,
 ) {
+  requirePosPermission(context,"allow_process_payment");
   const { db, identity, now } = context;
   const expected = integer(
     command.body.expected_total_minor,
@@ -752,11 +761,20 @@ export async function importStoreSale(
   context: PosContext,
   command: Command,
   types: PaymentType[],
-  status: "paid" | "submitted" = "paid",
+  status: "paid" | "submitted" | "bill_requested" = "paid",
 ) {
   const { db, identity, profile, now } = context;
+  if (status === "paid") requirePosPermission(context,"allow_process_payment");
   const body = command.body;
   const id = context.storeImport!.resourceId;
+  if (status === "submitted" && body.request_bill === true) status = "bill_requested";
+  const previous = await findSale(context,id);
+  const savedLines: Record<string, unknown>[] = previous ? (await sql(db,
+    "SELECT *,json(modifiers_json) AS modifiers FROM sale_products WHERE sale_id=? AND status<>'void' ORDER BY line_number",
+    id).all<Record<string, unknown>>()).results.map(line => ({
+      ...line, modifiers: JSON.parse(String(line.modifiers)),
+    })) : [];
+  if (previous?.status === "bill_requested" && status !== "paid") conflict("Cancel Print Bill before editing this bill.", "BILL_REQUESTED");
   const currency = currencyOf(body.currency);
   const rate = string(body.exchange_rate, "exchange_rate", 80);
   const taxMode = choice(body.tax_mode, "tax_mode", [
@@ -780,6 +798,7 @@ export async function importStoreSale(
     const unit = integer(line.unit_price_minor, "unit_price_minor", 0);
     const gross = lineGross(unit, quantity);
     const edits = saleLineEdits(line);
+    requireLinePermissions(context, { ...line, ...edits }, savedLines.find(old => line.line_key != null && old.line_key === line.line_key));
     const amounts = saleLineTotals(gross, taxMode, taxRate, taxRule, edits.discount_minor, edits.discount_bps);
     if (
       amounts.subtotal_minor !== line.subtotal_minor ||
@@ -848,13 +867,13 @@ export async function importStoreSale(
       modifiers,
     };
   });
-  if (!lines.length && (await findSale(context, id))?.status !== "submitted")
+  if (!lines.length && !["submitted","bill_requested"].includes(previous?.status ?? ""))
     invalid("A bill needs at least one line");
   const amounts = sumAmounts(lines);
   if (amounts.total_minor > MAX_AMOUNT || amounts.total_minor !== body.total_minor) {
     invalid("The saved total must match the lines");
   }
-  const entries = status === "submitted" ? [] : salePayments(body.payments, types, {
+  const entries = status !== "paid" ? [] : salePayments(body.payments, types, {
     currency,
     secondary_exchange_rate: rate,
     total_minor: amounts.total_minor,
@@ -891,7 +910,46 @@ export async function importStoreSale(
     },
     copies: integer(receipt.copies, "copies", 1, 10),
   };
+  if (previous?.status === "bill_requested") {
+    const equal = (a: unknown, b: unknown): boolean => {
+      if (a === b) return true;
+      if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((value,i) => equal(value,b[i]));
+      if (a && b && typeof a === "object" && typeof b === "object") {
+        const left = a as Record<string, unknown>, right = b as Record<string, unknown>;
+        const keys = Object.keys(left).sort();
+        return keys.join() === Object.keys(right).sort().join() && keys.every(key => equal(left[key],right[key]));
+      }
+      return false;
+    };
+    const columns = ["product_id","portion_id","price_list_id","quantity","unit_price_minor",
+      "subtotal_minor","discount_minor","discount_bps","tax_minor","total_minor","note",
+      "base_price_override_minor","price_change_reason","free_reason","discount_note"];
+    const unchanged = lines.length === savedLines.length && lines.every((line,i) => {
+      const old = savedLines[i], next = line as Record<string, unknown>;
+      return columns.every(key => (next[key] ?? null) === (old[key] ?? null)) &&
+        Boolean(next.is_free) === Boolean(old.is_free) && equal(next.modifiers,old.modifiers) &&
+        object((body.lines as unknown[])[i]).line_key === old.line_key;
+    });
+    const voids = list(body.voided_lines ?? [], "voided_lines", 120).map(object);
+    const oldVoids = (await sql(db, "SELECT * FROM sale_products WHERE sale_id=? AND status='void'", id)
+      .all<Record<string, unknown>>()).results;
+    const unchangedVoids = voids.every(line => {
+      const old = oldVoids.find(row => row.line_key === line.line_key);
+      return old != null && ["quantity","discount_minor","discount_bps","discount_note","void_reason"]
+        .every(key => (line[key] ?? null) === (old[key] ?? null));
+    });
+    if (!unchanged || !unchangedVoids || currency !== previous.currency || rate !== previous.secondary_exchange_rate ||
+        taxMode !== previous.tax_mode || taxRate !== previous.tax_rate_bps ||
+        !equal(taxRule, JSON.parse(previous.tax_rule_json ?? "null")) ||
+        table !== previous.table_id || cover !== previous.guest_cover || customer !== previous.customer_id ||
+        note !== previous.note || postingDate !== previous.business_date)
+      conflict("Cancel Print Bill before editing this bill.", "BILL_REQUESTED");
+  }
   const guard = openGuard(day, shift);
+  guard.query += previous
+    ? " AND EXISTS (SELECT 1 FROM sales WHERE id=? AND revision=? AND status=?)"
+    : " AND NOT EXISTS (SELECT 1 FROM sales WHERE id=?)";
+  guard.params.push(...(previous ? [id,previous.revision,previous.status] : [id]));
   guard.query += ` AND NOT EXISTS (
     SELECT 1 FROM restaurant_tables WHERE id=? AND (business_id<>? OR branch_id<>?)
   ) AND NOT EXISTS (
@@ -900,7 +958,7 @@ export async function importStoreSale(
     SELECT 1 FROM products WHERE id IN (SELECT value FROM json_each(?)) AND business_id<>?
   ) AND NOT EXISTS (
     SELECT 1 FROM sales WHERE id=?
-      AND (business_id<>? OR profile_id<>? OR status<>'submitted' OR working_day_id IS NOT ?)
+      AND (business_id<>? OR profile_id<>? OR status NOT IN ('submitted','bill_requested') OR working_day_id IS NOT ?)
   )`;
   guard.params.push(
     table,
@@ -1079,9 +1137,24 @@ export async function saleAction(
   const sale = await findSale(context, id);
   if (!sale) missing("Sale");
   if (action === "reverse") return reverse(context, command, sale);
+  if (action === "request-bill" || action === "cancel-print-bill") {
+    if (action === "cancel-print-bill") requirePosPermission(context,"allow_cancel_print_bill");
+    const revision = context.storeImport ? sale.revision : integer(command.body.revision,"revision",1);
+    const allowed = action === "request-bill" ? ["open","submitted"] : ["bill_requested"];
+    if (!allowed.includes(sale.status) || revision !== sale.revision)
+      conflict("The bill status changed. Refresh the bill.", "BILL_CHANGED");
+    const next = action === "request-bill" ? "bill_requested" : "submitted";
+    return command.commit(200, {
+      query: "EXISTS (SELECT 1 FROM sales WHERE id=? AND status=? AND revision=?)",
+      params: [id,sale.status,revision],
+    }, [sql(context.db,
+      "UPDATE sales SET status=?,revision=revision+1,updated_at=?,updated_by=? WHERE id=?",
+      next,context.now,context.identity.user_id,id)], resultOf(id));
+  }
+
   const revision = assertRevision(sale, context.storeImport && action === "cancel"
     ? { revision: sale.revision }
-    : command.body);
+    : command.body, action === "checkout");
   if (action === "checkout") return checkout(context, command, sale, revision);
   const reason = string(command.body.reason, "reason", 500);
   const guard = openSaleGuard(

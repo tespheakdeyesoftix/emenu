@@ -41,7 +41,7 @@ class CartFooter extends GetView<SaleController> {
             quantity: quantity,
           ),
           _CartCheckoutActions(
-            onPay: canSubmit && service.cart.isNotEmpty
+            onPay: service.canPay
                 ? () => controller.pay(context, total)
                 : null,
             onSubmit: canSubmit ? () => controller.submitOrder(context) : null,

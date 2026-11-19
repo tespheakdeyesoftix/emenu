@@ -1,3 +1,4 @@
+import 'user_permissions.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 import 'pos_api.dart';
@@ -85,7 +86,7 @@ class RegisterOperating {
     final Json result;
     switch (action) {
       case RegisterAction.openDay:
-        requireRegisterManager(actor);
+        requireUserAction(context, actor.role, 'allow_start_working_day');
         if (_config['working_day_enabled'] != true) throw _disabled;
         if (activity['working_day'] != null) {
           throw const PosApiError(
@@ -111,7 +112,7 @@ class RegisterOperating {
         };
         activity['working_day'] = result;
       case RegisterAction.closeDay:
-        requireRegisterManager(actor);
+        requireUserAction(context, actor.role, 'allow_close_working_day');
         final day = _day;
         if (day == null || day['id'] != input['day_id']) throw _changed;
         resource = day['id'] as String;
@@ -170,9 +171,16 @@ class RegisterOperating {
           final count = _floatCount(types, counts, row);
           count['expected_minor'] = _amount(row['amount_minor'], 0);
         }
+        final rawNote = input['note'];
+        if (rawNote != null &&
+            (rawNote is! String || rawNote.trim().length > 500)) {
+          throw const FormatException('cart_note_too_long');
+        }
+        final note = (rawNote as String?)?.trim() ?? '';
         final business = jsonObject(context['business']);
         payload = {
           'opening_cash': opening,
+          if (note.isNotEmpty) 'note': note,
           'payment_types': types,
           'base_currency': business['currency'],
           'exchange_rate': business['secondary_exchange_rate']?.toString(),
@@ -185,6 +193,7 @@ class RegisterOperating {
           'opened_at': _timestamp,
           'opened_by': actor.id,
           'opened_by_name': actor.displayName,
+          'note': note.isEmpty ? null : note,
           'profile_name': _profile['name'],
           'business_date':
               _day?['business_date'] ?? registerLocalDate(context, time),
@@ -369,6 +378,9 @@ class RegisterOperating {
 
   Future<void> submitSale(String commandId, String saleId, Json payload) =>
       _append('submit_sale', commandId, saleId, payload);
+
+  Future<void> cancelPrintBill(String commandId, String saleId, Json payload) =>
+      _append("cancel_print_bill", commandId, saleId, payload);
 
   Future<void> cancelSale(String commandId, String saleId, Json payload) =>
       _append('cancel_sale', commandId, saleId, payload);
