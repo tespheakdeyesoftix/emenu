@@ -5,24 +5,42 @@ extension HeldBillMethods on SaleService {
     (bill) => bill.tableId == id && bill.id != _activeBill.value?.id,
   );
 
-  Future<bool> holdCart({String tableStatus = 'hold'}) async {
+  Future<bool> submitOrder() async {
+    if (!canSubmit) return false;
+    return _saveOpenOrder(
+      'occupied',
+      returnToTables: tableMode == 'required',
+      submit: true,
+    );
+  }
+
+  Future<bool> holdCart({String tableStatus = 'hold'}) => _saveOpenOrder(
+    tableStatus,
+    returnToTables: tableMode == 'required' || tableStatus != 'hold',
+  );
+
+  Future<bool> _saveOpenOrder(
+    String tableStatus, {
+    required bool returnToTables,
+    bool submit = false,
+  }) async {
     var saved = false;
     await register.run(() async {
       await flushCart();
       await register.sendCommand(RegisterAction.hold, {
         ..._cartCommand(),
-        if (tableId.value != null) 'table_status': tableStatus,
+        'table_status': tableStatus,
+        if (submit) 'submit_order': true,
       });
       clearCart();
-      if (tableMode == 'required' || tableStatus != 'hold') {
-        tab.value = SaleService.tablesTab;
-      }
+      if (returnToTables) tab.value = SaleService.tablesTab;
       message.value = switch (tableStatus) {
         'bill_requested' => 'BILL_REQUESTED',
         'occupied' => 'ORDER_SAVED',
         _ => 'BILL_HELD',
       };
       saved = true;
+      if (submit) register.wakeSaleSync();
     });
     return saved;
   }
@@ -68,5 +86,6 @@ extension HeldBillMethods on SaleService {
       'bill_revision': bill.revision,
     });
     if (_activeBill.value?.id == bill.id) clearCart();
+    register.wakeSaleSync();
   });
 }

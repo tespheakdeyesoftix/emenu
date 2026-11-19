@@ -1,3 +1,5 @@
+enum ProductCardLayout { imageTop, imageLeft }
+
 enum SaleScreenLayout {
   menuTop('menu_top'),
   menuLeft('menu_left'),

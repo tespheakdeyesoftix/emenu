@@ -59,7 +59,7 @@ export async function daySummary(context: PosContext, id: string) {
       WHERE s.working_day_id=? ORDER BY s.opened_at,s.id`, id),
     sql(db,
       `SELECT s.id,s.profile_id,p.name AS profile_name,s.table_code FROM sales s
-      JOIN pos_profiles p ON p.id=s.profile_id WHERE s.working_day_id=? AND s.status='open'
+      JOIN pos_profiles p ON p.id=s.profile_id WHERE s.working_day_id=? AND s.status IN ('open','submitted')
       ORDER BY p.name,s.id`, id),
     sql(db,
       `SELECT c.shift_id,c.payment_type_name,c.currency,c.variance_minor FROM cashier_shift_closing_counts c

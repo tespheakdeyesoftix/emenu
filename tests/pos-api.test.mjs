@@ -1247,6 +1247,53 @@ test("POS profiles save multiple three-level tax rules and reject rates outside 
   assert.deepEqual((await context()).tax_rules, []);
 });
 
+test("submitted orders persist on both tables and settle or cancel in place", async () => {
+  const profile = await newProfile("Submitted orders", {
+    working_day_enabled: false, cashier_shift_enabled: false, table_mode: "disabled",
+  });
+  const token = await start(profile);
+  assert.equal((await read(token, "/context")).capabilities.submit_orders, true);
+  const id = randomUUID();
+  const path = `/sales/${id}`;
+  const command = randomUUID();
+  const input = { lines: [coffee(2)] };
+  const submitted = await write(token, path + "/submit", input, 201, command);
+  assert.equal(submitted.id, id);
+  assert.equal(submitted.status, "submitted");
+  assert.equal(submitted.lines[0].status, "submitted");
+  assert.equal(submitted.lines[0].quantity, 2);
+  assert.deepEqual(submitted.payments, []);
+  assert.deepEqual(await write(token, path + "/submit", input, 201, command), submitted);
+  assert.equal(await prepare("SELECT status FROM sales WHERE id=?", id).first("status"), "submitted");
+  assert.equal(await prepare("SELECT status FROM sale_products WHERE sale_id=?", id).first("status"), "submitted");
+  assert.equal((await read(token, "/sales?status=submitted")).sales[0].id, id);
+  assert.equal((await read(token, "/sales?history=active")).sales[0].status, "submitted");
+
+  const edited = await write(token, path + "/submit", { lines: [coffee(3)] }, 200);
+  assert.equal(edited.lines[0].quantity, 3);
+  assert.equal(edited.lines[0].status, "submitted");
+  const paid = await write(token, path + "/checkout", {
+    revision: edited.revision,
+    expected_total_minor: edited.total_minor,
+    payments: [cashPayment(edited.total_minor)],
+  }, 200);
+  assert.equal(paid.id, id);
+  assert.equal(paid.status, "paid");
+  assert.equal(paid.lines[0].status, "paid");
+
+  const discardedPath = `/sales/${randomUUID()}`;
+  const discarded = await write(token, discardedPath + "/submit", {
+    ...input,
+    expected_context: { business_date: "2026-01-14", working_day_id: null, shift_id: null },
+  });
+  assert.equal(discarded.business_date, "2026-01-14");
+  const cancelled = await write(token, discardedPath + "/cancel", {
+    revision: discarded.revision, reason: "Customer cancelled",
+  }, 200);
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(cancelled.lines[0].status, "cancelled");
+});
+
 test("active sales history pages current shift activity and carries open bills forward", async () => {
   const profile = await newProfile("Sales history", {
     working_day_enabled: false,

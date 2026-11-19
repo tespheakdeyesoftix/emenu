@@ -56,7 +56,7 @@ const savedLineColumns = `${lineColumns} base_price_override_minor is_free`;
 const paymentColumns = `id line_number payment_type_id payment_type_name payment_kind currency
   entry_type amount_minor reference reverses_payment_id`;
 const reversalId = "(SELECT r.id FROM sales r WHERE r.reverses_sale_id=s.id)";
-const lineJson = jsonRow("l", `${lineColumns} ${calculatedAmounts}`, {
+const lineJson = jsonRow("l", `${lineColumns} ${calculatedAmounts} status`, {
   modifiers: "json(l.modifiers_json)",
   base_price_override_minor: "l.base_price_override_minor",
   is_free: "json(CASE WHEN l.is_free=1 THEN 'true' ELSE 'false' END)",
@@ -74,9 +74,10 @@ const resultOf = (id: string) => ({
   params: [id],
 });
 
+const saleStatuses = ["open", "submitted", "paid", "cancelled"] as const;
 type Sale = {
   id: string;
-  status: "open" | "paid" | "cancelled";
+  status: typeof saleStatuses[number];
   revision: number;
   working_day_id: string | null;
   reverses_sale_id: string | null;
@@ -139,7 +140,7 @@ export async function readBusinessSales(db: D1Database, url: URL, businessId: st
   const status = url.searchParams.get("status");
   const date = url.searchParams.get("business_date");
   if (status !== null) {
-    choice(status, "status", ["open", "paid", "cancelled"] as const);
+    choice(status, "status", saleStatuses);
     filters.push("s.status=?");
     values.push(status);
   }
@@ -164,9 +165,9 @@ export async function readSellingOverview(db: D1Database, businessId: string, da
   const { results } = await sql(db, `
     SELECT currency,
       COUNT(CASE WHEN status='paid' AND reverses_sale_id IS NULL THEN 1 END) AS completed_count,
-      COUNT(CASE WHEN status='open' THEN 1 END) AS open_count,
+      COUNT(CASE WHEN status IN ('open','submitted') THEN 1 END) AS open_count,
       SUM(CASE WHEN status='paid' THEN total_minor ELSE 0 END) AS net_minor
-    FROM sales WHERE business_id=? AND (status='open' OR (status='paid' AND business_date=?))
+    FROM sales WHERE business_id=? AND (status IN ('open','submitted') OR (status='paid' AND business_date=?))
     GROUP BY currency ORDER BY currency
   `, businessId, date).all();
   return respond({ business_date: date, currencies: results });
@@ -206,7 +207,7 @@ export async function readSales(context: PosContext, url: URL, id?: string) {
     const value = url.searchParams.get(field);
     if (value === null) continue;
     if (field === "status")
-      choice(value, "status", ["open", "paid", "cancelled"] as const);
+      choice(value, "status", saleStatuses);
     else if (field === "business_date") validateBusinessDate(value);
     else recordId(value, field);
     filters.push(`s.${field}=?`);
@@ -249,7 +250,7 @@ async function readActiveSales(context: PosContext, url: URL) {
     SELECT ${columns},${reversalId} AS reversed_by_sale_id,
       (SELECT COALESCE(SUM(l.quantity),0) FROM sale_products l WHERE l.sale_id=s.id) AS item_quantity
     FROM sales s WHERE s.business_id=? AND s.profile_id=? AND ? IS NOT NULL
-      AND (s.status='open' OR (s.status='paid' AND ${paidScope}=?)
+      AND (s.status IN ('open','submitted') OR (s.status='paid' AND ${paidScope}=?)
         OR (s.status='cancelled' AND julianday(s.updated_at)>=julianday(?)
             AND julianday(s.updated_at)<=julianday(?)))
     ORDER BY CASE s.status WHEN 'paid' THEN COALESCE(s.settled_at,s.created_at)
@@ -322,14 +323,14 @@ async function chooseCustomer(
 function openSaleGuard(guard: Guard, sale: Sale, revision: number): Guard {
   return {
     ...guard,
-    query: `${guard.query} AND EXISTS (SELECT 1 FROM sales WHERE id=? AND status='open' AND revision=?)`,
+    query: `${guard.query} AND EXISTS (SELECT 1 FROM sales WHERE id=? AND status IN ('open','submitted') AND revision=?)`,
     params: [...guard.params, sale.id, revision],
   };
 }
 
 function assertRevision(sale: Sale, body: Record<string, unknown>) {
   const revision = integer(body.revision, "revision", 1);
-  if (sale.status !== "open")
+  if (sale.status !== "open" && sale.status !== "submitted")
     conflict("This bill is no longer open", "BILL_CLOSED");
   if (revision !== sale.revision)
     conflict("Refresh the bill and use its current revision", "BILL_CHANGED");
@@ -368,14 +369,22 @@ export async function saveSale(
   context: PosContext,
   command: Command,
   id?: string,
+  submit = false,
 ) {
   const { db, identity, profile, config, now } = context;
   const actor = identity.user_id;
   const body = command.body;
   const existing = id ? await findSale(context, id) : null;
-  if (id && !existing) missing("Sale");
-  const revision = existing ? assertRevision(existing, body) : 1;
+  if (id && !existing && !submit) missing("Sale");
+  const revision = existing
+    ? assertRevision(existing, submit ? { revision: existing.revision } : body)
+    : 1;
   const operating = await operatingContext(context);
+  if (submit && !operating.day && !operating.shift && body.expected_context !== undefined) {
+    const submittedDate = string(object(body.expected_context).business_date, "business_date", 10);
+    validateBusinessDate(submittedDate);
+    if (submittedDate <= operating.businessDate) operating.businessDate = submittedDate;
+  }
   assertExpectedContext(body, operating);
   const { day, shift, businessDate } = operating;
   const receiptData = existing ? object(JSON.parse(existing.receipt_json)) : {};
@@ -448,9 +457,10 @@ export async function saveSale(
     writes.push(
       sql(
         db,
-        `UPDATE sales SET table_id=?,table_code=?,table_label=?,guest_cover=?,customer_id=?,customer_name=?,note=?,business_date=?,receipt_json=?,
+        `UPDATE sales SET status=?,table_id=?,table_code=?,table_label=?,guest_cover=?,customer_id=?,customer_name=?,note=?,business_date=?,receipt_json=?,
       ${amountColumns.map((column) => `${column}=COALESCE(?,${column})`).join(",")},
       revision=revision+1,updated_at=?,updated_by=? WHERE id=?`,
+        submit ? "submitted" : existing.status,
         table.id,
         table.code,
         table.label,
@@ -481,12 +491,13 @@ export async function saveSale(
         `INSERT INTO sales (id,business_id,branch_id,profile_id,working_day_id,status,business_date,
       currency,secondary_exchange_rate,tax_mode,tax_rate_bps,tax_rule_json,${amountColumns.join(",")},table_id,table_code,
       table_label,guest_cover,customer_id,customer_name,receipt_json,note,created_at,created_by,updated_at,updated_by)
-      VALUES (?,?,?,?,?,'open',?,?,?,?,?,?,${amountInserts},?,?,?,?,?,?,?,?,?,?,?,?)`,
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,${amountInserts},?,?,?,?,?,?,?,?,?,?,?,?)`,
         sale,
         identity.business_id,
         profile.branch_id,
         profile.id,
         day?.id ?? null,
+        submit ? "submitted" : "open",
         postingDate,
         currency,
         String(identity.secondary_exchange_rate),
@@ -666,6 +677,7 @@ export async function importStoreSale(
   context: PosContext,
   command: Command,
   types: PaymentType[],
+  status: "paid" | "submitted" = "paid",
 ) {
   const { db, identity, profile, now } = context;
   const body = command.body;
@@ -765,7 +777,7 @@ export async function importStoreSale(
   if (amounts.total_minor > MAX_AMOUNT || amounts.total_minor !== body.total_minor) {
     invalid("The saved total must match the lines");
   }
-  const entries = salePayments(body.payments, types, {
+  const entries = status === "submitted" ? [] : salePayments(body.payments, types, {
     currency,
     secondary_exchange_rate: rate,
     total_minor: amounts.total_minor,
@@ -808,6 +820,9 @@ export async function importStoreSale(
     SELECT 1 FROM pos_customers WHERE id=? AND business_id<>?
   ) AND NOT EXISTS (
     SELECT 1 FROM products WHERE id IN (SELECT value FROM json_each(?)) AND business_id<>?
+  ) AND NOT EXISTS (
+    SELECT 1 FROM sales WHERE id=?
+      AND (business_id<>? OR profile_id<>? OR status<>'submitted' OR working_day_id IS NOT ?)
   )`;
   guard.params.push(
     table,
@@ -817,6 +832,10 @@ export async function importStoreSale(
     identity.business_id,
     JSON.stringify(lines.map((line) => line.product_id)),
     identity.business_id,
+    id,
+    identity.business_id,
+    profile.id,
+    day?.id ?? null,
   );
   return command.commit(
     201,
@@ -828,13 +847,21 @@ export async function importStoreSale(
         currency,secondary_exchange_rate,tax_mode,tax_rate_bps,tax_rule_json,${amountColumns.join(",")},
         table_id,table_code,table_label,guest_cover,customer_id,customer_name,receipt_json,
         created_at,created_by,updated_at,updated_by,settled_at,settled_by)
-        VALUES (?,?,?,?,?,?,'paid',?,?,?,?,?,?,${amountInserts},?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,${amountInserts},?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET status=excluded.status,revision=sales.revision+1,
+          shift_id=excluded.shift_id,business_date=excluded.business_date,
+          ${amountColumns.map((column) => `${column}=excluded.${column}`).join(",")},
+          table_id=excluded.table_id,table_code=excluded.table_code,table_label=excluded.table_label,
+          guest_cover=excluded.guest_cover,customer_id=excluded.customer_id,customer_name=excluded.customer_name,
+          receipt_json=excluded.receipt_json,updated_at=excluded.updated_at,updated_by=excluded.updated_by,
+          settled_at=excluded.settled_at,settled_by=excluded.settled_by`,
         id,
         identity.business_id,
         profile.branch_id,
         profile.id,
         day?.id ?? null,
-        shift?.id ?? null,
+        status === "paid" ? shift?.id ?? null : null,
+        status,
         postingDate,
         currency,
         rate,
@@ -853,9 +880,10 @@ export async function importStoreSale(
         identity.user_id,
         now,
         identity.user_id,
-        now,
-        identity.user_id,
+        status === "paid" ? now : null,
+        status === "paid" ? identity.user_id : null,
       ),
+      sql(db, "DELETE FROM sale_products WHERE sale_id=?", id),
       sql(
         db,
         `INSERT INTO sale_products (sale_id,${savedLineColumns.replaceAll(/\s+/g, ",")},modifiers_json)
@@ -867,8 +895,7 @@ export async function importStoreSale(
         id,
         JSON.stringify(lines),
       ),
-      insertSalePayments(db, id, entries),
-      ...updateShiftActivity(context, shift),
+      ...(status === "paid" ? [insertSalePayments(db, id, entries), ...updateShiftActivity(context, shift)] : []),
     ],
     resultOf(id),
   );
@@ -978,7 +1005,9 @@ export async function saleAction(
   const sale = await findSale(context, id);
   if (!sale) missing("Sale");
   if (action === "reverse") return reverse(context, command, sale);
-  const revision = assertRevision(sale, command.body);
+  const revision = assertRevision(sale, context.storeImport && action === "cancel"
+    ? { revision: sale.revision }
+    : command.body);
   if (action === "checkout") return checkout(context, command, sale, revision);
   const reason = string(command.body.reason, "reason", 500);
   const guard = openSaleGuard(

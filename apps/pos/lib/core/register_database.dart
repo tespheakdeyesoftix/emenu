@@ -205,6 +205,20 @@ class ReceiptPrints extends Table {
   DateTimeColumn get sentAt => dateTime()();
 }
 
+class SubmittedOrderJobs extends Table {
+  IntColumn get sequence => integer().autoIncrement()();
+  TextColumn get commandId => text().unique()();
+  TextColumn get saleId => text()();
+  TextColumn get profileId => text()();
+  TextColumn get operatorId => text()();
+  BoolColumn get cancel => boolean()();
+  TextColumn get payload => text()();
+  TextColumn get status => text().withDefault(const Constant('pending'))();
+  IntColumn get attempts => integer().withDefault(const Constant(0))();
+  DateTimeColumn get retryAt => dateTime()();
+  TextColumn get lastError => text().nullable()();
+}
+
 class StoreOperatingStates extends Table {
   IntColumn get id => integer().withDefault(const Constant(1))();
   TextColumn get epoch => text()();
@@ -257,6 +271,7 @@ class StoreOperatingEvents extends Table {
     StoreStaffGrants,
     TillCommands,
     ReceiptPrints,
+    SubmittedOrderJobs,
     StoreOperatingStates,
     StoreOperatingEvents,
   ],
@@ -268,11 +283,12 @@ class RegisterDatabase extends _$RegisterDatabase {
       RegisterDatabase(NativeDatabase.createInBackground(file));
 
   @override
-  int get schemaVersion => 15;
+  int get schemaVersion => 16;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onUpgrade: (migrator, from, to) async {
+      if (from < 16) await migrator.createTable(submittedOrderJobs);
       if (from < 13) await migrator.createTable(registerUiPreferences);
       if (from < 14) await migrator.createTable(discardedBills);
       if (from >= 13 && from < 15) {
@@ -1214,6 +1230,76 @@ class RegisterDatabase extends _$RegisterDatabase {
     }
   }
 
+  Future<void> queueSubmittedOrder({
+    required String commandId,
+    required String saleId,
+    required String profileId,
+    required String operatorId,
+    required Json payload,
+    bool cancel = false,
+  }) => into(submittedOrderJobs).insert(
+    SubmittedOrderJobsCompanion.insert(
+      commandId: commandId,
+      saleId: saleId,
+      profileId: profileId,
+      operatorId: operatorId,
+      cancel: cancel,
+      payload: jsonEncode(payload),
+      retryAt: DateTime.now().toUtc(),
+    ),
+  );
+
+  Future<SubmittedOrderJob?> nextSubmittedOrder() =>
+      (select(submittedOrderJobs)
+            ..where((row) => row.status.equals('pending'))
+            ..orderBy([(row) => OrderingTerm.asc(row.sequence)])
+            ..limit(1))
+          .getSingleOrNull();
+
+  Future<bool> submittedOrderPrecedesSale(
+    SubmittedOrderJob submitted,
+    SaleOutboxData paid,
+  ) async {
+    // Both enqueues and their command log entry commit in the same transaction.
+    // Payments saved by older versions already precede the new order queue.
+    final row = await customSelect(
+      r'''SELECT COALESCE((
+        SELECT ordered.rowid < settled.rowid
+        FROM register_commands ordered, register_commands settled, local_sales sale
+        WHERE ordered.id=? AND sale.id=?
+          AND settled.id=json_extract(sale.request, '$.register_command_id')
+      ), 0) AS first''',
+      variables: [Variable(submitted.commandId), Variable(paid.saleId)],
+      readsFrom: {registerCommands, localSales},
+    ).getSingle();
+    return row.read<int>('first') == 1;
+  }
+
+  Future<void> acknowledgeSubmittedOrder(SubmittedOrderJob job) =>
+      (delete(submittedOrderJobs)..where(
+            (row) =>
+                row.saleId.equals(job.saleId) &
+                row.profileId.equals(job.profileId) &
+                row.sequence.isSmallerOrEqualValue(job.sequence),
+          ))
+          .go();
+
+  Future<void> failSubmittedOrder(
+    SubmittedOrderJob job,
+    PosApiError error,
+    DateTime? retryAt,
+  ) =>
+      (update(
+        submittedOrderJobs,
+      )..where((row) => row.sequence.equals(job.sequence))).write(
+        SubmittedOrderJobsCompanion(
+          status: Value(retryAt == null ? 'attention' : 'pending'),
+          attempts: Value(job.attempts + 1),
+          retryAt: retryAt == null ? const Value.absent() : Value(retryAt),
+          lastError: Value(error.code),
+        ),
+      );
+
   Future<SaleOutboxData?> nextJob() =>
       (select(saleOutbox)
             ..where((row) => row.status.equals('pending'))
@@ -1235,13 +1321,20 @@ class RegisterDatabase extends _$RegisterDatabase {
         JOIN sale_outbox job ON job.sale_id = sale.id
         WHERE sale.profile_id = ? AND job.status != 'synced'
           AND json_extract(sale.request, ?) = ?
+      ) OR EXISTS(
+        SELECT 1 FROM submitted_order_jobs
+        WHERE profile_id = ?
+          AND json_extract(payload, ?) = ?
       ) AS has_unsynced''',
       variables: [
         Variable(profile),
         Variable('\$.draft.expected_context.$contextKey'),
         Variable(id),
+        Variable(profile),
+        Variable('\$.expected_context.$contextKey'),
+        Variable(id),
       ],
-      readsFrom: {localSales, saleOutbox},
+      readsFrom: {localSales, saleOutbox, submittedOrderJobs},
     ).getSingle();
     return row.read<int>('has_unsynced') == 1;
   }
@@ -1263,10 +1356,11 @@ class RegisterDatabase extends _$RegisterDatabase {
 
   Future<bool> hasUnsentSales() async =>
       await (select(saleOutbox)
-            ..where((row) => row.status.equals('synced').not())
-            ..limit(1))
-          .getSingleOrNull() !=
-      null;
+                ..where((row) => row.status.equals('synced').not())
+                ..limit(1))
+              .getSingleOrNull() !=
+          null ||
+      await (select(submittedOrderJobs)..limit(1)).getSingleOrNull() != null;
 
   Stream<List<(LocalSale, SaleOutboxData)>> watchSales({String? profileId}) {
     final query =
@@ -1287,7 +1381,14 @@ class RegisterDatabase extends _$RegisterDatabase {
   Stream<RegisterHistory> watchSalesHistory(RegisterHistoryScope scope) =>
       customSelect(
         'SELECT 1',
-        readsFrom: {localSales, saleOutbox, heldBills, discardedBills},
+        readsFrom: {
+          localSales,
+          saleOutbox,
+          heldBills,
+          discardedBills,
+          submittedOrderJobs,
+          storeOperatingEvents,
+        },
       ).watch().asyncMap((_) => salesHistory(scope));
 
   Future<RegisterHistory> salesHistory(
@@ -1354,6 +1455,21 @@ class RegisterDatabase extends _$RegisterDatabase {
                   field.equals(scope.id);
             }))
             .get();
+    final orderJobs =
+        await (select(submittedOrderJobs)
+              ..where((row) => row.profileId.equals(scope.profileId))
+              ..orderBy([(row) => OrderingTerm.asc(row.sequence)]))
+            .get();
+    final orderEvents =
+        await (select(storeOperatingEvents)
+              ..where(
+                (row) =>
+                    row.profileId.equals(scope.profileId) &
+                    row.kind.isIn(['submit_sale', 'cancel_sale']) &
+                    row.status.equals('synced').not(),
+              )
+              ..orderBy([(row) => OrderingTerm.asc(row.sequence)]))
+            .get();
     return RegisterHistory(
       sales: [
         for (final row in rows)
@@ -1366,6 +1482,10 @@ class RegisterDatabase extends _$RegisterDatabase {
           row.read(localSales.reversesSaleId)!: row.read(saleOutbox.status)!,
       },
       knownServerDraftIds: {for (final row in draftRows) row.read(draftId)!},
+      orderSyncStatuses: {
+        for (final row in orderEvents) row.resourceId: row.status,
+        for (final row in orderJobs) row.saleId: row.status,
+      },
     );
   });
 
@@ -1439,6 +1559,25 @@ class RegisterDatabase extends _$RegisterDatabase {
       ],
       updates: {saleOutbox},
     );
+    if (profile != null) {
+      await (update(submittedOrderJobs)..where(
+            (row) =>
+                row.operatorId.equals(operatorId) &
+                row.profileId.equals(profile) &
+                row.status.equals('attention') &
+                row.lastError.isIn([
+                  'SIGN_IN_REQUIRED',
+                  'PROFILE_ACCESS_REVOKED',
+                ]),
+          ))
+          .write(
+            SubmittedOrderJobsCompanion(
+              status: const Value('pending'),
+              retryAt: Value(now),
+              lastError: const Value(null),
+            ),
+          );
+    }
     await (update(storeOperatingEvents)..where(
           (row) =>
               row.operatorId.equals(operatorId) &
@@ -1466,6 +1605,7 @@ class RegisterHistory {
     this.discarded = const [],
     this.reversalStatuses = const {},
     this.knownServerDraftIds = const {},
+    this.orderSyncStatuses = const {},
   });
 
   final List<(LocalSale, SaleOutboxData)> sales;
@@ -1473,6 +1613,7 @@ class RegisterHistory {
   final List<DiscardedBill> discarded;
   final Map<String, String> reversalStatuses;
   final Set<String> knownServerDraftIds;
+  final Map<String, String> orderSyncStatuses;
 
   factory RegisterHistory.fromJson(Json data) => RegisterHistory(
     sales: jsonRows(data['sales'])
@@ -1489,6 +1630,9 @@ class RegisterHistory {
       data['reversal_statuses'] as Map,
     ),
     knownServerDraftIds: Set<String>.from(data['server_draft_ids'] as List),
+    orderSyncStatuses: Map<String, String>.from(
+      data['order_sync_statuses'] as Map? ?? const {},
+    ),
   );
 
   Json toJson() => {
@@ -1500,6 +1644,7 @@ class RegisterHistory {
     'discarded': discarded.map((row) => row.toJson()).toList(),
     'reversal_statuses': reversalStatuses,
     'server_draft_ids': knownServerDraftIds.toList(),
+    'order_sync_statuses': orderSyncStatuses,
   };
 }
 

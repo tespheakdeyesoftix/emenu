@@ -189,6 +189,7 @@
     "customer": "Customer",
     "noSales": "No POS sales match these filters.",
     "statuses": {
+      "submitted": "Submitted",
       "open": "Open",
       "paid": "Paid",
       "cancelled": "Cancelled",

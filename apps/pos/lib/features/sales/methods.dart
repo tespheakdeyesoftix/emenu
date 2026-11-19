@@ -40,6 +40,22 @@ extension SaleMethods on SaleController {
     if (context.mounted && payments != null) await service.checkout(payments);
   }
 
+  Future<void> submitOrder(BuildContext context) async {
+    if (_confirmingSubmit || !service.canSubmit) return;
+    final generation = service.billGeneration;
+    _confirmingSubmit = true;
+    try {
+      if (await app.onConfirm('cart_submit_confirm'.tr) &&
+          context.mounted &&
+          !isClosed &&
+          generation == service.billGeneration) {
+        if (await service.submitOrder()) selectedLine.value = null;
+      }
+    } finally {
+      _confirmingSubmit = false;
+    }
+  }
+
   Future<void> discardDraft(BuildContext context) async {
     if (await confirmDiscard(context, 'discard_draft') && context.mounted) {
       await service.discardCart();

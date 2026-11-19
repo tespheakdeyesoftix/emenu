@@ -367,6 +367,12 @@ class RegisterOperating {
     await _append('reversal', id, id, payload);
   }
 
+  Future<void> submitSale(String commandId, String saleId, Json payload) =>
+      _append('submit_sale', commandId, saleId, payload);
+
+  Future<void> cancelSale(String commandId, String saleId, Json payload) =>
+      _append('cancel_sale', commandId, saleId, payload);
+
   static List<Json> savedCheckoutPayments(Json payload) {
     final types = {
       for (final type in jsonRows(payload['payment_types'])) type['id']: type,

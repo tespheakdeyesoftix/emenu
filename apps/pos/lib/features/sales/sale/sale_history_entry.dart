@@ -31,6 +31,7 @@ class SaleHistoryEntry {
     this.bill,
     this.sale,
     this.sync,
+    this.orderSyncStatus,
     this.reversalStatus,
     this.carryover = false,
     this.serverOnly = false,
@@ -50,6 +51,7 @@ class SaleHistoryEntry {
   final HeldBill? bill;
   final LocalSale? sale;
   final SaleOutboxData? sync;
+  final String? orderSyncStatus;
   final String? reversalStatus;
   final bool carryover;
   final bool serverOnly;
@@ -120,6 +122,9 @@ List<SaleHistoryEntry> buildSalesHistory(
         ),
         data: saved,
         bill: bill,
+        orderSyncStatus: saved['status'] == 'submitted'
+            ? local.orderSyncStatuses[bill.id] ?? 'synced'
+            : null,
       ),
     );
     hosted.remove(bill.id);
@@ -194,12 +199,15 @@ List<SaleHistoryEntry> buildSalesHistory(
         customer: saved['customer_name'] as String?,
         operatorName: bill.operatorName,
         data: saved,
+        orderSyncStatus: saved['status'] == 'submitted'
+            ? local.orderSyncStatuses[bill.billId] ?? 'synced'
+            : null,
       ),
     );
   }
 
   for (final row in hosted.values) {
-    final open = row['status'] == 'open';
+    final open = const ['open', 'submitted'].contains(row['status']);
     if (open && local.knownServerDraftIds.contains(row['id'])) continue;
     final carryover =
         open &&

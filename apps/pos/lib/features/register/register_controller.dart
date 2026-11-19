@@ -374,6 +374,7 @@ class RegisterController extends GetxController implements SalesRegister {
     try {
       if (network.isTill) {
         if (!busy.value && commandPending.value) {
+          final pending = await database.tillCommand(active.id);
           final resumed = await network.retry(active.id);
           if ((resumed == null || resumed.consumesCart) &&
               identical(operator.value, active)) {
@@ -381,8 +382,17 @@ class RegisterController extends GetxController implements SalesRegister {
           }
           if (identical(operator.value, active)) {
             commandPending.value = false;
+            if (resumed == RegisterAction.hold && tableMode == 'required') {
+              tab.value = tablesTab;
+            }
             message.value = switch (resumed) {
-              RegisterAction.hold => 'BILL_HELD',
+              RegisterAction.hold => switch (pending == null
+                  ? null
+                  : jsonObjectFromString(pending.payload)['table_status']) {
+                'occupied' => 'ORDER_SAVED',
+                'bill_requested' => 'BILL_REQUESTED',
+                _ => 'BILL_HELD',
+              },
               RegisterAction.checkout => 'SAVED',
               RegisterAction.reverseSale => 'REVERSAL_SAVED',
               _ => message.value,

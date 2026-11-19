@@ -3,6 +3,10 @@ import 'package:get/get.dart';
 class PosTranslations extends Translations {
   static const _labels = <String, (String, String)>{
     'cart_submit': ('បញ្ជូន', 'Submit'),
+    'cart_submit_confirm': (
+      'តើអ្នកប្រាកដថាចង់បញ្ជូនការបញ្ជាទិញនេះមែនទេ?',
+      'Are you sure you want to submit this order?',
+    ),
     'catalog_width': ('ទទឹងកាតាឡុក', 'Catalog width'),
     'catalog_width_help': (
       'ពី 160 ដល់ 360 px សម្រាប់ម៉ឺនុយខាងឆ្វេង។',
@@ -34,6 +38,7 @@ class PosTranslations extends Translations {
       'Default menu unavailable. Check the POS profile, then choose Reload menu.',
     ),
     'cancel': ('បោះបង់', 'Cancel'),
+    'confirm': ('បញ្ជាក់', 'Confirm'),
     'sell_screen_settings': ('ការកំណត់អេក្រង់លក់', 'Sell screen settings'),
     'sell_screen_layout': ('ប្លង់អេក្រង់លក់', 'Sell screen layout'),
     'menu_top': ('ម៉ឺនុយនៅខាងលើ', 'Menu top'),
@@ -55,6 +60,8 @@ class PosTranslations extends Translations {
     'catalog_up': ('ថតមេ', 'Up one folder'),
     'catalog_menus': ('ម៉ឺនុយ', 'Menus'),
     'catalog_categories': ('ប្រភេទ', 'Categories'),
+    'catalog_image_top': ('រូបភាពនៅខាងលើ', 'Image top'),
+    'catalog_image_left': ('រូបភាពនៅខាងឆ្វេង', 'Image left'),
     'catalog_empty': ('គ្មានផលិតផល', 'No products'),
     'catalog_empty_detail': (
       'បើកថតផ្សេង ឬផ្លាស់ប្តូរពាក្យស្វែងរក។',

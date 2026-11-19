@@ -17,6 +17,7 @@ import 'package:emenu_pos/features/sales/sale_controller.dart';
 import 'package:emenu_pos/features/sales/sale_screen.dart';
 import 'package:emenu_pos/shared/app_theme.dart';
 import 'package:emenu_pos/shared/loading_dialog_widget.dart';
+import 'package:emenu_pos/shared/network_cached_image_widget.dart';
 import 'package:emenu_pos/ui/translations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -244,6 +245,38 @@ void main() {
     expect(productCount(), 100);
     await scrollToEnd();
     expect(productCount(), 100);
+  });
+
+  testWidgets('product card layout changes and keeps the card tappable', (
+    tester,
+  ) async {
+    controller.openSection('drinks');
+    await mount(tester, scale: 1.4);
+    final card = find.byKey(const ValueKey('catalog-product-tea'));
+    final image = find.descendant(
+      of: card,
+      matching: find.byType(NetworkCachedImageWidget),
+    );
+    final name = find.descendant(of: card, matching: find.text('Tea'));
+    expect(tester.getRect(image).bottom, lessThan(tester.getRect(name).top));
+
+    await tester.tap(find.byTooltip('Image left'));
+    await tester.pumpAndSettle();
+    expect(tester.getRect(image).right, lessThan(tester.getRect(name).left));
+    expect(controller.section.value, 'drinks');
+
+    tester.view.physicalSize = const Size(390, 820);
+    await tester.pumpAndSettle();
+    expect(tester.getRect(image).right, lessThan(tester.getRect(name).left));
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(card);
+    await tester.pumpAndSettle();
+    expect(service.cart.single.product['id'], 'tea');
+
+    await tester.tap(find.byTooltip('Image top'));
+    await tester.pumpAndSettle();
+    expect(tester.getRect(image).bottom, lessThan(tester.getRect(name).top));
   });
 
   Json multipleMenus() {

@@ -157,6 +157,10 @@ abstract final class ApiEndpoint {
 
   static String saleById(String id) => sale.replaceFirst('{id}', id);
 
+  static String submitSaleFor(String id) => '${saleById(id)}/submit';
+
+  static String cancelSaleFor(String id) => '${saleById(id)}/cancel';
+
   /// POST: Fully reverse a sale. Uses idempotency.
   /// Path example: `/sales/sale-id/reverse`.
   ///

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:emenu_pos/shared/app_theme.dart';
 import 'package:drift/native.dart';
 import 'package:emenu_pos/core/pos_api.dart';
+import 'package:emenu_pos/core/register_authority.dart';
 import 'package:emenu_pos/core/register_database.dart';
 import 'package:emenu_pos/features/register/register_controller.dart';
 import 'package:emenu_pos/auths/login_binding.dart';
@@ -45,6 +46,26 @@ class _StaffRegister extends RegisterController {
   Future<Json?> setStaffUsername(String id, String input) async {
     saved = (id, input);
     return {'user_id': id, 'username': input};
+  }
+}
+
+class _SubmitRegister extends RegisterController {
+  _SubmitRegister(super.database);
+
+  final submissions = <(RegisterAction, Json)>[];
+  bool rejectSubmission = false;
+
+  @override
+  Json get operatingContext => {
+    'business_date': '2026-11-18',
+    'working_day_id': null,
+    'shift_id': null,
+  };
+
+  @override
+  Future<void> sendCommand(RegisterAction action, Json body) async {
+    submissions.add((action, body));
+    if (rejectSubmission) throw const FormatException('TABLE_OCCUPIED');
   }
 }
 
@@ -890,6 +911,86 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  for (final mode in ['required', 'optional', 'disabled']) {
+    testWidgets('Submit confirms and opens the right screen in $mode mode', (
+      tester,
+    ) async {
+      final database = RegisterDatabase(NativeDatabase.memory());
+      addTearDown(database.close);
+      addTearDown(Get.reset);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1220, 820);
+      final register = _SubmitRegister(database);
+      register.snapshot.value = _tableSnapshot(mode);
+      if (mode != 'disabled') register.selectTable('a1');
+      await tester.pumpWidget(
+        GetMaterialApp(
+          theme: AppTheme.light,
+          locale: const Locale('en'),
+          translations: PosTranslations(),
+          home: RegisterShell(register),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ProductCard, 'Coffee'));
+      await tester.pumpAndSettle();
+
+      final submit = mode == 'required'
+          ? find.byTooltip('Submit & New')
+          : find.text('Submit');
+      Future<void> openConfirmation() async {
+        await tester.tap(submit);
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Are you sure you want to submit this order?'),
+          findsOneWidget,
+        );
+      }
+
+      await openConfirmation();
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(register.submissions, isEmpty);
+      expect(register.cart, hasLength(1));
+
+      if (mode == 'optional') {
+        register.rejectSubmission = true;
+        await openConfirmation();
+        await tester.tap(find.text('Confirm'));
+        await tester.pumpAndSettle();
+        expect(register.submissions, hasLength(1));
+        expect(register.cart, hasLength(1));
+        expect(register.tableId.value, 'a1');
+        expect(find.byType(SellView), findsOneWidget);
+        register.rejectSubmission = false;
+        register.submissions.clear();
+      }
+
+      await openConfirmation();
+      expect(register.submissions, isEmpty);
+      await tester.tap(find.text('Confirm'));
+      await tester.pumpAndSettle();
+
+      final (action, body) = register.submissions.single;
+      expect(action, RegisterAction.hold);
+      expect(body['table_status'], 'occupied');
+      expect(body['table_id'], mode == 'disabled' ? null : 'a1');
+      expect(register.cart, isEmpty);
+      expect(register.tableId.value, isNull);
+      expect(register.message.value, 'ORDER_SAVED');
+      if (mode == 'required') {
+        expect(register.tab.value, RegisterController.tablesTab);
+        expect(find.byType(TablePlanView), findsOneWidget);
+      } else {
+        expect(register.tab.value, RegisterController.sellTab);
+        expect(find.byType(SellView), findsOneWidget);
+      }
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
 
   testWidgets('optional table mode opens a read-only grouped table dialog', (
     tester,

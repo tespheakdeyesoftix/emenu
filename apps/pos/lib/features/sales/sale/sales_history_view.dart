@@ -678,7 +678,9 @@ class _HistoryStatus extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final syncStatus =
-        entry.sync?.status ?? (entry.serverOnly ? 'synced' : null);
+        entry.sync?.status ??
+        entry.orderSyncStatus ??
+        (entry.serverOnly ? 'synced' : null);
     final syncIndicator = switch (syncStatus) {
       'synced' => (Icons.cloud_done_outlined, theme.colorScheme.primary),
       'pending' => (Icons.cloud_upload_outlined, theme.colorScheme.tertiary),

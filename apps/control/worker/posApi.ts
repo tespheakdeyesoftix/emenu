@@ -272,7 +272,7 @@ async function tables(context: PosContext, url: URL) {
     s.id AS open_sale_id,s.guest_cover,bk.arrival_at AS booking_arrival_at,bk.pax AS booking_pax,
     CASE WHEN s.id IS NOT NULL THEN 'occupied' WHEN bk.id IS NOT NULL THEN 'booked' ELSE 'available' END AS status
     FROM restaurant_tables t JOIN table_groups g ON g.id=t.group_id AND g.business_id=t.business_id AND g.branch_id=t.branch_id
-    LEFT JOIN sales s ON s.business_id=t.business_id AND s.profile_id=?1 AND s.table_id=t.id AND s.status='open'
+    LEFT JOIN sales s ON s.business_id=t.business_id AND s.profile_id=?1 AND s.table_id=t.id AND s.status IN ('open','submitted')
     LEFT JOIN bookings bk ON bk.id=(
       SELECT reservation.id FROM bookings reservation
       WHERE reservation.business_id=t.business_id AND reservation.branch_id=t.branch_id
@@ -507,6 +507,7 @@ export async function handlePosApi(
           staff_usernames: true,
           cart_line_edits: true,
           bill_information: true,
+          submit_orders: true,
           shift_management: true,
           customer_directory: true,
           customer_photo_upload: true,
@@ -549,7 +550,7 @@ export async function handlePosApi(
     if (!match) missing("Endpoint");
     const [, resource, id, action] = match;
     if (resource === "sales") {
-      if (action && !["checkout", "cancel", "reverse"].includes(action))
+      if (action && !["checkout", "cancel", "reverse", "submit"].includes(action))
         missing("Endpoint");
       if (request.method === "GET" && !action) {
         if (!id && url.searchParams.get("history") === "active" &&
@@ -600,6 +601,7 @@ export async function handlePosApi(
         return await writeDay(context, command, id);
       if (resource === "cashier-shifts")
         return await writeShift(context, command, id, action);
+      if (action === "submit") return await saveSale(env, deps, context, command, id, true);
       if (action) return await saleAction(context, command, id, action);
       return await saveSale(env, deps, context, command, id);
     } catch (error) {
@@ -616,7 +618,7 @@ export async function handlePosApi(
           const blocked = await sql(db, `SELECT 1 FROM working_days d
             WHERE d.business_id=? AND d.branch_id=? AND d.id=? AND d.closed_at IS NULL
               AND (EXISTS(SELECT 1 FROM cashier_shifts WHERE working_day_id=d.id AND closed_at IS NULL)
-                OR EXISTS(SELECT 1 FROM sales WHERE working_day_id=d.id AND status='open'))`,
+                OR EXISTS(SELECT 1 FROM sales WHERE working_day_id=d.id AND status IN ('open','submitted')))`,
             identity.business_id, profile.branch_id, id).first();
           if (blocked) conflict("Close the working day's shifts and bills", "WORKING_DAY_HAS_ACTIVITY");
         }

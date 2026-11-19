@@ -74,7 +74,7 @@ function ownsAuthority(
 const branchIsIdle = `
   NOT EXISTS (SELECT 1 FROM working_days WHERE business_id=?1 AND branch_id=?2 AND closed_at IS NULL)
   AND NOT EXISTS (SELECT 1 FROM cashier_shifts WHERE business_id=?1 AND branch_id=?2 AND closed_at IS NULL)
-  AND NOT EXISTS (SELECT 1 FROM sales WHERE business_id=?1 AND branch_id=?2 AND status='open')`;
+  AND NOT EXISTS (SELECT 1 FROM sales WHERE business_id=?1 AND branch_id=?2 AND status IN ('open','submitted'))`;
 
 const ownerSession = `EXISTS (
   SELECT 1 FROM pos_sessions s
@@ -346,6 +346,8 @@ async function importOperation(
     "reopen_shift",
     "cash_movement",
     "checkout",
+    "submit_sale",
+    "cancel_sale",
     "reversal",
   ] as const);
   const epoch = recordId(raw.epoch, "epoch");
@@ -434,7 +436,7 @@ async function importOperation(
       );
     }
   }
-  if (readOnly && kind !== "close_day" && kind !== "close_shift") {
+  if (readOnly && kind !== "close_day" && kind !== "close_shift" && kind !== "cancel_sale") {
     throw new PosError(
       402,
       "SUBSCRIPTION_EXPIRED",
@@ -470,6 +472,10 @@ async function importOperation(
           command,
           await savedTenderTypes(imported, body.payment_types),
         );
+      case "submit_sale":
+        return await importStoreSale(imported, command, [], "submitted");
+      case "cancel_sale":
+        return await saleAction(imported, command, resourceId, "cancel");
       case "reversal":
         return await saleAction(
           imported,

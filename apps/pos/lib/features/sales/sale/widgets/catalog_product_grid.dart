@@ -8,6 +8,7 @@ import '../../../../core/pricing.dart';
 import '../../../../helpers/helper.dart';
 import '../../../../shared/empty_state_widget.dart';
 import '../../sale_controller.dart';
+import '../sale_screen_settings.dart';
 import 'catalog_folder_card.dart';
 import 'product_card.dart';
 
@@ -34,6 +35,7 @@ class CatalogProductGrid extends GetView<SaleController> {
     return _PagedCatalogGrid(
       key: ValueKey(scope),
       controller: controller,
+      layout: controller.productCardLayout.value,
       folders: folders,
       products: products,
       emptyProducts: emptyProducts,
@@ -46,6 +48,7 @@ class _PagedCatalogGrid extends StatefulWidget {
   const _PagedCatalogGrid({
     super.key,
     required this.controller,
+    required this.layout,
     required this.folders,
     required this.products,
     required this.emptyProducts,
@@ -53,6 +56,7 @@ class _PagedCatalogGrid extends StatefulWidget {
   });
 
   final SaleController controller;
+  final ProductCardLayout layout;
   final List<Json> folders;
   final List<Json> products;
   final Widget? emptyProducts;
@@ -98,10 +102,31 @@ class _PagedCatalogGridState extends State<_PagedCatalogGrid> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) =>
+        _buildGrid(context, constraints.maxWidth),
+  );
+
+  Widget _buildGrid(BuildContext context, double width) {
     final folders = widget.folders;
     final products = widget.products;
     final controller = widget.controller;
+    const gap = 8.0;
+    final extent = ProductCard.gridExtent(context, widget.layout);
+    final delegate = switch (widget.layout) {
+      ProductCardLayout.imageTop => SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 208,
+        mainAxisExtent: extent,
+        crossAxisSpacing: gap,
+        mainAxisSpacing: gap,
+      ),
+      ProductCardLayout.imageLeft => SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: max(1, ((width + gap) / 240).floor()),
+        mainAxisExtent: extent,
+        crossAxisSpacing: gap,
+        mainAxisSpacing: gap,
+      ),
+    };
     return NotificationListener<ScrollMetricsNotification>(
       onNotification: (notification) {
         // A large viewport can fit the first batch without a way to scroll.
@@ -139,17 +164,13 @@ class _PagedCatalogGridState extends State<_PagedCatalogGrid> {
             const SliverToBoxAdapter(child: SizedBox(height: 8)),
           if (products.isNotEmpty)
             SliverGrid.builder(
-              gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 208,
-                mainAxisExtent: ProductCard.gridExtent(context),
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-              ),
+              gridDelegate: delegate,
               itemCount: min(_limit, products.length),
               itemBuilder: (context, index) {
                 final product = products[index];
                 return ProductCard(
                   key: ValueKey('catalog-product-${product['id']}'),
+                  layout: widget.layout,
                   name: catalogLabel(product),
                   code: product['code']?.toString(),
                   imageUrl: product['image_url']?.toString(),

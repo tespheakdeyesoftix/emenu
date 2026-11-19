@@ -408,7 +408,7 @@ export type Guard = {
 export const idleProfile = `NOT EXISTS (
     SELECT 1 FROM cashier_shifts shift WHERE shift.profile_id=pos_profiles.id AND shift.closed_at IS NULL
   ) AND NOT EXISTS (
-    SELECT 1 FROM sales sale WHERE sale.profile_id=pos_profiles.id AND sale.status='open'
+    SELECT 1 FROM sales sale WHERE sale.profile_id=pos_profiles.id AND sale.status IN ('open','submitted')
   )`;
 
 export function promoteProfile(context: PosContext) {

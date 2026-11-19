@@ -48,7 +48,17 @@ class SaleSync {
           if (!await _syncStoreEvent(event)) return;
           continue;
         }
+        final submitted = await database.nextSubmittedOrder();
         final job = await database.nextJob();
+        if (submitted != null &&
+            (job == null ||
+                await database.submittedOrderPrecedesSale(submitted, job))) {
+          if (submitted.retryAt.isAfter(DateTime.now()) ||
+              !await _syncSubmittedOrder(submitted)) {
+            return;
+          }
+          continue;
+        }
         if (job == null || job.retryAt.isAfter(DateTime.now())) return;
         try {
           await _sync(job);
@@ -83,6 +93,94 @@ class SaleSync {
     }
   }
 
+  Future<bool> _syncSubmittedOrder(SubmittedOrderJob job) async {
+    try {
+      await withOperatorSession(job.operatorId, job.profileId, (token) async {
+        final context = await api.request(ApiEndpoint.context, token: token);
+        if (jsonObject(context['profile'])['id'] != job.profileId ||
+            jsonObject(context['operator'])['id'] != job.operatorId) {
+          throw const PosApiError(
+            403,
+            'WRONG_REGISTER_SESSION',
+            'Check the register and operator.',
+          );
+        }
+        _requireOrderSubmission(context);
+        final payload = jsonObject(jsonDecode(job.payload));
+        final Json result;
+        if (job.cancel) {
+          final Json saved;
+          try {
+            saved = await api.request(
+              ApiEndpoint.saleById(job.saleId),
+              token: token,
+            );
+          } on PosApiError catch (error) {
+            if (error.status == 404) return;
+            rethrow;
+          }
+          if (saved['status'] == 'cancelled') return;
+          result = await api.request(
+            ApiEndpoint.cancelSaleFor(job.saleId),
+            method: 'POST',
+            token: token,
+            commandId: job.commandId,
+            body: {'reason': payload['reason'], 'revision': saved['revision']},
+          );
+        } else {
+          result = await api.request(
+            ApiEndpoint.submitSaleFor(job.saleId),
+            method: 'POST',
+            token: token,
+            commandId: job.commandId,
+            body: payload,
+          );
+        }
+        if (result['id'] != job.saleId ||
+            result['status'] != (job.cancel ? 'cancelled' : 'submitted')) {
+          throw const PosApiError(
+            409,
+            'BAD_SERVER_DATA',
+            'Invalid order acknowledgment.',
+          );
+        }
+      });
+      await database.acknowledgeSubmittedOrder(job);
+      return true;
+    } on PosApiError catch (error) {
+      final failure = error.status == 401
+          ? const PosApiError(
+              401,
+              'SIGN_IN_REQUIRED',
+              'Sign in with your password again.',
+            )
+          : error;
+      final retry = _retryAt(failure, job.attempts);
+      await database.failSubmittedOrder(job, failure, retry);
+      if (retry == null) onError?.call(failure);
+      return retry == null;
+    } on TypeError {
+      const failure = PosApiError(
+        400,
+        'BAD_SERVER_DATA',
+        'Check the saved order and server reply.',
+      );
+      await database.failSubmittedOrder(job, failure, null);
+      onError?.call(failure);
+      return true;
+    }
+  }
+
+  void _requireOrderSubmission(Json context) {
+    if ((context['capabilities'] as Map?)?['submit_orders'] != true) {
+      throw const PosApiError(
+        503,
+        'SERVER_UPGRADE_REQUIRED',
+        'Update the server to synchronize submitted orders.',
+      );
+    }
+  }
+
   DateTime? _retryAt(PosApiError failure, int attempts) {
     if (!failure.transient) return null;
     final delay =
@@ -102,6 +200,11 @@ class SaleSync {
         (token) async {
           final envelope = jsonObject(jsonDecode(event.envelope));
           final payload = jsonObject(envelope['payload'] ?? {});
+          if (event.kind == 'submit_sale' || event.kind == 'cancel_sale') {
+            _requireOrderSubmission(
+              await api.request(ApiEndpoint.context, token: token),
+            );
+          }
           if (event.kind == 'checkout' &&
               (payload['posting_date'] != null ||
                   (payload['table_id'] == null &&
@@ -142,6 +245,10 @@ class SaleSync {
               ? jsonObject(envelope['payload'])
               : null;
           if (result['id'] != event.resourceId ||
+              (event.kind == 'submit_sale' &&
+                  result['status'] != 'submitted') ||
+              (event.kind == 'cancel_sale' &&
+                  result['status'] != 'cancelled') ||
               (reversal != null &&
                   (result['reverses_sale_id'] != reversal['original_sale_id'] ||
                       result['total_minor'] !=
@@ -239,6 +346,8 @@ class SaleSync {
       return;
     }
     final savedDraft = jsonObject(request['draft']);
+    final submitted = request['submitted_order'] == true;
+    if (submitted) _requireOrderSubmission(context);
     if ((savedDraft['posting_date'] != null ||
             (savedDraft['table_id'] == null &&
                 savedDraft['guest_cover'] != null)) &&
@@ -251,7 +360,7 @@ class SaleSync {
     }
     final draft = job.serverDraft == null
         ? await api.request(
-            ApiEndpoint.sales,
+            submitted ? ApiEndpoint.submitSaleFor(sale.id) : ApiEndpoint.sales,
             method: 'POST',
             token: token,
             commandId: '${sale.id}_draft',

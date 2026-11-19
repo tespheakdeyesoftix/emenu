@@ -1,12 +1,15 @@
 import 'dart:convert';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
+import 'package:emenu_pos/core/api_endpoint.dart';
 import 'package:emenu_pos/core/bill_information.dart';
 import 'package:emenu_pos/core/pos_api.dart';
 import 'package:emenu_pos/core/register_authority.dart';
 import 'package:emenu_pos/core/register_database.dart';
 import 'package:emenu_pos/features/register/register_controller.dart';
 import 'package:emenu_pos/features/sales/sale/sale_service.dart';
+import 'package:emenu_pos/features/sales/sale/sale_sync.dart';
 import 'package:emenu_pos/features/sales/sale/widgets/bill_info_chip.dart';
 import 'package:emenu_pos/features/sales/sale/widgets/bill_table_chip.dart';
 import 'package:emenu_pos/features/sales/sale/widgets/cart_bill_information.dart';
@@ -16,7 +19,9 @@ import 'package:emenu_pos/ui/translations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:get/get.dart';
+import 'package:get/get.dart' hide Value;
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:timezone/data/latest_all.dart' as timezones;
 
 const product = <String, dynamic>{
@@ -318,7 +323,7 @@ void main() {
   );
 
   test(
-    'held bills and receipts keep posting date separate from operating guards',
+    'submitted orders keep their statuses, posting date and checkout identity',
     () async {
       final data = fixture(tableMode: 'disabled', day: false, shift: false);
       await seed(db, data);
@@ -348,11 +353,17 @@ void main() {
         commandId: 'hold_date',
         operatorId: 'owner',
         action: RegisterAction.hold,
-        body: body,
+        body: {...body, 'table_status': 'occupied', 'submit_order': true},
       );
       final held = (await db.select(db.heldBills).get()).single;
       final saved = jsonObject(jsonDecode(held.payload));
       expect(saved['posting_date'], '2026-11-15');
+      expect(saved['table_status'], 'occupied');
+      expect(saved['status'], 'submitted');
+      expect(jsonRows(saved['lines']).single['status'], 'submitted');
+      final queued = (await db.nextSubmittedOrder())!;
+      expect(queued.saleId, held.id);
+      expect(queued.cancel, isFalse);
       expect(
         jsonObject(saved['operating_context'])['business_date'],
         '2026-11-18',
@@ -372,6 +383,12 @@ void main() {
       );
       final sale = await db.sale(result['bill_id'] as String);
       final request = jsonObject(jsonDecode(sale.request));
+      expect(sale.id, held.id);
+      expect(request['submitted_order'], isTrue);
+      expect(
+        await db.submittedOrderPrecedesSale(queued, (await db.nextJob())!),
+        isTrue,
+      );
       expect(jsonObject(request['receipt'])['business_date'], '2026-11-15');
       final draft = jsonObject(request['draft']);
       expect(draft['posting_date'], '2026-11-15');
@@ -380,6 +397,67 @@ void main() {
         jsonObject(draft['expected_context'])['business_date'],
         '2026-11-18',
       );
+      var offline = true;
+      final commandIds = <String>[];
+      final transport = MockClient((request) async {
+        if (offline) throw http.ClientException('Offline');
+        final path = request.url.path;
+        final Json reply;
+        if (path.endsWith(ApiEndpoint.context)) {
+          reply = {
+            'profile': {'id': 'profile'},
+            'operator': {'id': 'owner'},
+            'capabilities': {
+              'bill_information': true,
+              'sale_context_guard': true,
+              'submit_orders': true,
+            },
+          };
+        } else {
+          commandIds.add(request.headers['idempotency-key']!);
+          if (path.endsWith(ApiEndpoint.submitSaleFor(held.id))) {
+            expect(
+              jsonObject(jsonDecode(request.body))['posting_date'],
+              '2026-11-15',
+            );
+            reply = {
+              'id': held.id,
+              'status': 'submitted',
+              'revision': 1,
+              'total_minor': sale.total,
+              'currency': sale.currency,
+              'secondary_exchange_rate': '4000',
+              'lines': jsonObject(jsonDecode(sale.request))['quote'],
+            };
+          } else {
+            expect(path, endsWith(ApiEndpoint.checkoutSaleFor(held.id)));
+            reply = {'id': held.id, 'status': 'paid'};
+          }
+        }
+        return http.Response(jsonEncode(reply), 200);
+      });
+      final api = PosApi('https://pos.test', client: transport);
+      final sync = SaleSync(db, api, (operatorId, profileId, send) async {
+        expect(operatorId, 'owner');
+        expect(profileId, 'profile');
+        await send('token');
+      });
+      await sync.wake();
+      expect((await db.nextSubmittedOrder())?.lastError, 'OFFLINE');
+      await db
+          .update(db.submittedOrderJobs)
+          .write(SubmittedOrderJobsCompanion(retryAt: Value(DateTime.now())));
+      offline = false;
+      await sync.wake();
+      expect(await db.nextSubmittedOrder(), isNull);
+      expect(await db.nextJob(), isNull);
+      expect(commandIds, [
+        queued.commandId,
+        '${held.id}_draft',
+        '${held.id}_checkout',
+      ]);
+      await sync.close();
+      transport.close();
     },
   );
 }

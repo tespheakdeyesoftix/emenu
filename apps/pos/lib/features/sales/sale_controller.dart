@@ -32,6 +32,7 @@ class SaleController extends GetxController {
 
   final SaleService service;
   bool? salesHistoryCards;
+  final productCardLayout = ProductCardLayout.imageTop.obs;
   final search = TextEditingController();
   final term = ''.obs;
   final section = RxnString();
@@ -43,6 +44,7 @@ class SaleController extends GetxController {
   Worker? _navigation;
   Worker? _catalogUpdates;
   String? _lastDefaultSection;
+  bool _confirmingSubmit = false;
 
   CatalogNavigation get catalogNavigation => service.catalogNavigation;
   SaleScreenSettings get screenSettings => service.screenSettings.value;

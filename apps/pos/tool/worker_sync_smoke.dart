@@ -47,7 +47,8 @@ class InterruptedCheckout extends http.BaseClient {
     }
     if (response.statusCode == 201) {
       final kind = event['kind'] as String;
-      if ((kind == 'checkout' || kind == 'reversal') && interrupted.add(kind)) {
+      if (['submit_sale', 'checkout', 'reversal'].contains(kind) &&
+          interrupted.add(kind)) {
         await response.stream.drain<void>();
         throw http.ClientException(
           'Simulated loss after the Worker recorded $kind',
@@ -385,6 +386,7 @@ Future<void> main() async {
         'bill_id': localId,
         'bill_revision': pairedBill['revision'],
         'table_status': status,
+        if (status == 'occupied') 'submit_order': true,
       });
       pairedBill = jsonRows((await counter.state(counterGrant))['bills'])
           .single;
@@ -674,7 +676,21 @@ Future<void> main() async {
         approved.add(head.commandId);
       } else if (head.lastError == 'OFFLINE' &&
           transport.interrupted.contains(head.kind) &&
-          (await database.sale(head.resourceId)).settlement == null) {
+          (!head.createsSale ||
+              (await database.sale(head.resourceId)).settlement == null)) {
+        if (head.kind == 'submit_sale') {
+          final saved = await api.request(
+            ApiEndpoint.saleById(head.resourceId),
+            token: renewedTokens[(ownerId, profile)],
+          );
+          if (saved['status'] != 'submitted' ||
+              jsonRows(saved['lines']).single['status'] != 'submitted' ||
+              jsonRows(saved['payments']).isNotEmpty) {
+            throw StateError(
+              'The offline order did not reach both tables unpaid',
+            );
+          }
+        }
         await database.retryStoreEvent();
       } else {
         throw StateError(
@@ -682,7 +698,11 @@ Future<void> main() async {
         );
       }
     }
-    if (!transport.interrupted.containsAll(['checkout', 'reversal'])) {
+    if (!transport.interrupted.containsAll([
+      'submit_sale',
+      'checkout',
+      'reversal',
+    ])) {
       throw StateError('The fixture missed a lost acknowledgment');
     }
     if (revocationToken != null && approved.isEmpty) {

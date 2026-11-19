@@ -6408,6 +6408,655 @@ class ReceiptPrintsCompanion extends UpdateCompanion<ReceiptPrint> {
   }
 }
 
+class $SubmittedOrderJobsTable extends SubmittedOrderJobs
+    with TableInfo<$SubmittedOrderJobsTable, SubmittedOrderJob> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SubmittedOrderJobsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _sequenceMeta = const VerificationMeta(
+    'sequence',
+  );
+  @override
+  late final GeneratedColumn<int> sequence = GeneratedColumn<int>(
+    'sequence',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _commandIdMeta = const VerificationMeta(
+    'commandId',
+  );
+  @override
+  late final GeneratedColumn<String> commandId = GeneratedColumn<String>(
+    'command_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways('UNIQUE'),
+  );
+  static const VerificationMeta _saleIdMeta = const VerificationMeta('saleId');
+  @override
+  late final GeneratedColumn<String> saleId = GeneratedColumn<String>(
+    'sale_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _profileIdMeta = const VerificationMeta(
+    'profileId',
+  );
+  @override
+  late final GeneratedColumn<String> profileId = GeneratedColumn<String>(
+    'profile_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _operatorIdMeta = const VerificationMeta(
+    'operatorId',
+  );
+  @override
+  late final GeneratedColumn<String> operatorId = GeneratedColumn<String>(
+    'operator_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _cancelMeta = const VerificationMeta('cancel');
+  @override
+  late final GeneratedColumn<bool> cancel = GeneratedColumn<bool>(
+    'cancel',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("cancel" IN (0, 1))',
+    ),
+  );
+  static const VerificationMeta _payloadMeta = const VerificationMeta(
+    'payload',
+  );
+  @override
+  late final GeneratedColumn<String> payload = GeneratedColumn<String>(
+    'payload',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+    'status',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('pending'),
+  );
+  static const VerificationMeta _attemptsMeta = const VerificationMeta(
+    'attempts',
+  );
+  @override
+  late final GeneratedColumn<int> attempts = GeneratedColumn<int>(
+    'attempts',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _retryAtMeta = const VerificationMeta(
+    'retryAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> retryAt = GeneratedColumn<DateTime>(
+    'retry_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _lastErrorMeta = const VerificationMeta(
+    'lastError',
+  );
+  @override
+  late final GeneratedColumn<String> lastError = GeneratedColumn<String>(
+    'last_error',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    sequence,
+    commandId,
+    saleId,
+    profileId,
+    operatorId,
+    cancel,
+    payload,
+    status,
+    attempts,
+    retryAt,
+    lastError,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'submitted_order_jobs';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<SubmittedOrderJob> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('sequence')) {
+      context.handle(
+        _sequenceMeta,
+        sequence.isAcceptableOrUnknown(data['sequence']!, _sequenceMeta),
+      );
+    }
+    if (data.containsKey('command_id')) {
+      context.handle(
+        _commandIdMeta,
+        commandId.isAcceptableOrUnknown(data['command_id']!, _commandIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_commandIdMeta);
+    }
+    if (data.containsKey('sale_id')) {
+      context.handle(
+        _saleIdMeta,
+        saleId.isAcceptableOrUnknown(data['sale_id']!, _saleIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_saleIdMeta);
+    }
+    if (data.containsKey('profile_id')) {
+      context.handle(
+        _profileIdMeta,
+        profileId.isAcceptableOrUnknown(data['profile_id']!, _profileIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_profileIdMeta);
+    }
+    if (data.containsKey('operator_id')) {
+      context.handle(
+        _operatorIdMeta,
+        operatorId.isAcceptableOrUnknown(data['operator_id']!, _operatorIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_operatorIdMeta);
+    }
+    if (data.containsKey('cancel')) {
+      context.handle(
+        _cancelMeta,
+        cancel.isAcceptableOrUnknown(data['cancel']!, _cancelMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_cancelMeta);
+    }
+    if (data.containsKey('payload')) {
+      context.handle(
+        _payloadMeta,
+        payload.isAcceptableOrUnknown(data['payload']!, _payloadMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_payloadMeta);
+    }
+    if (data.containsKey('status')) {
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
+    }
+    if (data.containsKey('attempts')) {
+      context.handle(
+        _attemptsMeta,
+        attempts.isAcceptableOrUnknown(data['attempts']!, _attemptsMeta),
+      );
+    }
+    if (data.containsKey('retry_at')) {
+      context.handle(
+        _retryAtMeta,
+        retryAt.isAcceptableOrUnknown(data['retry_at']!, _retryAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_retryAtMeta);
+    }
+    if (data.containsKey('last_error')) {
+      context.handle(
+        _lastErrorMeta,
+        lastError.isAcceptableOrUnknown(data['last_error']!, _lastErrorMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {sequence};
+  @override
+  SubmittedOrderJob map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SubmittedOrderJob(
+      sequence: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}sequence'],
+      )!,
+      commandId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}command_id'],
+      )!,
+      saleId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}sale_id'],
+      )!,
+      profileId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}profile_id'],
+      )!,
+      operatorId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}operator_id'],
+      )!,
+      cancel: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}cancel'],
+      )!,
+      payload: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}payload'],
+      )!,
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
+      attempts: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}attempts'],
+      )!,
+      retryAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}retry_at'],
+      )!,
+      lastError: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}last_error'],
+      ),
+    );
+  }
+
+  @override
+  $SubmittedOrderJobsTable createAlias(String alias) {
+    return $SubmittedOrderJobsTable(attachedDatabase, alias);
+  }
+}
+
+class SubmittedOrderJob extends DataClass
+    implements Insertable<SubmittedOrderJob> {
+  final int sequence;
+  final String commandId;
+  final String saleId;
+  final String profileId;
+  final String operatorId;
+  final bool cancel;
+  final String payload;
+  final String status;
+  final int attempts;
+  final DateTime retryAt;
+  final String? lastError;
+  const SubmittedOrderJob({
+    required this.sequence,
+    required this.commandId,
+    required this.saleId,
+    required this.profileId,
+    required this.operatorId,
+    required this.cancel,
+    required this.payload,
+    required this.status,
+    required this.attempts,
+    required this.retryAt,
+    this.lastError,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['sequence'] = Variable<int>(sequence);
+    map['command_id'] = Variable<String>(commandId);
+    map['sale_id'] = Variable<String>(saleId);
+    map['profile_id'] = Variable<String>(profileId);
+    map['operator_id'] = Variable<String>(operatorId);
+    map['cancel'] = Variable<bool>(cancel);
+    map['payload'] = Variable<String>(payload);
+    map['status'] = Variable<String>(status);
+    map['attempts'] = Variable<int>(attempts);
+    map['retry_at'] = Variable<DateTime>(retryAt);
+    if (!nullToAbsent || lastError != null) {
+      map['last_error'] = Variable<String>(lastError);
+    }
+    return map;
+  }
+
+  SubmittedOrderJobsCompanion toCompanion(bool nullToAbsent) {
+    return SubmittedOrderJobsCompanion(
+      sequence: Value(sequence),
+      commandId: Value(commandId),
+      saleId: Value(saleId),
+      profileId: Value(profileId),
+      operatorId: Value(operatorId),
+      cancel: Value(cancel),
+      payload: Value(payload),
+      status: Value(status),
+      attempts: Value(attempts),
+      retryAt: Value(retryAt),
+      lastError: lastError == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastError),
+    );
+  }
+
+  factory SubmittedOrderJob.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SubmittedOrderJob(
+      sequence: serializer.fromJson<int>(json['sequence']),
+      commandId: serializer.fromJson<String>(json['commandId']),
+      saleId: serializer.fromJson<String>(json['saleId']),
+      profileId: serializer.fromJson<String>(json['profileId']),
+      operatorId: serializer.fromJson<String>(json['operatorId']),
+      cancel: serializer.fromJson<bool>(json['cancel']),
+      payload: serializer.fromJson<String>(json['payload']),
+      status: serializer.fromJson<String>(json['status']),
+      attempts: serializer.fromJson<int>(json['attempts']),
+      retryAt: serializer.fromJson<DateTime>(json['retryAt']),
+      lastError: serializer.fromJson<String?>(json['lastError']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'sequence': serializer.toJson<int>(sequence),
+      'commandId': serializer.toJson<String>(commandId),
+      'saleId': serializer.toJson<String>(saleId),
+      'profileId': serializer.toJson<String>(profileId),
+      'operatorId': serializer.toJson<String>(operatorId),
+      'cancel': serializer.toJson<bool>(cancel),
+      'payload': serializer.toJson<String>(payload),
+      'status': serializer.toJson<String>(status),
+      'attempts': serializer.toJson<int>(attempts),
+      'retryAt': serializer.toJson<DateTime>(retryAt),
+      'lastError': serializer.toJson<String?>(lastError),
+    };
+  }
+
+  SubmittedOrderJob copyWith({
+    int? sequence,
+    String? commandId,
+    String? saleId,
+    String? profileId,
+    String? operatorId,
+    bool? cancel,
+    String? payload,
+    String? status,
+    int? attempts,
+    DateTime? retryAt,
+    Value<String?> lastError = const Value.absent(),
+  }) => SubmittedOrderJob(
+    sequence: sequence ?? this.sequence,
+    commandId: commandId ?? this.commandId,
+    saleId: saleId ?? this.saleId,
+    profileId: profileId ?? this.profileId,
+    operatorId: operatorId ?? this.operatorId,
+    cancel: cancel ?? this.cancel,
+    payload: payload ?? this.payload,
+    status: status ?? this.status,
+    attempts: attempts ?? this.attempts,
+    retryAt: retryAt ?? this.retryAt,
+    lastError: lastError.present ? lastError.value : this.lastError,
+  );
+  SubmittedOrderJob copyWithCompanion(SubmittedOrderJobsCompanion data) {
+    return SubmittedOrderJob(
+      sequence: data.sequence.present ? data.sequence.value : this.sequence,
+      commandId: data.commandId.present ? data.commandId.value : this.commandId,
+      saleId: data.saleId.present ? data.saleId.value : this.saleId,
+      profileId: data.profileId.present ? data.profileId.value : this.profileId,
+      operatorId: data.operatorId.present
+          ? data.operatorId.value
+          : this.operatorId,
+      cancel: data.cancel.present ? data.cancel.value : this.cancel,
+      payload: data.payload.present ? data.payload.value : this.payload,
+      status: data.status.present ? data.status.value : this.status,
+      attempts: data.attempts.present ? data.attempts.value : this.attempts,
+      retryAt: data.retryAt.present ? data.retryAt.value : this.retryAt,
+      lastError: data.lastError.present ? data.lastError.value : this.lastError,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SubmittedOrderJob(')
+          ..write('sequence: $sequence, ')
+          ..write('commandId: $commandId, ')
+          ..write('saleId: $saleId, ')
+          ..write('profileId: $profileId, ')
+          ..write('operatorId: $operatorId, ')
+          ..write('cancel: $cancel, ')
+          ..write('payload: $payload, ')
+          ..write('status: $status, ')
+          ..write('attempts: $attempts, ')
+          ..write('retryAt: $retryAt, ')
+          ..write('lastError: $lastError')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    sequence,
+    commandId,
+    saleId,
+    profileId,
+    operatorId,
+    cancel,
+    payload,
+    status,
+    attempts,
+    retryAt,
+    lastError,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SubmittedOrderJob &&
+          other.sequence == this.sequence &&
+          other.commandId == this.commandId &&
+          other.saleId == this.saleId &&
+          other.profileId == this.profileId &&
+          other.operatorId == this.operatorId &&
+          other.cancel == this.cancel &&
+          other.payload == this.payload &&
+          other.status == this.status &&
+          other.attempts == this.attempts &&
+          other.retryAt == this.retryAt &&
+          other.lastError == this.lastError);
+}
+
+class SubmittedOrderJobsCompanion extends UpdateCompanion<SubmittedOrderJob> {
+  final Value<int> sequence;
+  final Value<String> commandId;
+  final Value<String> saleId;
+  final Value<String> profileId;
+  final Value<String> operatorId;
+  final Value<bool> cancel;
+  final Value<String> payload;
+  final Value<String> status;
+  final Value<int> attempts;
+  final Value<DateTime> retryAt;
+  final Value<String?> lastError;
+  const SubmittedOrderJobsCompanion({
+    this.sequence = const Value.absent(),
+    this.commandId = const Value.absent(),
+    this.saleId = const Value.absent(),
+    this.profileId = const Value.absent(),
+    this.operatorId = const Value.absent(),
+    this.cancel = const Value.absent(),
+    this.payload = const Value.absent(),
+    this.status = const Value.absent(),
+    this.attempts = const Value.absent(),
+    this.retryAt = const Value.absent(),
+    this.lastError = const Value.absent(),
+  });
+  SubmittedOrderJobsCompanion.insert({
+    this.sequence = const Value.absent(),
+    required String commandId,
+    required String saleId,
+    required String profileId,
+    required String operatorId,
+    required bool cancel,
+    required String payload,
+    this.status = const Value.absent(),
+    this.attempts = const Value.absent(),
+    required DateTime retryAt,
+    this.lastError = const Value.absent(),
+  }) : commandId = Value(commandId),
+       saleId = Value(saleId),
+       profileId = Value(profileId),
+       operatorId = Value(operatorId),
+       cancel = Value(cancel),
+       payload = Value(payload),
+       retryAt = Value(retryAt);
+  static Insertable<SubmittedOrderJob> custom({
+    Expression<int>? sequence,
+    Expression<String>? commandId,
+    Expression<String>? saleId,
+    Expression<String>? profileId,
+    Expression<String>? operatorId,
+    Expression<bool>? cancel,
+    Expression<String>? payload,
+    Expression<String>? status,
+    Expression<int>? attempts,
+    Expression<DateTime>? retryAt,
+    Expression<String>? lastError,
+  }) {
+    return RawValuesInsertable({
+      if (sequence != null) 'sequence': sequence,
+      if (commandId != null) 'command_id': commandId,
+      if (saleId != null) 'sale_id': saleId,
+      if (profileId != null) 'profile_id': profileId,
+      if (operatorId != null) 'operator_id': operatorId,
+      if (cancel != null) 'cancel': cancel,
+      if (payload != null) 'payload': payload,
+      if (status != null) 'status': status,
+      if (attempts != null) 'attempts': attempts,
+      if (retryAt != null) 'retry_at': retryAt,
+      if (lastError != null) 'last_error': lastError,
+    });
+  }
+
+  SubmittedOrderJobsCompanion copyWith({
+    Value<int>? sequence,
+    Value<String>? commandId,
+    Value<String>? saleId,
+    Value<String>? profileId,
+    Value<String>? operatorId,
+    Value<bool>? cancel,
+    Value<String>? payload,
+    Value<String>? status,
+    Value<int>? attempts,
+    Value<DateTime>? retryAt,
+    Value<String?>? lastError,
+  }) {
+    return SubmittedOrderJobsCompanion(
+      sequence: sequence ?? this.sequence,
+      commandId: commandId ?? this.commandId,
+      saleId: saleId ?? this.saleId,
+      profileId: profileId ?? this.profileId,
+      operatorId: operatorId ?? this.operatorId,
+      cancel: cancel ?? this.cancel,
+      payload: payload ?? this.payload,
+      status: status ?? this.status,
+      attempts: attempts ?? this.attempts,
+      retryAt: retryAt ?? this.retryAt,
+      lastError: lastError ?? this.lastError,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (sequence.present) {
+      map['sequence'] = Variable<int>(sequence.value);
+    }
+    if (commandId.present) {
+      map['command_id'] = Variable<String>(commandId.value);
+    }
+    if (saleId.present) {
+      map['sale_id'] = Variable<String>(saleId.value);
+    }
+    if (profileId.present) {
+      map['profile_id'] = Variable<String>(profileId.value);
+    }
+    if (operatorId.present) {
+      map['operator_id'] = Variable<String>(operatorId.value);
+    }
+    if (cancel.present) {
+      map['cancel'] = Variable<bool>(cancel.value);
+    }
+    if (payload.present) {
+      map['payload'] = Variable<String>(payload.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (attempts.present) {
+      map['attempts'] = Variable<int>(attempts.value);
+    }
+    if (retryAt.present) {
+      map['retry_at'] = Variable<DateTime>(retryAt.value);
+    }
+    if (lastError.present) {
+      map['last_error'] = Variable<String>(lastError.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SubmittedOrderJobsCompanion(')
+          ..write('sequence: $sequence, ')
+          ..write('commandId: $commandId, ')
+          ..write('saleId: $saleId, ')
+          ..write('profileId: $profileId, ')
+          ..write('operatorId: $operatorId, ')
+          ..write('cancel: $cancel, ')
+          ..write('payload: $payload, ')
+          ..write('status: $status, ')
+          ..write('attempts: $attempts, ')
+          ..write('retryAt: $retryAt, ')
+          ..write('lastError: $lastError')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $StoreOperatingStatesTable extends StoreOperatingStates
     with TableInfo<$StoreOperatingStatesTable, StoreOperatingState> {
   @override
@@ -7758,6 +8407,8 @@ abstract class _$RegisterDatabase extends GeneratedDatabase {
   );
   late final $TillCommandsTable tillCommands = $TillCommandsTable(this);
   late final $ReceiptPrintsTable receiptPrints = $ReceiptPrintsTable(this);
+  late final $SubmittedOrderJobsTable submittedOrderJobs =
+      $SubmittedOrderJobsTable(this);
   late final $StoreOperatingStatesTable storeOperatingStates =
       $StoreOperatingStatesTable(this);
   late final $StoreOperatingEventsTable storeOperatingEvents =
@@ -7791,6 +8442,7 @@ abstract class _$RegisterDatabase extends GeneratedDatabase {
     storeStaffGrants,
     tillCommands,
     receiptPrints,
+    submittedOrderJobs,
     storeOperatingStates,
     storeOperatingEvents,
     localSalesOneReversal,
@@ -12428,6 +13080,340 @@ typedef $$ReceiptPrintsTableProcessedTableManager =
       ReceiptPrint,
       PrefetchHooks Function()
     >;
+typedef $$SubmittedOrderJobsTableCreateCompanionBuilder =
+    SubmittedOrderJobsCompanion Function({
+      Value<int> sequence,
+      required String commandId,
+      required String saleId,
+      required String profileId,
+      required String operatorId,
+      required bool cancel,
+      required String payload,
+      Value<String> status,
+      Value<int> attempts,
+      required DateTime retryAt,
+      Value<String?> lastError,
+    });
+typedef $$SubmittedOrderJobsTableUpdateCompanionBuilder =
+    SubmittedOrderJobsCompanion Function({
+      Value<int> sequence,
+      Value<String> commandId,
+      Value<String> saleId,
+      Value<String> profileId,
+      Value<String> operatorId,
+      Value<bool> cancel,
+      Value<String> payload,
+      Value<String> status,
+      Value<int> attempts,
+      Value<DateTime> retryAt,
+      Value<String?> lastError,
+    });
+
+class $$SubmittedOrderJobsTableFilterComposer
+    extends Composer<_$RegisterDatabase, $SubmittedOrderJobsTable> {
+  $$SubmittedOrderJobsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get sequence => $composableBuilder(
+    column: $table.sequence,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get commandId => $composableBuilder(
+    column: $table.commandId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get saleId => $composableBuilder(
+    column: $table.saleId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get profileId => $composableBuilder(
+    column: $table.profileId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get operatorId => $composableBuilder(
+    column: $table.operatorId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get cancel => $composableBuilder(
+    column: $table.cancel,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get attempts => $composableBuilder(
+    column: $table.attempts,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get retryAt => $composableBuilder(
+    column: $table.retryAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get lastError => $composableBuilder(
+    column: $table.lastError,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$SubmittedOrderJobsTableOrderingComposer
+    extends Composer<_$RegisterDatabase, $SubmittedOrderJobsTable> {
+  $$SubmittedOrderJobsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get sequence => $composableBuilder(
+    column: $table.sequence,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get commandId => $composableBuilder(
+    column: $table.commandId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get saleId => $composableBuilder(
+    column: $table.saleId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get profileId => $composableBuilder(
+    column: $table.profileId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get operatorId => $composableBuilder(
+    column: $table.operatorId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get cancel => $composableBuilder(
+    column: $table.cancel,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get attempts => $composableBuilder(
+    column: $table.attempts,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get retryAt => $composableBuilder(
+    column: $table.retryAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get lastError => $composableBuilder(
+    column: $table.lastError,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$SubmittedOrderJobsTableAnnotationComposer
+    extends Composer<_$RegisterDatabase, $SubmittedOrderJobsTable> {
+  $$SubmittedOrderJobsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get sequence =>
+      $composableBuilder(column: $table.sequence, builder: (column) => column);
+
+  GeneratedColumn<String> get commandId =>
+      $composableBuilder(column: $table.commandId, builder: (column) => column);
+
+  GeneratedColumn<String> get saleId =>
+      $composableBuilder(column: $table.saleId, builder: (column) => column);
+
+  GeneratedColumn<String> get profileId =>
+      $composableBuilder(column: $table.profileId, builder: (column) => column);
+
+  GeneratedColumn<String> get operatorId => $composableBuilder(
+    column: $table.operatorId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get cancel =>
+      $composableBuilder(column: $table.cancel, builder: (column) => column);
+
+  GeneratedColumn<String> get payload =>
+      $composableBuilder(column: $table.payload, builder: (column) => column);
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<int> get attempts =>
+      $composableBuilder(column: $table.attempts, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get retryAt =>
+      $composableBuilder(column: $table.retryAt, builder: (column) => column);
+
+  GeneratedColumn<String> get lastError =>
+      $composableBuilder(column: $table.lastError, builder: (column) => column);
+}
+
+class $$SubmittedOrderJobsTableTableManager
+    extends
+        RootTableManager<
+          _$RegisterDatabase,
+          $SubmittedOrderJobsTable,
+          SubmittedOrderJob,
+          $$SubmittedOrderJobsTableFilterComposer,
+          $$SubmittedOrderJobsTableOrderingComposer,
+          $$SubmittedOrderJobsTableAnnotationComposer,
+          $$SubmittedOrderJobsTableCreateCompanionBuilder,
+          $$SubmittedOrderJobsTableUpdateCompanionBuilder,
+          (
+            SubmittedOrderJob,
+            BaseReferences<
+              _$RegisterDatabase,
+              $SubmittedOrderJobsTable,
+              SubmittedOrderJob
+            >,
+          ),
+          SubmittedOrderJob,
+          PrefetchHooks Function()
+        > {
+  $$SubmittedOrderJobsTableTableManager(
+    _$RegisterDatabase db,
+    $SubmittedOrderJobsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$SubmittedOrderJobsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$SubmittedOrderJobsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$SubmittedOrderJobsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> sequence = const Value.absent(),
+                Value<String> commandId = const Value.absent(),
+                Value<String> saleId = const Value.absent(),
+                Value<String> profileId = const Value.absent(),
+                Value<String> operatorId = const Value.absent(),
+                Value<bool> cancel = const Value.absent(),
+                Value<String> payload = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<int> attempts = const Value.absent(),
+                Value<DateTime> retryAt = const Value.absent(),
+                Value<String?> lastError = const Value.absent(),
+              }) => SubmittedOrderJobsCompanion(
+                sequence: sequence,
+                commandId: commandId,
+                saleId: saleId,
+                profileId: profileId,
+                operatorId: operatorId,
+                cancel: cancel,
+                payload: payload,
+                status: status,
+                attempts: attempts,
+                retryAt: retryAt,
+                lastError: lastError,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> sequence = const Value.absent(),
+                required String commandId,
+                required String saleId,
+                required String profileId,
+                required String operatorId,
+                required bool cancel,
+                required String payload,
+                Value<String> status = const Value.absent(),
+                Value<int> attempts = const Value.absent(),
+                required DateTime retryAt,
+                Value<String?> lastError = const Value.absent(),
+              }) => SubmittedOrderJobsCompanion.insert(
+                sequence: sequence,
+                commandId: commandId,
+                saleId: saleId,
+                profileId: profileId,
+                operatorId: operatorId,
+                cancel: cancel,
+                payload: payload,
+                status: status,
+                attempts: attempts,
+                retryAt: retryAt,
+                lastError: lastError,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$SubmittedOrderJobsTable, SubmittedOrderJob>(
+                    table,
+                  ),
+                  BaseReferences<
+                    _$RegisterDatabase,
+                    $SubmittedOrderJobsTable,
+                    SubmittedOrderJob
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$SubmittedOrderJobsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$RegisterDatabase,
+      $SubmittedOrderJobsTable,
+      SubmittedOrderJob,
+      $$SubmittedOrderJobsTableFilterComposer,
+      $$SubmittedOrderJobsTableOrderingComposer,
+      $$SubmittedOrderJobsTableAnnotationComposer,
+      $$SubmittedOrderJobsTableCreateCompanionBuilder,
+      $$SubmittedOrderJobsTableUpdateCompanionBuilder,
+      (
+        SubmittedOrderJob,
+        BaseReferences<
+          _$RegisterDatabase,
+          $SubmittedOrderJobsTable,
+          SubmittedOrderJob
+        >,
+      ),
+      SubmittedOrderJob,
+      PrefetchHooks Function()
+    >;
 typedef $$StoreOperatingStatesTableCreateCompanionBuilder =
     StoreOperatingStatesCompanion Function({
       Value<int> id,
@@ -13152,6 +14138,8 @@ class $RegisterDatabaseManager {
       $$TillCommandsTableTableManager(_db, _db.tillCommands);
   $$ReceiptPrintsTableTableManager get receiptPrints =>
       $$ReceiptPrintsTableTableManager(_db, _db.receiptPrints);
+  $$SubmittedOrderJobsTableTableManager get submittedOrderJobs =>
+      $$SubmittedOrderJobsTableTableManager(_db, _db.submittedOrderJobs);
   $$StoreOperatingStatesTableTableManager get storeOperatingStates =>
       $$StoreOperatingStatesTableTableManager(_db, _db.storeOperatingStates);
   $$StoreOperatingEventsTableTableManager get storeOperatingEvents =>

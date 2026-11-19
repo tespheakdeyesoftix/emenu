@@ -1217,7 +1217,7 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "enum": ["open", "paid", "cancelled"]
+              "enum": ["open", "submitted", "paid", "cancelled"]
             }
           },
           {
@@ -1386,6 +1386,44 @@
           "default": {
             "$ref": "#/components/responses/Error"
           }
+        }
+      }
+    },
+    "/api/integrations/pos/v1/sales/{id}/submit": {
+      "post": {
+        "tags": ["POS sales"],
+        "summary": "Save an unpaid submitted order with a register-generated ID",
+        "security": [{ "PosBearer": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/Id" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/BillCreate" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated submitted order",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Sale" }
+              }
+            }
+          },
+          "201": {
+            "description": "Created submitted order",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Sale" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -2347,6 +2385,8 @@
               "close_shift",
               "reopen_shift",
               "cash_movement",
+              "submit_sale",
+              "cancel_sale",
               "checkout",
               "reversal"
             ]
@@ -4024,6 +4064,9 @@
               "cart_line_edits": {
                 "type": "boolean"
               },
+              "submit_orders": {
+                "type": "boolean"
+              },
               "shift_management": {
                 "type": "boolean"
               }
@@ -4723,6 +4766,7 @@
           "total_amount",
           "id",
           "line_number",
+          "status",
           "product_id",
           "product_code",
           "product_name",
@@ -4738,6 +4782,7 @@
           "modifiers"
         ],
         "properties": {
+          "status": { "enum": ["open", "submitted", "paid", "cancelled"] },
           "discount_minor": { "type": "integer" },
           "base_price_override_minor": { "anyOf": [{ "$ref": "#/components/schemas/Amount" }, { "type": "null" }] },
           "is_free": { "type": "boolean" },
@@ -4987,7 +5032,7 @@
           },
           "status": {
             "type": "string",
-            "enum": ["open", "paid", "cancelled"]
+            "enum": ["open", "submitted", "paid", "cancelled"]
           },
           "revision": {
             "type": "integer",
@@ -5218,7 +5263,7 @@
           },
           "status": {
             "type": "string",
-            "enum": ["open", "paid", "cancelled"]
+            "enum": ["open", "submitted", "paid", "cancelled"]
           },
           "revision": {
             "type": "integer",

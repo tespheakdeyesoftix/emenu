@@ -252,13 +252,32 @@ class RegisterAuthority {
     final id = held?.id ?? commandId;
     if (action == RegisterAction.discard) {
       if (held == null) throw invalidCommand;
+      final operatingContext = registerOperatingContext(context, time);
       await database.recordDiscardedBill(
         commandId: commandId,
         bill: held,
         operatorName: actor.displayName,
         time: time,
-        operating: registerOperatingContext(context, time),
+        operating: operatingContext,
       );
+      if (jsonObject(jsonDecode(held.payload))['status'] == 'submitted') {
+        final cancellation = {
+          'reason': 'Discarded at the register',
+          'expected_context': operatingContext,
+        };
+        if (operating != null) {
+          await operating.cancelSale(commandId, id, cancellation);
+        } else {
+          await database.queueSubmittedOrder(
+            commandId: commandId,
+            saleId: id,
+            profileId: profileId,
+            operatorId: actor.id,
+            payload: cancellation,
+            cancel: true,
+          );
+        }
+      }
     } else {
       await _saveBill(
         action,
@@ -358,10 +377,16 @@ class RegisterAuthority {
     }
     final tableStatus = input['table_status'] ?? 'hold';
     if (!const ['hold', 'occupied', 'bill_requested'].contains(tableStatus) ||
-        (tableStatus != 'hold' &&
-            (tableId == null || action != RegisterAction.hold))) {
+        (tableStatus != 'hold' && action != RegisterAction.hold) ||
+        (tableStatus == 'bill_requested' && tableId == null)) {
       throw invalidCommand;
     }
+    final submit = input['submit_order'] == true;
+    if (submit &&
+        (action != RegisterAction.hold || tableStatus != 'occupied')) {
+      throw invalidCommand;
+    }
+    final submitted = submit || saved?['status'] == 'submitted';
     final table = jsonRows(snapshot['tables'])
         .where((row) => row['id'] == tableId)
         .firstOrNull;
@@ -378,7 +403,8 @@ class RegisterAuthority {
         'This table is unavailable.',
       );
     }
-    if (table?['status'] == 'occupied') {
+    if (table?['status'] == 'occupied' &&
+        (held == null || table?['open_sale_id'] != held.id)) {
       throw const PosApiError(
         409,
         'TABLE_OCCUPIED',
@@ -446,44 +472,15 @@ class RegisterAuthority {
         ? (saved?['table_code'] ?? table?['code'])
         : table?['code'];
     final customerName = customer?['name'] ?? saved?['customer_name'];
-    if (action == RegisterAction.hold) {
-      await database.holdBill(
-        id: id,
-        profileId: profileId,
-        tableId: tableId,
-        workingDayId: workingDay,
-        revision: held?.revision,
-        payload: {
-          'operating_context': operating,
-          'operator_name': actor.displayName,
-          'customer_id': customerId,
-          'customer_name': customerName,
-          'table_code': tableCode,
-          'table_label': tableLabel,
-          'guest_cover': cover,
-          if (postingOverride != null) 'posting_date': postingDate,
-          'table_status': tableStatus,
-          'total_minor': total,
-          'currency': currency,
-          'quote_context': quoteContext,
-          'lines': lines.map((line) => line.heldSnapshot).toList(),
-        },
-      );
-      return;
-    }
-
-    final payments = jsonRows(input['payments']).map(_payment).toList();
+    final draft = {
+      if (postingOverride != null) 'posting_date': postingDate,
+      'table_id': tableId,
+      'guest_cover': cover,
+      'customer_id': customerId,
+      'lines': lines.map((line) => line.request).toList(),
+      'expected_context': operating,
+    };
     final types = jsonRows(quoteContext['payment_types']);
-    if (payments.length > 60 ||
-        paymentTotal(
-              entries: payments,
-              paymentTypes: types,
-              primary: currency,
-              rate: rate,
-            ) !=
-            total) {
-      throw const FormatException('PAYMENT_TOTAL_MISMATCH');
-    }
     final quotedProfile = jsonObject(quoteContext['profile']);
     final receipt = {
       'business_name': business['name'],
@@ -500,36 +497,13 @@ class RegisterAuthority {
         for (final type in types) type['id'] as String: type['name'],
       },
     };
-    await database.queueSale(
-      id: id,
-      profileId: profileId,
-      operatorId: actor.id,
-      total: total,
-      currency: currency,
-      heldRevision: held?.revision,
-      createdAt: time,
-      request: {
-        'draft': {
-          if (postingOverride != null) 'posting_date': postingDate,
-          'table_id': tableId,
-          'guest_cover': cover,
-          'customer_id': customerId,
-          'lines': lines.map((line) => line.request).toList(),
-          'expected_context': operating,
-        },
-        'quote': prices,
-        'exchange_rate': rate,
-        'payments': payments,
-        'receipt': receipt,
-      },
-    );
-    if (store != null) {
+    Json storeSale() {
       final catalog = jsonObject(snapshot['catalog']);
       final legacyTax = legacyTaxSettings(config);
       final taxRule = config['default_tax_rule'] is Map
           ? jsonObject(config['default_tax_rule'])
           : null;
-      await store.checkout(commandId, id, {
+      return {
         if (postingOverride != null) 'posting_date': postingDate,
         'expected_context': operating,
         'currency': currency,
@@ -562,8 +536,86 @@ class RegisterAuthority {
             },
         ],
         'payment_types': types,
+        'receipt': receipt,
+      };
+    }
+
+    if (action == RegisterAction.hold) {
+      await database.holdBill(
+        id: id,
+        profileId: profileId,
+        tableId: tableId,
+        workingDayId: workingDay,
+        revision: held?.revision,
+        payload: {
+          'operating_context': operating,
+          'operator_name': actor.displayName,
+          'customer_id': customerId,
+          'customer_name': customerName,
+          'table_code': tableCode,
+          'table_label': tableLabel,
+          'guest_cover': cover,
+          if (postingOverride != null) 'posting_date': postingDate,
+          'table_status': tableStatus,
+          if (submitted) 'status': 'submitted',
+          'total_minor': total,
+          'currency': currency,
+          'quote_context': quoteContext,
+          'lines': [
+            for (final line in lines)
+              {...line.heldSnapshot, if (submitted) 'status': 'submitted'},
+          ],
+        },
+      );
+      if (submitted) {
+        if (store != null) {
+          await store.submitSale(commandId, id, storeSale());
+        } else {
+          await database.queueSubmittedOrder(
+            commandId: commandId,
+            saleId: id,
+            profileId: profileId,
+            operatorId: actor.id,
+            payload: draft,
+          );
+        }
+      }
+      return;
+    }
+
+    final payments = jsonRows(input['payments']).map(_payment).toList();
+    if (payments.length > 60 ||
+        paymentTotal(
+              entries: payments,
+              paymentTypes: types,
+              primary: currency,
+              rate: rate,
+            ) !=
+            total) {
+      throw const FormatException('PAYMENT_TOTAL_MISMATCH');
+    }
+    await database.queueSale(
+      id: id,
+      profileId: profileId,
+      operatorId: actor.id,
+      total: total,
+      currency: currency,
+      heldRevision: held?.revision,
+      createdAt: time,
+      request: {
+        'draft': draft,
+        'register_command_id': commandId,
+        if (submitted) 'submitted_order': true,
+        'quote': prices,
+        'exchange_rate': rate,
         'payments': payments,
         'receipt': receipt,
+      },
+    );
+    if (store != null) {
+      await store.checkout(commandId, id, {
+        ...storeSale(),
+        'payments': payments,
       });
     }
   }

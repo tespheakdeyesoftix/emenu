@@ -349,7 +349,7 @@ export async function writeDay(
   if (!day) missing("Working day");
   if (day.closed_at) conflict("This working day is already closed");
   const canClose = `NOT EXISTS (SELECT 1 FROM cashier_shifts WHERE working_day_id=? AND closed_at IS NULL)
-    AND NOT EXISTS (SELECT 1 FROM sales WHERE working_day_id=? AND status='open')`;
+    AND NOT EXISTS (SELECT 1 FROM sales WHERE working_day_id=? AND status IN ('open','submitted'))`;
   const allowed = await sql(
     db,
     "SELECT " + canClose + " AS allowed",

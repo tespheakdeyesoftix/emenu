@@ -137,9 +137,11 @@ Save the event and its local business operation in one transaction. Send events 
 | `cash_movement` | Local cash movement ID | Cash movement fields and `shift_id` |
 | `close_shift` | Shift ID | `activity_revision` and counts with `expected_minor` and `declared_minor` |
 | `checkout` | Local sale ID | Saved operating context, priced lines, payment types, tenders, customer, table, tax and receipt snapshots |
+| `submit_sale` | Local sale ID | Saved operating context, priced lines, customer, table, tax and receipt snapshots |
+| `cancel_sale` | Submitted sale ID | Cancellation reason |
 | `reversal` | Local reversal sale ID | `original_sale_id`, `reason`, `expected_context`, and the original `expected_total_minor` |
 
-The server validates the device, event sequence, operating context, sale arithmetic, and reconciliation. It records the operation and advances the sequence in the same transaction. A checkout import creates the paid sale and its payment rows together. Replaying an identical event returns its saved reply. `STORE_SEQUENCE_CHANGED` means an earlier event is missing or an event ID differs from the recorded one. Retain the journal and resolve the first rejected event before advancing.
+The server validates the device, event sequence, operating context, sale arithmetic, and reconciliation. It records the operation and advances the sequence in the same transaction. A checkout import creates or settles the sale and adds its payment rows together. Replaying an identical event returns its saved reply. `STORE_SEQUENCE_CHANGED` means an earlier event is missing or an event ID differs from the recorded one. Retain the journal and resolve the first rejected event before advancing.
 
 When `capabilities.store_recovery` is available, the owner can approve a queued entry after the original operator loses device or profile access. Call `POST /store-operations/recover` with the owner's device session on the designated register. Use the original `Idempotency-Key` and send `profile_id`, `operator_id`, `reason`, and `operation`, which is the complete original envelope. The approving session can use any active profile in the same branch. The Worker checks the register's enrolled public key and the original operator's enrollment history. If the operator can still sync, it returns `409 STORE_OPERATOR_ACTIVE`. If no enrollment record is available, it returns `409 STORE_OPERATOR_UNKNOWN`.
 
@@ -159,6 +161,8 @@ For a menu-based profile, send `GET /catalog?menu_id=<menu-or-submenu-id>&page=1
 6. Send `POST /sales/{id}/checkout` with the saved `revision`, `expected_total_minor`, and all payments. Use the returned sale and its `receipt` object to print the configured number of copies. Store the sale ID and track printing separately so an HTTP retry does not print another copy.
 
 `GET /sales` accepts `status`, `business_date`, `table_id`, `shift_id`, and `working_day_id` filters. Use `GET /sales/{id}` for saved lines, payments, and receipt data. IDs and the optional customer and table labels are historical snapshots. UTC timestamps use ISO 8601 and business dates use `YYYY-MM-DD`.
+
+When `capabilities.submit_orders` is available, send `POST /sales/{id}/submit` with a stable register-generated sale ID and the same bill fields as `POST /sales`. The unpaid sale and its lines have status `submitted`. Use a new idempotency key to update the submitted order and reuse the same sale ID at checkout or cancellation.
 
 For POS Sales history, use `GET /sales?history=active` with pagination. It returns `history_scope` with the profile, period kind, period ID, and opening time, plus `item_quantity` on each row. It includes profile bills that are still open, paid sales posted in the active period, and bills cancelled during that period. The period is the current shift, open working day, or current business date, according to the profile settings. When a required period is closed, the scope is null and the list is empty. Use this mode without the other sales filters.
 

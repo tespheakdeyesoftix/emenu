@@ -13,6 +13,33 @@ class App {
 
   static const _loadingRoute = '/app-loading';
 
+  /// Returns true only when the user explicitly confirms [message].
+  Future<bool> onConfirm(String message) async {
+    if (!Get.isRegistered<GetMaterialController>() ||
+        Get.key.currentState?.overlay == null) {
+      return false;
+    }
+    return await Get.dialog<bool>(
+          Builder(
+            builder: (context) => AlertDialog(
+              scrollable: true,
+              content: Text(message),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: Text('cancel'.tr),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: Text('confirm'.tr),
+                ),
+              ],
+            ),
+          ),
+        ) ??
+        false;
+  }
+
   /// Whether the current route already displays the shared loading dialog.
   bool get isLoading =>
       Get.isRegistered<GetMaterialController>() &&

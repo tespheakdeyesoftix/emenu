@@ -3,7 +3,6 @@ import 'package:get/get.dart';
 
 import '../../../../core/pricing.dart';
 import '../../sale_controller.dart';
-import '../sale_service.dart';
 
 class CartFooter extends GetView<SaleController> {
   const CartFooter({super.key});
@@ -23,8 +22,6 @@ class CartFooter extends GetView<SaleController> {
     } on FormatException {
       // Keep the primary amount available if the alternate currency is invalid.
     }
-    final hasTable =
-        service.tableId.value != null && service.tableMode != 'disabled';
     final canSubmit = service.canSubmit;
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 0, 2, 2),
@@ -40,11 +37,7 @@ class CartFooter extends GetView<SaleController> {
           ),
           _CartCheckoutActions(
             onPay: canSubmit ? () => controller.pay(context, total) : null,
-            onSubmit: canSubmit
-                ? () => service.holdCart(
-                    tableStatus: hasTable ? 'occupied' : 'hold',
-                  )
-                : null,
+            onSubmit: canSubmit ? () => controller.submitOrder(context) : null,
           ),
         ],
       ),

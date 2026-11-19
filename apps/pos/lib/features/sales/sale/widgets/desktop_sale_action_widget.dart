@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
-/// Presentation only. Sales actions will be connected in a later change.
-class DesktopSaleActionWidget extends StatelessWidget {
+import '../../sale_controller.dart';
+
+class DesktopSaleActionWidget extends GetView<SaleController> {
   const DesktopSaleActionWidget({super.key});
 
   @override
@@ -59,12 +60,17 @@ class DesktopSaleActionWidget extends StatelessWidget {
                           spacing: 4,
                           children: [
                             Expanded(
-                              child: _DockActionButton(
-                                showLabel: showLabels,
-                                label: 'sale_submit_new'.tr,
-                                icon: Icons.add_task_rounded,
-                                background: colors.primary,
-                                foreground: colors.onPrimary,
+                              child: Obx(
+                                () => _DockActionButton(
+                                  showLabel: showLabels,
+                                  label: 'sale_submit_new'.tr,
+                                  icon: Icons.add_task_rounded,
+                                  background: colors.primary,
+                                  foreground: colors.onPrimary,
+                                  onPressed: controller.service.canSubmit
+                                      ? () => controller.submitOrder(context)
+                                      : null,
+                                ),
                               ),
                             ),
                             Expanded(
@@ -110,7 +116,7 @@ class _DockActionButton extends StatelessWidget {
   final IconData icon;
   final Color? background;
   final Color? foreground;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final bool showLabel;
 
   @override

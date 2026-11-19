@@ -26,18 +26,17 @@ class ProductCatalog extends GetView<SaleController> {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, box) => Obx(() {
-      if (controller.service.catalogNodes.isEmpty) {
-        return _CatalogProductList(showActionDock: showActionDock);
-      }
+      final hasFolders = controller.service.catalogNodes.isNotEmpty;
       final layout = controller.screenSettings.layout;
       final left = layout == SaleScreenLayout.menuLeft;
-      final sidebar = left && box.maxWidth >= 480;
+      final sidebar = hasFolders && left && box.maxWidth >= 480;
       final content = Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         spacing: 6,
         children: [
-          if (layout == SaleScreenLayout.menuTop) const CatalogTopMenu(),
-          if (left && !sidebar)
+          if (hasFolders && layout == SaleScreenLayout.menuTop)
+            const CatalogTopMenu(),
+          if (hasFolders && left && !sidebar)
             Align(
               alignment: AlignmentDirectional.centerStart,
               child: TextButton.icon(
@@ -52,7 +51,16 @@ class ProductCatalog extends GetView<SaleController> {
                 ),
               ),
             ),
-          const CatalogBreadcrumbs(),
+          Row(
+            spacing: 8,
+            children: [
+              if (hasFolders)
+                const Expanded(child: CatalogBreadcrumbs())
+              else
+                const Spacer(),
+              const _ProductCardLayoutToggle(),
+            ],
+          ),
           Expanded(child: _CatalogProductList(showActionDock: showActionDock)),
         ],
       );
@@ -74,6 +82,36 @@ class ProductCatalog extends GetView<SaleController> {
           : content;
     }),
   );
+}
+
+class _ProductCardLayoutToggle extends GetView<SaleController> {
+  const _ProductCardLayoutToggle();
+
+  @override
+  Widget build(BuildContext context) => Obx(() {
+    final colors = Theme.of(context).colorScheme;
+    final switchToLeft =
+        controller.productCardLayout.value == ProductCardLayout.imageTop;
+    return IconButton.outlined(
+      tooltip: (switchToLeft ? 'catalog_image_left' : 'catalog_image_top').tr,
+      icon: Icon(
+        switchToLeft
+            ? Icons.vertical_split_outlined
+            : Icons.horizontal_split_outlined,
+      ),
+      style: IconButton.styleFrom(
+        minimumSize: const Size.square(32),
+        padding: EdgeInsets.zero,
+        iconSize: 17,
+        foregroundColor: colors.onSurfaceVariant,
+        side: BorderSide(color: colors.outlineVariant),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      onPressed: () => controller.productCardLayout.value = switchToLeft
+          ? ProductCardLayout.imageLeft
+          : ProductCardLayout.imageTop,
+    );
+  });
 }
 
 class _CatalogProductList extends StatelessWidget {
