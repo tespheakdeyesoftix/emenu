@@ -1,6 +1,8 @@
 export const branchResetOptions = {
   orders: "Orders",
   sales: "POS sales",
+  workingDays: "Working days",
+  cashierShifts: "Cashier shifts",
   bookings: "Bookings",
   tables: "Tables",
   tableGroups: "Table groups",
@@ -11,6 +13,8 @@ export const branchResetOptions = {
 export const businessResetOptions = {
   orders: "Orders across all branches",
   sales: "POS sales across all branches",
+  workingDays: "Working days across all branches",
+  cashierShifts: "Cashier shifts across all branches",
   products: "Products",
   menus: "Menus",
   categories: "Categories",

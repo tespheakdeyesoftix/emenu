@@ -10,8 +10,10 @@ class CartFooter extends GetView<SaleController> {
   @override
   Widget build(BuildContext context) => Obx(() {
     final service = controller.service;
-    final total = service.cartTotal;
-    final quantity = service.cart.fold(0, (sum, line) => sum + line.quantity);
+    final total = service.cartPreviewTotal;
+    final quantity = normalizedQuantity(
+      service.cart.fold<num>(0, (sum, line) => sum + line.quantity),
+    );
     final currency = service.currency;
     String? secondary;
     try {
@@ -23,20 +25,25 @@ class CartFooter extends GetView<SaleController> {
       // Keep the primary amount available if the alternate currency is invalid.
     }
     final canSubmit = service.canSubmit;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(2, 0, 2, 2),
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primary,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        spacing: 10,
+        spacing: 8,
         children: [
-          const Divider(height: 1),
           _CartTotals(
             total: displayAmount(total, currency),
             secondary: secondary,
             quantity: quantity,
           ),
           _CartCheckoutActions(
-            onPay: canSubmit ? () => controller.pay(context, total) : null,
+            onPay: canSubmit && service.cart.isNotEmpty
+                ? () => controller.pay(context, total)
+                : null,
             onSubmit: canSubmit ? () => controller.submitOrder(context) : null,
           ),
         ],
@@ -54,13 +61,13 @@ class _CartTotals extends StatelessWidget {
 
   final String total;
   final String? secondary;
-  final int quantity;
+  final num quantity;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final muted = theme.textTheme.bodySmall?.copyWith(
-      color: theme.colorScheme.onSurfaceVariant,
+      color: theme.colorScheme.onPrimary.withValues(alpha: .78),
       height: 1.4,
     );
     return Row(
@@ -75,6 +82,7 @@ class _CartTotals extends StatelessWidget {
               Text(
                 'total'.tr,
                 style: theme.textTheme.titleMedium?.copyWith(
+                  color: theme.colorScheme.onPrimary,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -93,10 +101,10 @@ class _CartTotals extends StatelessWidget {
                 child: Text(
                   total,
                   style: theme.textTheme.titleLarge?.copyWith(
-                    fontSize: 24,
+                    fontSize: 26,
                     height: 1.2,
                     fontWeight: FontWeight.w700,
-                    color: theme.colorScheme.primary,
+                    color: theme.colorScheme.onPrimary,
                   ),
                 ),
               ),
@@ -121,7 +129,16 @@ class _CartCheckoutActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = FilledButton.styleFrom(
+    final colors = Theme.of(context).colorScheme;
+    final ink = colors.onPrimary;
+    ButtonStyle actionStyle({required bool primary}) => FilledButton.styleFrom(
+      foregroundColor: primary ? colors.primary : ink,
+      backgroundColor: primary ? ink : ink.withValues(alpha: .14),
+      side: primary
+          ? null
+          : BorderSide(color: ink.withValues(alpha: onSubmit == null ? .12 : .38)),
+      disabledForegroundColor: ink.withValues(alpha: .48),
+      disabledBackgroundColor: ink.withValues(alpha: .08),
       minimumSize: const Size(48, 48),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -131,7 +148,7 @@ class _CartCheckoutActions extends StatelessWidget {
       children: [
         Expanded(
           child: FilledButton.icon(
-            style: style,
+            style: actionStyle(primary: true),
             onPressed: onPay,
             icon: const Icon(Icons.payments_outlined, size: 20),
             label: Text('pay'.tr),
@@ -139,7 +156,7 @@ class _CartCheckoutActions extends StatelessWidget {
         ),
         Expanded(
           child: FilledButton.tonalIcon(
-            style: style,
+            style: actionStyle(primary: false),
             onPressed: onSubmit,
             icon: const Icon(Icons.send_rounded, size: 18),
             label: Text('cart_submit'.tr),

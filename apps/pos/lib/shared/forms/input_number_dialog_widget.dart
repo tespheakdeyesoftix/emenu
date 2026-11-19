@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
@@ -10,17 +11,32 @@ class InputNumberDialogWidget extends StatefulWidget {
     super.key,
     required this.title,
     this.isFloat = false,
+    this.decimalPlaces,
     this.value,
     this.min,
     this.max,
     this.label,
     this.confirmText,
+    this.header,
+    this.footer,
+    this.canConfirm = true,
+    this.validate,
+    this.onConfirm,
+    this.preset,
+    this.presets = const [],
   });
 
   final String title;
   final bool isFloat;
+  final int? decimalPlaces;
   final num? value, min, max;
   final String? label, confirmText;
+  final Widget? header, footer;
+  final bool canConfirm;
+  final bool Function(num)? validate;
+  final ValueChanged<num>? onConfirm;
+  final ({String label, num value})? preset;
+  final List<({String label, num value})> presets;
 
   @override
   State<InputNumberDialogWidget> createState() =>
@@ -28,8 +44,19 @@ class InputNumberDialogWidget extends StatefulWidget {
 }
 
 class _InputNumberDialogWidgetState extends State<InputNumberDialogWidget> {
-  late final input = TextEditingController(text: _initialValue);
+  late final TextEditingController input;
+  final _presetScroll = ScrollController();
   bool get _allowNegative => widget.min == null || widget.min! < 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final text = _initialValue;
+    input = TextEditingController.fromValue(TextEditingValue(
+      text: text,
+      selection: TextSelection(baseOffset: 0, extentOffset: text.length),
+    ));
+  }
 
   String get _initialValue {
     final value = widget.value;
@@ -42,8 +69,11 @@ class _InputNumberDialogWidgetState extends State<InputNumberDialogWidget> {
     final number = widget.isFloat ? double.tryParse(text) : int.tryParse(text);
     if (number == null ||
         !number.isFinite ||
+        (widget.decimalPlaces != null &&
+            double.parse(number.toStringAsFixed(widget.decimalPlaces!)) != number) ||
         (widget.min != null && number < widget.min!) ||
-        (widget.max != null && number > widget.max!)) {
+        (widget.max != null && number > widget.max!) ||
+        widget.validate?.call(number) == false) {
       return null;
     }
     return number;
@@ -93,12 +123,18 @@ class _InputNumberDialogWidgetState extends State<InputNumberDialogWidget> {
 
   void _save() {
     final number = _number;
-    if (number != null) Get.back<num>(result: number);
+    if (number == null || !widget.canConfirm) return;
+    if (widget.onConfirm case final confirm?) {
+      confirm(number);
+    } else {
+      Navigator.pop(context, number);
+    }
   }
 
   @override
   void dispose() {
     input.dispose();
+    _presetScroll.dispose();
     super.dispose();
   }
 
@@ -111,6 +147,7 @@ class _InputNumberDialogWidgetState extends State<InputNumberDialogWidget> {
       child: Column(
         spacing: 12,
         children: [
+          if (widget.header case final header?) header,
           AppTextField(
             controller: input,
             textAlign: TextAlign.center,
@@ -136,6 +173,46 @@ class _InputNumberDialogWidgetState extends State<InputNumberDialogWidget> {
                   : null,
             ),
           ),
+          if (widget.preset case final preset?)
+            TextButton(
+              onPressed: () => _setText(preset.value.toString()),
+              child: Text(preset.label),
+            ),
+          if (widget.presets.isNotEmpty)
+            ScrollConfiguration(
+              behavior: ScrollConfiguration.of(context).copyWith(
+                scrollbars: false,
+                dragDevices: {
+                  ...ScrollConfiguration.of(context).dragDevices,
+                  PointerDeviceKind.mouse,
+                },
+              ),
+              child: Scrollbar(
+                controller: _presetScroll,
+                thumbVisibility: true,
+                thickness: 2,
+                child: SingleChildScrollView(
+                  controller: _presetScroll,
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    spacing: 6,
+                    children: [
+                      for (final preset in widget.presets)
+                        ChoiceChip(
+                          label: Text(preset.label),
+                          selected: _number == preset.value,
+                          showCheckmark: false,
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          onSelected: (_) => _setText(preset.value.toString()),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           NumberPad(
             clearLabel: 'clear_count',
             backspaceLabel: 'delete_digit',
@@ -167,13 +244,14 @@ class _InputNumberDialogWidgetState extends State<InputNumberDialogWidget> {
                   ),
               ],
             ),
+          if (widget.footer case final footer?) footer,
         ],
       ),
     ),
     actions: [
-      TextButton(onPressed: () => Get.back<num>(), child: Text('back'.tr)),
+      TextButton(onPressed: () => Navigator.pop(context), child: Text('back'.tr)),
       FilledButton(
-        onPressed: _number == null ? null : _save,
+        onPressed: _number == null || !widget.canConfirm ? null : _save,
         child: Text(widget.confirmText ?? 'save'.tr),
       ),
     ],

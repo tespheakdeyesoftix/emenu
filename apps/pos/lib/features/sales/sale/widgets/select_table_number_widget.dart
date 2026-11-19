@@ -42,6 +42,8 @@ class SelectTableNumberWidget extends GetView<SaleController> {
                 .firstOrNull;
             return GroupedTableCards(
               tables: tables,
+              totals: service.tableSaleTotals(tables),
+              currency: service.currency,
               configuredColors: service.config['table_status_colors'],
               initialGroupId:
                   table?['group_id'] as String? ?? service.tableGroupId.value,

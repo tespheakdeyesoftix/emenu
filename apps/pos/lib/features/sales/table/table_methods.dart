@@ -1,6 +1,39 @@
 part of '../sale/sale_service.dart';
 
+typedef TableSaleTotals = ({int guests, int amount});
+
 extension TableMethods on SaleService {
+  Map<String, TableSaleTotals> tableSaleTotals(List<Json> tables) {
+    final localIds = heldBills.map((bill) => bill.id).toSet();
+    final totals = <String, TableSaleTotals>{};
+    void include(String id, Json sale) {
+      final current = totals[id] ?? (guests: 0, amount: 0);
+      totals[id] = (
+        guests: current.guests + (sale['guest_cover'] as int? ?? 0),
+        amount: current.amount + (sale['total_minor'] as int? ?? 0),
+      );
+    }
+
+    for (final table in tables) {
+      for (final sale in jsonRows(table['submitted_sales'])) {
+        if (!localIds.contains(sale['id']))
+          include(table['id'] as String, sale);
+      }
+    }
+    for (final bill in heldBills) {
+      final tableId = bill.tableId;
+      if (tableId == null) continue;
+      final sale = jsonObjectFromString(bill.payload);
+      final status = sale['table_status'] ?? sale['status'];
+      if (status == 'occupied' ||
+          status == 'submitted' ||
+          status == 'bill_requested') {
+        include(tableId, sale);
+      }
+    }
+    return totals;
+  }
+
   bool get promptGuestCover => config['prompt_guest_cover'] == true;
 
   void selectTable(String? id, {int? cover}) {
@@ -18,7 +51,8 @@ extension TableMethods on SaleService {
 
   Future<void> openTable(String id, {int? cover}) async {
     if (!cartEditable || tableMode == 'disabled') return;
-    if (tableId.value == id) {
+    final previousTable = tableId.value;
+    if (previousTable == id) {
       message.value = null;
       tab.value = SaleService.sellTab;
       return;
@@ -31,44 +65,49 @@ extension TableMethods on SaleService {
       return;
     }
 
-    if (_activeBill.value != null && cart.isEmpty) {
+    final activeBill = _activeBill.value;
+    if (activeBill != null && cart.isEmpty) {
       message.value = 'EMPTY_CART';
       tab.value = SaleService.sellTab;
       return;
     }
     var keptLocally = false;
-    if (cart.isNotEmpty && (tableId.value != null || held != null || parked)) {
-      if (tableId.value == null && tableMode == 'required') {
+    if ((cart.isNotEmpty || saleNote.value != null) &&
+        (previousTable != null || held != null || parked)) {
+      if (previousTable == null && tableMode == 'required') {
         message.value = 'TABLE_REQUIRED';
         return;
       }
-      final current = heldBills
-          .where((bill) => bill.id == _activeBill.value?.id)
-          .firstOrNull;
-      final status = tableId.value == null
-          ? 'hold'
-          : current == null
-          ? 'occupied'
-          : jsonObject(jsonDecode(current.payload))['table_status']
-                    as String? ??
-                'hold';
-      if (!await holdCart(tableStatus: status)) {
-        if (!cartEditable ||
-            _activeBill.value != null ||
-            tableId.value == null ||
-            !const {
-              'PRICE_CHANGED',
-              'SELECTION_CHANGED',
-            }.contains(message.value)) {
+      if (activeBill == null) {
+        if (previousTable == null) {
+          message.value = 'FINISH_CURRENT_ORDER';
+          tab.value = SaleService.sellTab;
           return;
         }
-        keptLocally = await _parkTableDraft(tableId.value!);
+        keptLocally = await _parkTableDraft(previousTable);
         if (!keptLocally) return;
+      } else {
+        final current = heldBills
+            .where((bill) => bill.id == activeBill.id)
+            .firstOrNull;
+        final status = previousTable == null
+            ? 'hold'
+            : current == null
+            ? 'occupied'
+            : jsonObject(jsonDecode(current.payload))['table_status']
+                      as String? ??
+                  'hold';
+        if (!await holdCart(tableStatus: status)) return;
       }
       if (!cartEditable) return;
       held = heldBills.where((bill) => bill.tableId == id).firstOrNull;
     }
 
+    if (held != null) {
+      if (cart.isEmpty && _activeBill.value == null) clearCart();
+      resumeBill(held);
+      return;
+    }
     if (parked) {
       await register.run(() async {
         final actor = operator.value!;
@@ -81,11 +120,6 @@ extension TableMethods on SaleService {
         await loadCart(actor);
         tab.value = SaleService.sellTab;
       });
-      return;
-    }
-    if (held != null) {
-      if (cart.isEmpty && _activeBill.value == null) clearCart();
-      resumeBill(held);
       return;
     }
     if (!canAssignTable(id)) {
@@ -129,8 +163,7 @@ extension TableMethods on SaleService {
       final saved = jsonObject(jsonDecode(held.payload));
       return saved['table_status'] as String? ?? 'hold';
     }
-    if (id == tableId.value || table['open_sale_id'] != null) return 'occupied';
-    if (id is String && hasParkedTable(id)) return 'hold';
+    if (table['open_sale_id'] != null) return 'occupied';
     final arrival = DateTime.tryParse(
       table['booking_arrival_at'] as String? ?? '',
     );

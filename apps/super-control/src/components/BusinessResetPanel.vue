@@ -49,6 +49,11 @@
         Categories include products. Products and menus include their related prices, image links, or menu assignments
         where applicable. Saved orders can block menu removal.
       </p>
+      <p v-if="selection.includes('workingDays') || selection.includes('cashierShifts')" class="m-0 text-sm leading-6 text-black/55">
+        Working days include their linked cashier shifts and sales. Cashier shifts include their linked sales,
+        cash movements, closing counts and reopen history. These records are included in the CSV ZIP backup.
+        POS profiles and their settings are kept.
+      </p>
       <p v-if="selection.includes('sales')" class="m-0 text-sm leading-6 text-black/55">
         POS sales include their line items and payments. Removing sales changes the totals for any open cashier shifts they belong to.
       </p>

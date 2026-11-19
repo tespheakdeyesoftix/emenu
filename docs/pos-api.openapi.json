@@ -2052,6 +2052,9 @@
                     "type": "string",
                     "maxLength": 120
                   },
+                  "allow_credit": {
+                    "type": "boolean"
+                  },
                   "external_reference": {
                     "anyOf": [
                       {
@@ -2539,6 +2542,7 @@
           "table_label": { "type": ["string", "null"] },
           "customer_id": { "$ref": "#/components/schemas/Id" },
           "customer_name": { "type": "string" },
+          "note": { "type": ["string", "null"], "maxLength": 500 },
           "lines": {
             "type": "array",
             "minItems": 1,
@@ -2565,11 +2569,15 @@
                   "type": "string",
                   "description": "Empty for the base product price"
                 },
-                "quantity": { "type": "integer", "minimum": 1, "maximum": 999 },
+                "quantity": { "type": "number", "minimum": 0.001, "maximum": 999, "multipleOf": 0.001 },
                 "unit_price_minor": { "$ref": "#/components/schemas/Amount" },
                 "base_price_override_minor": { "anyOf": [{ "$ref": "#/components/schemas/Amount" }, { "type": "null" }] },
+                "price_change_reason": { "type": ["string", "null"], "maxLength": 250 },
+                "free_reason": { "type": ["string", "null"], "maxLength": 250 },
                 "is_free": { "type": "boolean" },
                 "discount_minor": { "$ref": "#/components/schemas/Amount" },
+                "discount_bps": { "type": ["integer", "null"], "minimum": 1, "maximum": 10000 },
+                "discount_note": { "type": ["string", "null"], "maxLength": 250 },
                 "tax_1_amount": { "$ref": "#/components/schemas/Amount" },
                 "tax_2_amount": { "$ref": "#/components/schemas/Amount" },
                 "tax_3_amount": { "$ref": "#/components/schemas/Amount" },
@@ -2770,7 +2778,7 @@
       },
       "Customer": {
         "type": "object",
-        "required": ["id", "name", "external_reference", "is_walk_in"],
+        "required": ["id", "name", "external_reference", "is_walk_in", "allow_credit"],
         "properties": {
           "id": {
             "$ref": "#/components/schemas/Id"
@@ -2791,6 +2799,11 @@
           "is_walk_in": {
             "type": "integer",
             "enum": [0, 1]
+          },
+          "allow_credit": {
+            "type": "integer",
+            "enum": [0, 1],
+            "default": 0
           }
         }
       },
@@ -2801,6 +2814,10 @@
           "name": {
             "type": "string",
             "maxLength": 120
+          },
+          "allow_credit": {
+            "type": "boolean",
+            "default": false
           },
           "external_reference": {
             "anyOf": [
@@ -4067,6 +4084,12 @@
               "submit_orders": {
                 "type": "boolean"
               },
+              "order_line_history": { "type": "boolean" },
+              "order_line_void_reasons": { "type": "boolean" },
+              "price_change_reasons": { "type": "boolean" },
+              "free_item_reasons": { "type": "boolean" },
+              "item_discount_details": { "type": "boolean" },
+              "sale_notes": { "type": "boolean" },
               "shift_management": {
                 "type": "boolean"
               }
@@ -4106,6 +4129,18 @@
           "status"
         ],
         "properties": {
+          "submitted_sales": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "guest_cover", "total_minor"],
+              "properties": {
+                "id": { "$ref": "#/components/schemas/Id" },
+                "guest_cover": { "type": ["integer", "null"] },
+                "total_minor": { "type": "integer" }
+              }
+            }
+          },
           "guest_cover": { "type": ["integer", "null"], "minimum": 1, "maximum": 1000 },
           "booking_arrival_at": { "type": ["string", "null"], "format": "date-time" },
           "booking_pax": { "type": ["integer", "null"], "minimum": 1 },
@@ -4348,6 +4383,10 @@
           "image_url",
           "category_id",
           "menu_ids",
+          "allow_discount",
+          "allow_change_price",
+          "is_open_product",
+          "allow_free",
           "price_minor",
           "portions",
           "modifier_groups"
@@ -4441,6 +4480,10 @@
           "price_minor": {
             "$ref": "#/components/schemas/Amount"
           },
+          "allow_discount": { "type": "boolean", "default": true },
+          "allow_change_price": { "type": "boolean", "default": true },
+          "is_open_product": { "type": "boolean", "default": false },
+          "allow_free": { "type": "boolean", "default": true },
           "portions": {
             "type": "array",
             "items": {
@@ -4517,15 +4560,23 @@
         "type": "object",
         "required": ["product_id", "quantity"],
         "properties": {
+          "line_key": { "$ref": "#/components/schemas/Id" },
+          "order_session": { "$ref": "#/components/schemas/Id" },
+          "ordered_at": { "type": "string", "format": "date-time" },
           "discount_minor": { "$ref": "#/components/schemas/Amount", "description": "Discount from the pretax line subtotal." },
+          "discount_bps": { "type": ["integer", "null"], "minimum": 1, "maximum": 10000, "description": "Percentage discount in basis points, from the pretax line subtotal." },
+          "discount_note": { "type": ["string", "null"], "maxLength": 250 },
           "base_price_override_minor": { "$ref": "#/components/schemas/Amount", "description": "Replacement base price before adding modifiers." },
+          "price_change_reason": { "type": ["string", "null"], "maxLength": 250 },
+          "free_reason": { "type": ["string", "null"], "maxLength": 250 },
           "is_free": { "type": "boolean", "description": "Zeroes the line including its modifiers. Requires a zero discount." },
           "product_id": {
             "$ref": "#/components/schemas/Id"
           },
           "quantity": {
-            "type": "integer",
-            "minimum": 1,
+            "type": "number",
+            "minimum": 0.001,
+            "multipleOf": 0.001,
             "maximum": 999
           },
           "portion_id": {
@@ -4570,10 +4621,28 @@
           }
         }
       },
+      "ItemDeletions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["line_key", "source_line_key", "quantity", "void_reason"],
+          "properties": {
+            "line_key": { "$ref": "#/components/schemas/Id" },
+            "source_line_key": { "$ref": "#/components/schemas/Id" },
+            "quantity": { "type": "number", "minimum": 0.001, "maximum": 999, "multipleOf": 0.001 },
+            "discount_minor": { "type": "integer", "minimum": 0 },
+            "discount_bps": { "type": ["integer", "null"], "minimum": 1, "maximum": 10000 },
+            "discount_note": { "type": ["string", "null"], "maxLength": 250 },
+            "void_reason": { "type": "string", "minLength": 1, "maxLength": 250 }
+          }
+        }
+      },
       "BillCreate": {
         "type": "object",
         "required": ["lines"],
         "properties": {
+          "expected_total_minor": { "$ref": "#/components/schemas/Amount" },
+          "voided_lines": { "$ref": "#/components/schemas/ItemDeletions" },
           "guest_cover": { "type": ["integer", "null"], "minimum": 1, "maximum": 1000 },
           "expected_context": {
             "$ref": "#/components/schemas/ExpectedSaleContext"
@@ -4622,6 +4691,8 @@
         "type": "object",
         "required": ["revision"],
         "properties": {
+          "expected_total_minor": { "$ref": "#/components/schemas/Amount" },
+          "voided_lines": { "$ref": "#/components/schemas/ItemDeletions" },
           "guest_cover": { "type": ["integer", "null"], "minimum": 1, "maximum": 1000 },
           "expected_context": {
             "$ref": "#/components/schemas/ExpectedSaleContext"
@@ -4782,9 +4853,19 @@
           "modifiers"
         ],
         "properties": {
-          "status": { "enum": ["open", "submitted", "paid", "cancelled"] },
+          "status": { "enum": ["new", "submitted", "void", "paid", "cancelled"] },
+          "line_key": { "type": ["string", "null"] },
+          "void_reason": { "type": ["string", "null"] },
+          "order_session": { "type": ["string", "null"] },
+          "ordered_at": { "type": ["string", "null"] },
+          "ordered_by": { "type": ["string", "null"] },
+          "ordered_by_name": { "type": ["string", "null"] },
           "discount_minor": { "type": "integer" },
+          "discount_bps": { "type": ["integer", "null"], "minimum": 1, "maximum": 10000 },
+          "discount_note": { "type": ["string", "null"], "maxLength": 250 },
           "base_price_override_minor": { "anyOf": [{ "$ref": "#/components/schemas/Amount" }, { "type": "null" }] },
+          "price_change_reason": { "type": ["string", "null"], "maxLength": 250 },
+          "free_reason": { "type": ["string", "null"], "maxLength": 250 },
           "is_free": { "type": "boolean" },
           "tax_1_amount": { "type": "integer" },
           "tax_2_amount": { "type": "integer" },
@@ -4838,7 +4919,7 @@
             "type": "string"
           },
           "quantity": {
-            "type": "integer"
+            "type": "number"
           },
           "unit_price_minor": {
             "$ref": "#/components/schemas/Amount"
@@ -4974,7 +5055,7 @@
           "settled_by"
         ],
         "properties": {
-          "item_quantity": {"type": "integer", "description": "Signed item quantity in active history mode."},
+          "item_quantity": {"type": "number", "description": "Signed item quantity in active history mode."},
           "discount_minor": { "type": "integer" },
           "tax_1_amount": { "type": "integer" },
           "tax_2_amount": { "type": "integer" },
@@ -5422,6 +5503,10 @@
             "items": {
               "$ref": "#/components/schemas/BillLine"
             }
+          },
+          "voided_lines": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/BillLine" }
           },
           "payments": {
             "type": "array",

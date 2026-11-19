@@ -12,21 +12,31 @@ extension SaleMethods on SaleController {
 
   Future<void> addProduct(BuildContext context, Json product) async {
     if (!service.cartEditable) return;
-    if (jsonRows(product['portions']).isEmpty &&
-        jsonRows(product['modifier_groups']).isEmpty) {
-      service.add(CartLine(product));
+    final generation = service.billGeneration;
+    final line =
+        jsonRows(product['portions']).isEmpty &&
+            jsonRows(product['modifier_groups']).isEmpty
+        ? CartLine(product)
+        : await chooseOptions(context, product, null);
+    if (!context.mounted ||
+        line == null ||
+        generation != service.billGeneration)
       return;
-    }
-    final line = await chooseOptions(context, product, null);
-    if (context.mounted && line != null) service.add(line);
+    final added = service.add(line);
+    if (added != null) selectedLine.value = added;
   }
 
   Future<void> pay(BuildContext context, int total) async {
     if (!service.canSubmit) return;
+    if (total != service.cartTotal) {
+      service.message.value = 'PRICE_CHANGED';
+      return;
+    }
     if (total == 0) {
       await service.checkout(const []);
       return;
     }
+    final generation = service.billGeneration;
     final payments = await showDialog<List<Json>>(
       context: context,
       builder: (_) => PaymentDialog(
@@ -37,7 +47,17 @@ extension SaleMethods on SaleController {
         defaultType: service.quoteConfig['default_payment_type_id'] as String?,
       ),
     );
-    if (context.mounted && payments != null) await service.checkout(payments);
+    if (!context.mounted ||
+        payments == null ||
+        generation != service.billGeneration ||
+        !service.canSubmit) {
+      return;
+    }
+    if (total != service.cartTotal) {
+      service.message.value = 'PRICE_CHANGED';
+      return;
+    }
+    await service.checkout(payments);
   }
 
   Future<void> submitOrder(BuildContext context) async {
@@ -78,95 +98,227 @@ extension SaleMethods on SaleController {
           replaceLine(line, service.withOptions(line, next));
         }
       case CartAction.free:
-        replaceLine(line, service.toggleFree(line));
-      case CartAction.note:
-        final note = await editValueDialog(
-          context,
-          label: 'cart_note',
-          initial: line.note ?? '',
-          isNote: true,
-          validate: (value) =>
-              value.trim().length > 500 ? 'INVALID_LINE_EDIT'.tr : null,
-        );
-        if (context.mounted && note != null) {
-          replaceLine(
-            line,
-            line.withLineEdits({...line.lineEdits, 'note': note}),
-          );
+        if (line.isFree) {
+          replaceLine(line, service.restorePrice(line));
+        } else {
+          await markItemFree(context, line);
         }
+      case CartAction.note:
+        await editItemNote(context, line);
       case CartAction.discount:
-        await editAmount(context, line, discount: true);
+        if (line.hasDiscount) {
+          replaceLine(line, line.withDiscount());
+        } else {
+          await editDiscount(context, line);
+        }
     }
   }
 
-  Future<void> editAmount(
-    BuildContext context,
-    CartLine line, {
-    required bool discount,
-  }) async {
-    final currency = service.currency;
-    final key = discount ? 'discount_minor' : 'base_price_override_minor';
-    final value = await editValueDialog(
-      context,
-      label: discount ? 'cart_discount' : 'cart_base_price',
-      initial: amountInputValue(
-        discount ? line.discount : line.basePrice,
-        currency,
-      ),
-      allowReset: !discount && line.basePriceOverride != null,
-      decimal: currency == 'USD',
-      validate: (input) => service.validLineAmount(line, key, input)
-          ? null
-          : 'INVALID_LINE_EDIT'.tr,
-    );
-    if (context.mounted && value != null) {
-      replaceLine(
-        line,
-        line.withLineEdits({
-          ...line.lineEdits,
-          key: parseAmount(value, currency),
-        }),
+  Future<void> editItemNote(BuildContext context, CartLine line) async {
+    if (!service.supportsCartLineEdits || line.voided) return;
+    try {
+      await NoteDialogWidget.edit(
+        context,
+        database: service.database,
+        noteKey: line.product['id'] as String,
+        title: 'cart_note'.tr,
+        initial: line.note,
+        apply: (note) {
+          if (!service.supportsCartLineEdits ||
+              !service.cartEditable ||
+              !service.cart.contains(line)) {
+            return false;
+          }
+          final next = line.withLineEdits({...line.lineEdits, 'note': note});
+          replaceLine(line, next);
+          return service.cart.contains(next);
+        },
       );
+    } catch (error) {
+      service.register.showError(error);
+    }
+  }
+
+  Future<void> editSaleNote(BuildContext context) async {
+    if (!service.cartEditable || !service.supportsSaleNotes) return;
+    final generation = service.billGeneration;
+    final profileId = jsonObject(service.context['profile'])['id'];
+    try {
+      await NoteDialogWidget.edit(
+        context,
+        database: service.database,
+        noteKey: 'sale:$profileId',
+        title: 'sale_note'.tr,
+        initial: service.saleNote.value,
+        apply: (note) =>
+            generation == service.billGeneration && service.setSaleNote(note),
+      );
+    } catch (error) {
+      service.register.showError(error);
+    }
+  }
+
+  Future<void> markItemFree(BuildContext context, CartLine line) async {
+    if (!service.supportsFreeItemReasons || line.voided) return;
+    if (!service.checkProductEdit(line, CartProductEdit.free)) return;
+    try {
+      final reasons = await service.database.freeItemReasons();
+      if (!context.mounted ||
+          !service.cartEditable ||
+          !service.cart.contains(line)) {
+        return;
+      }
+      if (!service.checkProductEdit(line, CartProductEdit.free)) return;
+      final choice = await showDialog<FreeItem>(
+        context: context,
+        builder: (_) => FreeItemDialog(quantity: line.quantity, reasons: reasons),
+      );
+      if (choice == null || !context.mounted) return;
+      final free = await service.markItemFree(
+        line,
+        choice.quantity,
+        choice.reason.text,
+        remember: choice.reason.remember,
+      );
+      if (free != null && !isClosed && service.cart.contains(free)) {
+        selectedLine.value = free;
+      }
+    } catch (error) {
+      service.register.showError(error);
+    }
+  }
+
+  Future<void> editPrice(BuildContext context, CartLine line) async {
+    bool editable() => service.cartEditable && service.cart.contains(line) &&
+        service.supportsCartLineEdits && !line.voided && !line.isFree;
+    if (!editable() || !service.checkProductEdit(line, CartProductEdit.price)) {
+      return;
+    }
+    final currency = service.currency;
+    const key = 'base_price_override_minor';
+    try {
+      final reasons = await service.database.priceReasons();
+      if (!context.mounted || !editable()) return;
+      final change = await showDialog<PriceChange>(
+        context: context,
+        builder: (_) => ChangePriceDialog(
+          line: line,
+          currency: currency,
+          reasons: reasons,
+          validAmount: (amount) =>
+              service.validLineAmount(line, key, amountInputValue(amount, currency)),
+        ),
+      );
+      if (change == null || !context.mounted || !editable()) return;
+      if (!service.checkProductEdit(line, CartProductEdit.price)) return;
+      final override = change.amount == line.catalogBase ? null : change.amount;
+      if (line.basePriceOverride == override) return;
+      final next = line.withLineEdits({
+        ...line.lineEdits,
+        key: override,
+        'price_change_reason': change.reason,
+      });
+      replaceLine(line, next);
+      if (change.remember && service.cart.contains(next)) {
+        await service.database.rememberPriceReason(change.reason);
+      }
+    } catch (error) {
+      service.register.showError(error);
+    }
+  }
+
+  Future<void> editDiscount(BuildContext context, CartLine line) async {
+    bool editable() => service.cartEditable && service.cart.contains(line) &&
+        service.supportsItemDiscountDetails && !line.voided && !line.isFree &&
+        !line.hasDiscount;
+    if (!editable() || !service.checkProductEdit(line, CartProductEdit.discount)) {
+      return;
+    }
+    try {
+      final reasons = await service.database.discountReasons();
+      if (!context.mounted || !editable()) return;
+      final subtotal = service.totalOf(line).subtotal;
+      if (subtotal == 0) {
+        service.message.value = 'INVALID_LINE_EDIT';
+        return;
+      }
+      final discount = await showDialog<ItemDiscount>(
+        context: context,
+        builder: (_) => ItemDiscountDialog(
+          currency: service.currency,
+          subtotal: subtotal,
+          reasons: reasons,
+        ),
+      );
+      if (!context.mounted || discount == null || !editable() ||
+          !service.checkProductEdit(line, CartProductEdit.discount)) {
+        return;
+      }
+      final next = line.withDiscount(
+        amount: discount.amount,
+        bps: discount.bps,
+        note: discount.reason.text,
+      );
+      replaceLine(line, next);
+      if (discount.reason.remember && service.cart.contains(next)) {
+        await service.database.rememberDiscountReason(discount.reason.text);
+      }
+    } catch (error) {
+      service.register.showError(error);
     }
   }
 
   Future<void> editQuantity(BuildContext context, CartLine line) async {
-    final value = await editValueDialog(
-      context,
-      label: 'cart_qty',
-      initial: '${line.quantity}',
-      validate: (input) {
-        final quantity = int.tryParse(input);
-        return quantity != null && quantity >= 1 && quantity <= 999
-            ? null
-            : 'cart_invalid_quantity'.tr;
-      },
+    if (!line.canEditQuantity || !service.cartEditable) return;
+    final value = await app.input_number(
+      title: 'cart_qty'.tr,
+      value: line.quantity,
+      isFloat: true,
+      decimalPlaces: 3,
+      min: 0.001,
+      max: 999,
     );
-    if (context.mounted && value != null) {
-      replaceLine(line, line.withQuantity(int.parse(value)));
+    if (value != null && context.mounted && service.cartEditable) {
+      replaceLine(line, line.withQuantity(normalizedQuantity(value)));
     }
   }
 
   Future<void> deleteLine(BuildContext context, CartLine line) async {
-    final confirmed = await showDialog<bool>(
+    final index = service.cart.indexOf(line);
+    if (!service.cartEditable || line.voided || index < 0) return;
+    if (!line.submitted) {
+      service.quantity(index, 0);
+      if (identical(selectedLine.value, line)) selectedLine.value = null;
+      return;
+    }
+
+    final List<String> reasons;
+    try {
+      reasons = await service.database.deletionReasons();
+    } catch (error) {
+      service.register.showError(error);
+      return;
+    }
+    if (!context.mounted || !service.cart.contains(line)) return;
+    final deletion = await showDialog<ItemDeletion>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('cart_delete_item'.tr),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('back'.tr),
-          ),
-          RegisterButton(
-            'cart_delete',
-            onPressed: () => Navigator.pop(context, true),
-          ),
-        ],
+      builder: (_) => DeleteCartItemDialog(
+        line: line,
+        reasons: reasons,
+        database: service.database,
       ),
     );
-    if (confirmed == true && context.mounted) {
-      service.quantity(service.cart.indexOf(line), 0);
-      selectedLine.value = null;
+    if (deletion != null && context.mounted) {
+      final remaining = await service.deleteQuantity(
+        line,
+        deletion.quantity,
+        deletion.reason,
+        deletion.remember,
+      );
+      if (!isClosed &&
+          identical(selectedLine.value, line) &&
+          !service.cart.contains(line))
+        selectedLine.value = remaining;
     }
   }
 }

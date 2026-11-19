@@ -1,17 +1,19 @@
 import 'package:flutter/material.dart';
 
 abstract final class AppColors {
-  static const canvas = Colors.white;
-  static const ink = Color(0xff262626);
+  static const canvas = Color(0xfff5f5f5);
+  static const ink = Color(0xff171717);
   static const muted = Color(0xff595959);
-  static const primary = Color(0xffb42318);
+  static const primary = ink;
+  static const success = Color(0xff15803d);
+  static const warning = Color(0xffbf4b00);
   static const secondary = Color(0xfff5f5f5);
   static const secondaryContainer = secondary;
   static const onSecondaryContainer = ink;
-  static const line = Color(0xffe2e2e2);
+  static const line = Color(0xffdddddd);
   static const card = Colors.white;
   static const menuCard = secondary;
-  static const selectedCard = Color(0xffebebeb);
+  static const selectedCard = Color(0xffe8e8e8);
   static const cardOutline = line;
   static const cardMuted = muted;
 }
@@ -20,30 +22,34 @@ abstract final class AppTheme {
   static final light = _light();
 
   static ThemeData _light() {
-    final colors = ColorScheme.fromSeed(seedColor: AppColors.primary).copyWith(
-      primary: AppColors.primary,
-      onPrimary: Colors.white,
-      primaryContainer: const Color(0xffffe5e0),
-      onPrimaryContainer: const Color(0xff7a2018),
-      secondary: AppColors.secondary,
-      onSecondary: AppColors.ink,
-      secondaryContainer: AppColors.secondaryContainer,
-      onSecondaryContainer: AppColors.onSecondaryContainer,
-      surface: Colors.white,
-      onSurface: AppColors.ink,
-      onSurfaceVariant: AppColors.muted,
-      surfaceContainerLowest: Colors.white,
-      surfaceContainerLow: const Color(0xfffafafa),
-      surfaceContainer: AppColors.secondary,
-      surfaceContainerHigh: const Color(0xffefefef),
-      surfaceContainerHighest: const Color(0xffe8e8e8),
-      outline: const Color(0xff808080),
-      outlineVariant: AppColors.line,
-      error: const Color(0xffa11930),
-      errorContainer: const Color(0xffffe9ed),
-      onErrorContainer: const Color(0xff81152a),
-      surfaceTint: Colors.transparent,
-    );
+    final colors =
+        ColorScheme.fromSeed(
+          seedColor: AppColors.primary,
+          dynamicSchemeVariant: DynamicSchemeVariant.monochrome,
+        ).copyWith(
+          primary: AppColors.primary,
+          onPrimary: Colors.white,
+          primaryContainer: AppColors.selectedCard,
+          onPrimaryContainer: AppColors.ink,
+          secondary: AppColors.secondary,
+          onSecondary: AppColors.ink,
+          secondaryContainer: AppColors.secondaryContainer,
+          onSecondaryContainer: AppColors.onSecondaryContainer,
+          surface: Colors.white,
+          onSurface: AppColors.ink,
+          onSurfaceVariant: AppColors.muted,
+          surfaceContainerLowest: Colors.white,
+          surfaceContainerLow: const Color(0xfffafafa),
+          surfaceContainer: AppColors.secondary,
+          surfaceContainerHigh: const Color(0xffefefef),
+          surfaceContainerHighest: const Color(0xffe8e8e8),
+          outline: const Color(0xff858585),
+          outlineVariant: AppColors.line,
+          error: const Color(0xffa11930),
+          errorContainer: const Color(0xffffe9ed),
+          onErrorContainer: const Color(0xff81152a),
+          surfaceTint: Colors.transparent,
+        );
     final base = ThemeData(
       useMaterial3: true,
       colorScheme: colors,
@@ -96,7 +102,7 @@ abstract final class AppTheme {
     );
     final fieldBorder = OutlineInputBorder(
       borderRadius: BorderRadius.circular(14),
-      borderSide: const BorderSide(color: AppColors.line),
+      borderSide: BorderSide(color: colors.outline),
     );
     return base.copyWith(
       scaffoldBackgroundColor: AppColors.canvas,
@@ -132,7 +138,9 @@ abstract final class AppTheme {
         focusedErrorBorder: fieldBorder.copyWith(
           borderSide: BorderSide(color: colors.error, width: 1.6),
         ),
-        disabledBorder: fieldBorder,
+        disabledBorder: fieldBorder.copyWith(
+          borderSide: const BorderSide(color: AppColors.line),
+        ),
         labelStyle: text.bodyMedium?.copyWith(color: AppColors.muted),
         prefixIconColor: AppColors.muted,
       ),

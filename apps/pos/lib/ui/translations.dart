@@ -2,6 +2,17 @@ import 'package:get/get.dart';
 
 class PosTranslations extends Translations {
   static const _labels = <String, (String, String)>{
+    'exit_sale_title': ('ចាកចេញពីការលក់?', 'Leave this sale?'),
+    'exit_sale_message': (
+      'បើជ្រើសបន្ត ទំនិញដែលទើបបន្ថែមនឹងត្រូវបានសម្អាត។',
+      'Choose Continue to clear your unsaved changes, including the newly added items.',
+    ),
+    'exit_hold_order': ('ទុកការបញ្ជាទិញ', 'Hold Order'),
+    'exit_submit_order': ('បញ្ជូនការបញ្ជាទិញ', 'Submit Order'),
+    'exit_continue': ('បន្ត', 'Continue'),
+    'cart_new_line': ('ថ្មី', 'New'),
+    'cart_current_order': ('ការបញ្ជាទិញបច្ចុប្បន្ន', 'Current order'),
+    'clear_search': ('សម្អាតការស្វែងរក', 'Clear search'),
     'cart_submit': ('បញ្ជូន', 'Submit'),
     'cart_submit_confirm': (
       'តើអ្នកប្រាកដថាចង់បញ្ជូនការបញ្ជាទិញនេះមែនទេ?',
@@ -63,6 +74,9 @@ class PosTranslations extends Translations {
     'catalog_image_top': ('រូបភាពនៅខាងលើ', 'Image top'),
     'catalog_image_left': ('រូបភាពនៅខាងឆ្វេង', 'Image left'),
     'catalog_empty': ('គ្មានផលិតផល', 'No products'),
+    'catalog_no_matches': ('រកមិនឃើញផលិតផល', 'No matching products'),
+    'catalog_show_all': ('បង្ហាញផលិតផលទាំងអស់', 'Show all products'),
+    'catalog_back_to_top': ('ត្រឡប់ទៅខាងលើ', 'Back to top'),
     'catalog_empty_detail': (
       'បើកថតផ្សេង ឬផ្លាស់ប្តូរពាក្យស្វែងរក។',
       'Open another folder or change your search.',
@@ -148,6 +162,7 @@ class PosTranslations extends Translations {
     'select_profile': ('ជ្រើសរើសម៉ាស៊ីនគិតលុយ', 'Select a POS profile'),
     'save': ('រក្សាទុក', 'Save'),
     'back': ('ថយក្រោយ', 'Back'),
+    'next': ('បន្ទាប់', 'Next'),
     'lock': ('ចាក់សោ', 'Lock'),
     'sell': ('លក់', 'Sell'),
     'history': ('ការលក់', 'Sales'),
@@ -205,6 +220,11 @@ class PosTranslations extends Translations {
     'customer_no_group': ('គ្មានក្រុម', 'No group'),
     'customer_reference': ('លេខយោង', 'External reference'),
     'customer_membership': ('សមាជិក', 'Membership'),
+    'customer_allow_credit': ('អនុញ្ញាតឱ្យជំពាក់', 'Allow credit'),
+    'CUSTOMER_CREDIT_UPGRADE': (
+      'សូមធ្វើបច្ចុប្បន្នភាពម៉ាស៊ីនមេ POS ដើម្បីកំណត់ការអនុញ្ញាតឱ្យអតិថិជនជំពាក់។',
+      'Update the POS server to save customer credit permissions.',
+    ),
     'customer_member_code_required': (
       'សមាជិកត្រូវមានកូដអតិថិជន',
       'Membership requires a customer code',
@@ -258,18 +278,54 @@ class PosTranslations extends Translations {
     'cart_qty': ('ចំនួន', 'Qty'),
     'cart_decrease': ('បន្ថយចំនួន', 'Decrease quantity'),
     'cart_increase': ('បង្កើនចំនួន', 'Increase quantity'),
-    'cart_reorder': ('បញ្ជាទិញម្ដងទៀត', 'Re-Order'),
+    'cart_reorder': ('ទិញម្តងទៀត', 'Re-Order'),
     'cart_delete': ('លុប', 'Delete'),
     'cart_delete_item': ('លុបទំនិញនេះ?', 'Delete this item?'),
+    'cart_delete_qty': ('ចំនួនត្រូវលុប', 'Quantity to delete'),
+    'cart_delete_range': (
+      'បញ្ចូលចំនួនពី 0.001 ដល់ @max',
+      'Enter a quantity from 0.001 to @max',
+    ),
+    'cart_remember_reason': (
+      'រក្សាទុកមូលហេតុសម្រាប់ប្រើម្ដងទៀត',
+      'Save reason for next time',
+    ),
+    'cart_forget_reason': ('លុបមូលហេតុដែលបានរក្សាទុក', 'Remove saved reason'),
     'cart_more': ('បន្ថែម', 'More'),
     'cart_order_actions': ('សកម្មភាពបញ្ជាទិញ', 'Order actions'),
     'cart_edit_options': ('កែជម្រើស', 'Edit'),
+    'product_option_portion': ('ទំហំ', 'Portion'),
+    'product_option_required': ('តម្រូវ', 'Required'),
     'cart_mark_free': ('កំណត់ជាឥតគិតថ្លៃ', 'Mark as Free'),
+    'cart_free_qty': ('ចំនួនឥតគិតថ្លៃ', 'Free quantity'),
     'cart_restore_price': ('ស្ដារតម្លៃ', 'Restore Price'),
     'cart_free': ('ឥតគិតថ្លៃ', 'Free'),
     'cart_note': ('កំណត់ចំណាំ', 'Note'),
+    'sale_note': ('កំណត់ចំណាំការលក់', 'Sale note'),
+    'cart_remember_note': ('រក្សាទុកកំណត់ចំណាំសម្រាប់ប្រើម្ដងទៀត', 'Save note for next time'),
+    'cart_note_too_long': ('កំណត់ចំណាំត្រូវមានមិនលើសពី 500 តួអក្សរ។', 'Use up to 500 characters.'),
     'cart_discount': ('បញ្ចុះតម្លៃ', 'Discount'),
+    'cart_discount_percent': ('ភាគរយ', 'Percentage'),
+    'cart_discount_amount': ('ចំនួនទឹកប្រាក់', 'Amount'),
+    'cart_discount_note': ('កំណត់ចំណាំបញ្ចុះតម្លៃ', 'Discount note'),
+    'cart_cancel_discount': ('បោះបង់ការបញ្ចុះតម្លៃ', 'Cancel discount'),
+    'PRODUCT_PRICE_CHANGE_NOT_ALLOWED': (
+      'មិនអនុញ្ញាតឱ្យប្តូរតម្លៃផលិតផលនេះទេ',
+      'Price changes are disabled for this product.',
+    ),
+    'PRODUCT_FREE_NOT_ALLOWED': (
+      'មិនអនុញ្ញាតឱ្យផ្តល់ផលិតផលនេះដោយឥតគិតថ្លៃទេ',
+      'This product cannot be marked as free.',
+    ),
+    'PRODUCT_DISCOUNT_NOT_ALLOWED': (
+      'មិនអនុញ្ញាតឱ្យបញ្ចុះតម្លៃផលិតផលនេះទេ',
+      'Discounts are disabled for this product.',
+    ),
     'cart_tax_level': ('ពន្ធ', 'Tax'),
+    'cart_tax_discount_review': (
+      'កែការបញ្ចុះតម្លៃដែលលើសពីតម្លៃមុនពន្ធថ្មី រួចទូទាត់។',
+      'Adjust any discount above the recalculated subtotal before completing the sale.',
+    ),
     'cart_invalid_quantity': (
       'បញ្ចូលចំនួនពី ១ ដល់ ៩៩៩',
       'Enter a quantity from 1 to 999',
@@ -680,6 +736,10 @@ class PosTranslations extends Translations {
     'HOLD_CURRENT_BILL': (
       'ទុកវិក្កយបត្របច្ចុប្បន្នជាមុន',
       'Hold the current bill first',
+    ),
+    'FINISH_CURRENT_ORDER': (
+      'សូមបញ្ជូន ឬបោះបង់ការបញ្ជាទិញបច្ចុប្បន្នជាមុន',
+      'Submit or discard the current order first',
     ),
     'WORKING_DAY_REQUIRED': ('បើកថ្ងៃធ្វើការមុន', 'Open the working day first'),
     'CASHIER_SHIFT_REQUIRED': ('បើកវេនគិតលុយមុន', 'Open a cashier shift first'),

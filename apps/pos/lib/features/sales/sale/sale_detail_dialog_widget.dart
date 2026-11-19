@@ -211,44 +211,80 @@ class _SaleDetailDialogWidgetState extends State<SaleDetailDialogWidget> {
     final currency = data['currency'] as String? ?? _entry.currency;
     final total = data['total_minor'] as int? ?? _entry.amount;
     final reason = data['reason'] as String?;
+    final saleNote = data['note'] as String?;
     final original =
         data['reverses_sale_id'] as String? ?? _entry.sale?.reversesSaleId;
     final reversedBy = data['reversed_by_sale_id'] as String?;
 
     final itemRows = <Widget>[];
-    for (final saved in lines) {
-      final line = isHeldSnapshot
-          ? CartLine.fromHeldSnapshot(saved).quote(historyObject(config))
-          : saved;
-      final name =
-          line['name_$language'] ?? line['product_name'] ?? line['product_id'];
-      final portion =
-          line['portion_name'] ?? historyObject(saved['portion'])['label'];
-      final note = line['note'] as String?;
-      for (final field in const [
-        'subtotal_minor',
-        'discount_minor',
-        'tax_minor',
-      ]) {
-        if (line[field] case final int amount) {
-          totals.update(field, (sum) => sum + amount, ifAbsent: () => amount);
-        }
+    final groups = <Object?, List<Json>>{};
+    for (final line in [...lines, ...jsonRows(data['voided_lines'])]) {
+      (groups[line['order_session']] ??= []).add(line);
+    }
+    for (final group in groups.values) {
+      final first = group.first;
+      final time = DateTime.tryParse(first['ordered_at'] as String? ?? '');
+      if (time != null) {
+        itemRows.add(
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              [
+                salesActivityLabel(context, time, widget.timeZone),
+                ?first['ordered_by_name'],
+              ].join(' · '),
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+          ),
+        );
       }
-      itemRows.add(
-        _detailRow(
-          '${line['quantity']} × $name${portion == null ? '' : ' · $portion'}'
-          '${note == null || note.isEmpty ? '' : '\n$note'}',
-          line['total_minor'] is int
-              ? displayAmount(line['total_minor'] as int, currency)
-              : '—',
-        ),
-      );
+      for (final saved in group) {
+        final voided = saved['status'] == 'void';
+        final line = isHeldSnapshot || saved['product'] is Map
+            ? CartLine.fromHeldSnapshot(saved).quote(historyObject(config))
+            : saved;
+        final name =
+            line['name_$language'] ??
+            line['product_name'] ??
+            line['product_id'];
+        final portion =
+            line['portion_name'] ?? historyObject(saved['portion'])['label'];
+        final note = line['note'] as String?;
+        final freeReason = line['free_reason'] as String?;
+        final discountNote = line['discount_note'] as String?;
+        final voidReason = line['void_reason'] as String?;
+        for (final field in const [
+          'subtotal_minor',
+          'discount_minor',
+          'tax_minor',
+        ]) {
+          if (line[field] case final int amount when !voided) {
+            totals.update(field, (sum) => sum + amount, ifAbsent: () => amount);
+          }
+        }
+        itemRows.add(
+          _detailRow(
+            '${line['quantity']} × $name${portion == null ? '' : ' · $portion'}'
+            '${note == null || note.isEmpty ? '' : '\n$note'}'
+            '${freeReason == null ? '' : '\n${'cart_free'.tr} · $freeReason'}'
+            '${discountNote == null ? '' : '\n${'cart_discount'.tr} · $discountNote'}'
+            '${voidReason == null ? '' : '\n$voidReason'}',
+            voided
+                ? 'sales_void'.tr
+                : line['total_minor'] is int
+                ? displayAmount(line['total_minor'] as int, currency)
+                : '—',
+          ),
+        );
+      }
     }
     final names = historyObject(receipt['payment_type_names']);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _header(data),
+        if (saleNote != null && saleNote.isNotEmpty)
+          Text('${'sale_note'.tr} · $saleNote'),
         if (original != null)
           Text('${'original_receipt'.tr} #${saleHistoryReference(original)}'),
         if (reversedBy != null)

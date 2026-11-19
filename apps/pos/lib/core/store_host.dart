@@ -371,7 +371,10 @@ class StoreHost {
       if (shift != null)
         'cashier_shift': cashierShiftMetadata(shift, shiftManager(actor.role)),
       'store_cart_line_edits': true,
+      'store_free_item_reasons': true,
+      'store_item_discount_details': true,
       'store_bill_information': true,
+      'store_sale_notes': true,
       if (requestCustomerDirectory != null) 'store_customer_directory': true,
       'operator': {
         'id': actor.operatorId,

@@ -1748,6 +1748,15 @@ function parseSortOrder(value: unknown) {
 }
 
 async function productOptions(body: Json, db: D1Database, businessId: string) {
+  const posFields = ["allowDiscount", "allowChangePrice", "isOpenProduct", "allowFree"] as const;
+  for (const field of posFields) {
+    const value = body[field];
+    if (value !== undefined && typeof value !== "boolean" && value !== 0 && value !== 1)
+      return { error: `${field} must be a boolean` };
+  }
+  const posOptions = Object.fromEntries(posFields.map((field) =>
+    [field, body[field] === undefined ? null : Number(body[field])],
+  ));
   const unit = String(body.unit ?? "")
     .trim()
     .slice(0, 40);
@@ -1855,7 +1864,7 @@ async function productOptions(body: Json, db: D1Database, businessId: string) {
     return { error: "Product options are too large" };
   if (!await ownsPortionBranches(db, businessId, portions as Array<{ branchId?: string | null }>))
     return { error: "Choose portion branches that belong to this business" };
-  return { unit, portions, modifierGroups };
+  return { unit, portions, modifierGroups, posOptions };
 }
 
 function productPriceRange(
@@ -5915,6 +5924,8 @@ async function handle(request: Request, env: Env, execution: ExecutionContext): 
             product.image_url AS imageUrl,
             product.primary_media_id AS primaryMediaId,
             product.is_featured AS isFeatured,
+            product.allow_discount AS allowDiscount, product.allow_change_price AS allowChangePrice,
+            product.is_open_product AS isOpenProduct, product.allow_free AS allowFree,
              product.is_available AS isAvailable, product.sort_order AS sortOrder,
              product.created_at AS createdAt, product.updated_at AS updatedAt
            FROM products product WHERE ${whereSql}
@@ -6181,8 +6192,8 @@ async function handle(request: Request, env: Env, execution: ExecutionContext): 
         `INSERT INTO products
          (id,business_id,category_id,code,rating,name,name_km,name_en,name_zh,slug,description,
           price_cents,max_price,unit,portions_json,modifier_groups_json,image_url,primary_media_id,
-          is_featured,is_available,sort_order)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          is_featured,is_available,sort_order,allow_discount,allow_change_price,is_open_product,allow_free)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       ).bind(
         productId,
         auth.businessId,
@@ -6209,6 +6220,10 @@ async function handle(request: Request, env: Env, execution: ExecutionContext): 
         body.isFeatured ? 1 : 0,
         body.isAvailable === false ? 0 : 1,
         sortOrder,
+        options.posOptions.allowDiscount ?? 1,
+        options.posOptions.allowChangePrice ?? 1,
+        options.posOptions.isOpenProduct ?? 0,
+        options.posOptions.allowFree ?? 1,
       ),
       ...mediaIds.map((mediaId, index) =>
         env.DB.prepare(
@@ -6658,7 +6673,10 @@ async function handle(request: Request, env: Env, execution: ExecutionContext): 
         `UPDATE products SET code=?, rating=?, category_id=?, name=?, name_km=?, name_en=?, name_zh=?,
           slug=?, description=?, price_cents=?, max_price=?, unit=?, portions_json=?, modifier_groups_json=?,
          image_url=?, primary_media_id=?,
-         is_featured=?, is_available=?, sort_order=?, updated_at=CURRENT_TIMESTAMP
+         is_featured=?, is_available=?, sort_order=?,
+         allow_discount=COALESCE(?,allow_discount), allow_change_price=COALESCE(?,allow_change_price),
+         is_open_product=COALESCE(?,is_open_product), allow_free=COALESCE(?,allow_free),
+         updated_at=CURRENT_TIMESTAMP
          WHERE id=? AND business_id=?`,
       ).bind(
         code,
@@ -6684,6 +6702,10 @@ async function handle(request: Request, env: Env, execution: ExecutionContext): 
         body.isFeatured ? 1 : 0,
         body.isAvailable === false ? 0 : 1,
         sortOrder,
+        options.posOptions.allowDiscount,
+        options.posOptions.allowChangePrice,
+        options.posOptions.isOpenProduct,
+        options.posOptions.allowFree,
         productId,
         auth.businessId,
       ),
@@ -7566,7 +7588,7 @@ async function executeBusinessClone(
        (id,business_id,category_id,name,slug,description,price_cents,max_price,
         image_url,calories,prep_minutes,is_featured,is_available,sort_order,
         name_km,name_en,name_zh,primary_media_id,code,unit,portions_json,
-        modifier_groups_json,rating)
+        modifier_groups_json,rating,allow_discount,allow_change_price,is_open_product,allow_free)
        SELECT json_extract(value,'$.id'),?,json_extract(value,'$.category_id'),
         json_extract(value,'$.name'),json_extract(value,'$.slug'),
         json_extract(value,'$.description'),json_extract(value,'$.price_cents'),
@@ -7577,7 +7599,11 @@ async function executeBusinessClone(
         json_extract(value,'$.name_en'),json_extract(value,'$.name_zh'),
         json_extract(value,'$.primary_media_id'),json_extract(value,'$.code'),
         json_extract(value,'$.unit'),json_extract(value,'$.portions_json'),
-        json_extract(value,'$.modifier_groups_json'),json_extract(value,'$.rating')
+        json_extract(value,'$.modifier_groups_json'),json_extract(value,'$.rating'),
+        COALESCE(json_extract(value,'$.allow_discount'),1),
+        COALESCE(json_extract(value,'$.allow_change_price'),1),
+        COALESCE(json_extract(value,'$.is_open_product'),0),
+        COALESCE(json_extract(value,'$.allow_free'),1)
        FROM json_each(?)`,
       targetId,
     ),

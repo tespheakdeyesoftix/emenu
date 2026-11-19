@@ -6,6 +6,7 @@ import 'package:drift/extensions/json1.dart';
 import 'package:drift/native.dart';
 
 import 'pos_api.dart';
+import 'pricing.dart';
 import 'register_history_scope.dart';
 
 part 'register_database.g.dart';
@@ -283,11 +284,119 @@ class RegisterDatabase extends _$RegisterDatabase {
       RegisterDatabase(NativeDatabase.createInBackground(file));
 
   @override
-  int get schemaVersion => 16;
+  int get schemaVersion => 21;
+
+  Future<void> _createSavedNotes() => customStatement('''
+    CREATE TABLE IF NOT EXISTS saved_notes (
+      note_key TEXT NOT NULL,
+      note TEXT NOT NULL COLLATE NOCASE,
+      PRIMARY KEY (note_key, note)
+    )
+  ''');
+
+  Future<List<String>> savedNotes(String noteKey) async => (await customSelect(
+    'SELECT note FROM saved_notes WHERE note_key=? ORDER BY note COLLATE NOCASE',
+    variables: [Variable<String>(noteKey)],
+  ).get()).map((row) => row.read<String>('note')).toList();
+
+  Future<void> rememberNote(String noteKey, String note) => customStatement(
+    'INSERT OR IGNORE INTO saved_notes(note_key,note) VALUES(?,?)',
+    [noteKey, note],
+  );
+
+  Future<void> _createDiscountReasons() => customStatement(
+    'CREATE TABLE IF NOT EXISTS cart_discount_reasons (reason TEXT PRIMARY KEY COLLATE NOCASE)',
+  );
+
+  Future<List<String>> discountReasons() async => (await customSelect(
+    'SELECT reason FROM cart_discount_reasons ORDER BY reason COLLATE NOCASE',
+  ).get()).map((row) => row.read<String>('reason')).toList();
+
+  Future<void> rememberDiscountReason(String reason) => customStatement(
+    'INSERT OR IGNORE INTO cart_discount_reasons(reason) VALUES(?)',
+    [reason],
+  );
+
+  Future<void> _createFreeItemReasons() => customStatement(
+    'CREATE TABLE IF NOT EXISTS cart_free_reasons (reason TEXT PRIMARY KEY COLLATE NOCASE)',
+  );
+
+  Future<List<String>> freeItemReasons() async => (await customSelect(
+    'SELECT reason FROM cart_free_reasons ORDER BY reason COLLATE NOCASE',
+  ).get()).map((row) => row.read<String>('reason')).toList();
+
+  Future<void> rememberFreeItemReason(String reason) => customStatement(
+    'INSERT OR IGNORE INTO cart_free_reasons(reason) VALUES(?)',
+    [reason],
+  );
+
+  Future<void> _createPriceReasons() => customStatement(
+    'CREATE TABLE IF NOT EXISTS cart_price_reasons (reason TEXT PRIMARY KEY COLLATE NOCASE)',
+  );
+
+  Future<List<String>> priceReasons() async => (await customSelect(
+    'SELECT reason FROM cart_price_reasons ORDER BY reason COLLATE NOCASE',
+  ).get()).map((row) => row.read<String>('reason')).toList();
+
+  Future<void> rememberPriceReason(String reason) => customStatement(
+    'INSERT OR IGNORE INTO cart_price_reasons(reason) VALUES(?)',
+    [reason],
+  );
+
+  Future<void> _createDeletionTables() async {
+    await customStatement(
+      'CREATE TABLE IF NOT EXISTS cart_delete_reasons (reason TEXT PRIMARY KEY COLLATE NOCASE)',
+    );
+    await customStatement('''CREATE TABLE IF NOT EXISTS cart_item_deletions (
+      id INTEGER PRIMARY KEY, deleted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      operator_id TEXT, bill_id TEXT, product_id TEXT NOT NULL,
+      quantity INTEGER NOT NULL CHECK(quantity > 0), reason TEXT NOT NULL)''');
+  }
+
+  Future<List<String>> deletionReasons() async => (await customSelect(
+    'SELECT reason FROM cart_delete_reasons ORDER BY reason COLLATE NOCASE',
+  ).get()).map((row) => row.read<String>('reason')).toList();
+
+  Future<void> forgetDeletionReason(String reason) => customStatement(
+    'DELETE FROM cart_delete_reasons WHERE reason=?',
+    [reason],
+  );
+
+  Future<void> recordItemDeletion({
+    required String product,
+    required num quantity,
+    required String reason,
+    required bool remember,
+    String? operatorId,
+    String? billId,
+  }) async {
+    await customStatement(
+      'INSERT INTO cart_item_deletions(operator_id,bill_id,product_id,quantity,reason) VALUES(?,?,?,?,?)',
+      [operatorId, billId, product, quantity, reason],
+    );
+    if (remember)
+      await customStatement(
+        'INSERT OR IGNORE INTO cart_delete_reasons(reason) VALUES(?)',
+        [reason],
+      );
+  }
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
+    onCreate: (migrator) async {
+      await migrator.createAll();
+      await _createDeletionTables();
+      await _createPriceReasons();
+      await _createFreeItemReasons();
+      await _createDiscountReasons();
+      await _createSavedNotes();
+    },
     onUpgrade: (migrator, from, to) async {
+      if (from < 21) await _createSavedNotes();
+      if (from < 20) await _createDiscountReasons();
+      if (from < 19) await _createFreeItemReasons();
+      if (from < 18) await _createPriceReasons();
+      if (from < 17) await _createDeletionTables();
       if (from < 16) await migrator.createTable(submittedOrderJobs);
       if (from < 13) await migrator.createTable(registerUiPreferences);
       if (from < 14) await migrator.createTable(discardedBills);
@@ -400,15 +509,18 @@ class RegisterDatabase extends _$RegisterDatabase {
 
   Stream<Json?> watchSnapshot(String profileId) => customSelect(
     'SELECT 1',
-    readsFrom: {profileSnapshots, storeOperatingStates, heldBills},
+    readsFrom: {
+      profileSnapshots,
+      storeOperatingStates,
+      heldBills,
+      localSales,
+      discardedBills,
+    },
   ).watch().asyncMap((_) => readSnapshot(profileId));
 
   Future<Json> effectiveSnapshot(ProfileSnapshot row) async {
     final snapshot = jsonObject(jsonDecode(row.payload));
-    final store = await storeOperatingState();
-    return store == null
-        ? snapshot
-        : _withStoreActivity(row.profileId, snapshot, store);
+    return _effectiveProfile(row.profileId, snapshot);
   }
 
   Future<Json> saveSnapshot(String profileId, Json snapshot) async {
@@ -419,10 +531,47 @@ class RegisterDatabase extends _$RegisterDatabase {
         refreshedAt: DateTime.now().toUtc(),
       ),
     );
+    return _effectiveProfile(profileId, snapshot);
+  }
+
+  Future<Json> _effectiveProfile(String profileId, Json snapshot) async {
     final store = await storeOperatingState();
-    return store == null
-        ? snapshot
-        : _withStoreActivity(profileId, snapshot, store);
+    if (store != null) {
+      snapshot = await _withStoreActivity(profileId, snapshot, store);
+    }
+    final tables = jsonRows(snapshot['tables']);
+    final ids = [
+      for (final table in tables)
+        for (final sale in jsonRows(table['submitted_sales'])) sale['id'],
+    ];
+    if (ids.isEmpty) return snapshot;
+    // A local checkout or void can finish before the cloud table snapshot refreshes.
+    final closed = await customSelect(
+      '''
+      WITH candidates AS (SELECT value FROM json_each(?))
+      SELECT id FROM local_sales WHERE profile_id=? AND id IN (SELECT value FROM candidates)
+      UNION SELECT bill_id AS id FROM discarded_bills WHERE profile_id=? AND bill_id IN (SELECT value FROM candidates)
+    ''',
+      variables: [
+        Variable.withString(jsonEncode(ids)),
+        Variable.withString(profileId),
+        Variable.withString(profileId),
+      ],
+    ).get();
+    if (closed.isEmpty) return snapshot;
+    final excluded = closed.map((r) => r.read<String>('id')).toSet();
+    return {
+      ...snapshot,
+      'tables': [
+        for (final table in tables)
+          {
+            ...table,
+            'submitted_sales': jsonRows(table['submitted_sales'])
+                .where((sale) => !excluded.contains(sale['id']))
+                .toList(),
+          },
+      ],
+    };
   }
 
   /// Keep the checkout directory current across this store's cached profiles.
@@ -459,8 +608,8 @@ class RegisterDatabase extends _$RegisterDatabase {
     final operating = jsonObject(
       (activity['profiles'] as Map)[profileId] ?? {},
     );
-    // Keep the effective checkout settings for an open shift. An API refresh
-    // may see a changed profile before the offline shift has reached the server.
+    // An API refresh can see a changed profile before the offline shift syncs.
+    // Keep shift and payment settings stable while using the latest tax rules.
     final held = operating['profile'] == null
         ? await (select(heldBills)
                 ..where((row) => row.profileId.equals(profileId))
@@ -486,7 +635,12 @@ class RegisterDatabase extends _$RegisterDatabase {
         'tables': [
           for (final table in jsonRows(snapshot['tables']))
             if (table['status'] == 'occupied')
-              {...table, 'status': 'available', 'open_sale_id': null}
+              {
+                ...table,
+                'status': 'available',
+                'open_sale_id': null,
+                'submitted_sales': <Json>[],
+              }
             else
               table,
         ],
@@ -499,13 +653,12 @@ class RegisterDatabase extends _$RegisterDatabase {
         'profile': {
           ...profile,
           'config': {
-            ...config,
-            // Browsing follows the latest profile while an open shift keeps
-            // its original checkout, tax, and payment settings.
+            ...withCurrentTaxSettings(config, latestConfig),
             for (final key in [
               'catalog_mode',
               'selected_ids',
               'default_menu_id',
+              'table_status_colors',
             ])
               if (latestConfig.containsKey(key)) key: latestConfig[key],
             if (shift != null) 'cashier_shift_enabled': true,

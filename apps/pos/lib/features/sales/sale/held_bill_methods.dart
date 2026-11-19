@@ -1,6 +1,26 @@
 part of 'sale_service.dart';
 
 extension HeldBillMethods on SaleService {
+  DateTime? get activeBillSavedAt {
+    final active = _activeBill.value;
+    if (active == null) return null;
+    return heldBills.where((bill) => bill.id == active.id).firstOrNull?.updatedAt;
+  }
+
+  String get activeSaleStatus {
+    final active = _activeBill.value;
+    if (active == null) return 'new';
+    final bill = heldBills.where((entry) => entry.id == active.id).firstOrNull;
+    if (bill != null) {
+      final saved = jsonObject(jsonDecode(bill.payload));
+      return saved['table_status'] as String? ??
+          (saved['status'] == 'submitted' ? 'occupied' : 'hold');
+    }
+    return cart.any((line) => line.submitted) || voidedLines.isNotEmpty
+        ? 'occupied'
+        : 'hold';
+  }
+
   bool isHeldTable(String id) => heldBills.any(
     (bill) => bill.tableId == id && bill.id != _activeBill.value?.id,
   );
@@ -72,8 +92,12 @@ extension HeldBillMethods on SaleService {
     selectedPostingDate.value = saved['posting_date'] as String?;
     billGeneration++;
     customerId.value = saved['customer_id'] as String?;
+    saleNote.value = saved['note'] as String?;
     _activeBill.value = (id: bill.id, revision: bill.revision);
-    cart.assignAll(jsonRows(saved['lines']).map(CartLine.fromHeldSnapshot));
+    cart.assignAll(CartLine.billLines(saved));
+    voidedLines.assignAll(
+      jsonRows(saved['voided_lines']).map(CartLine.fromHeldSnapshot),
+    );
     message.value = null;
     selectTab(SaleService.sellTab);
     _saveCart();

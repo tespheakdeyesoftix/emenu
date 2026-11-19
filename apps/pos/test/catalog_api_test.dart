@@ -20,7 +20,13 @@ void main() {
         return http.Response(
           jsonEncode({
             'products': [
-              {'id': 'product-$page'},
+              {
+                'id': 'product-$page',
+                'allow_discount': page == 1,
+                'allow_change_price': false,
+                'is_open_product': page == 2,
+                'allow_free': true,
+              },
             ],
             'nodes': [
               {
@@ -44,6 +50,22 @@ void main() {
     expect(jsonRows(result['products']).map((row) => row['id']), [
       'product-1',
       'product-2',
+    ]);
+    expect(jsonRows(result['products']).map((row) => row['allow_discount']), [
+      true,
+      false,
+    ]);
+    expect(
+      jsonRows(result['products']).map((row) => row['allow_change_price']),
+      [false, false],
+    );
+    expect(jsonRows(result['products']).map((row) => row['is_open_product']), [
+      false,
+      true,
+    ]);
+    expect(jsonRows(result['products']).map((row) => row['allow_free']), [
+      true,
+      true,
     ]);
     expect(requests.map((request) => request.url.queryParameters), [
       {'page': '1', 'page_size': '100', 'menu_id': 'menu-id'},

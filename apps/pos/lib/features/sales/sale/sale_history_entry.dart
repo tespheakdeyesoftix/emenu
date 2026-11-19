@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../../../core/pos_api.dart';
+import '../../../core/pricing.dart';
 import '../../../core/register_database.dart';
 import '../../../core/register_history_scope.dart';
 
@@ -43,7 +44,7 @@ class SaleHistoryEntry {
   final DateTime activity;
   final String currency;
   final int amount;
-  final int quantity;
+  final num quantity;
   final Json data;
   final String? table;
   final String? customer;
@@ -70,10 +71,9 @@ Json historyObject(Object? data) => data is Map ? jsonObject(data) : {};
 Json decodeHistoryObject(String? data) =>
     data == null ? {} : historyObject(jsonDecode(data));
 
-int _quantity(Object? lines) =>
-    jsonRows(lines)
-        .fold(0, (sum, line) => sum + ((line['quantity'] as int?) ?? 0))
-        .abs();
+num _quantity(Object? lines) => normalizedQuantity(
+  jsonRows(lines).fold<num>(0, (sum, line) => sum + (line['quantity'] as num? ?? 0)).abs(),
+);
 
 List<SaleHistoryEntry> buildSalesHistory(
   RegisterHistory local,
@@ -239,7 +239,7 @@ SaleHistoryEntry _serverEntry(Json row, bool carryover) {
     ),
     currency: row['currency'] as String,
     amount: amount,
-    quantity: (row['item_quantity'] as int? ?? 0).abs(),
+    quantity: normalizedQuantity((row['item_quantity'] as num? ?? 0).abs()),
     table: (row['table_label'] ?? row['table_code']) as String?,
     customer: row['customer_name'] as String?,
     data: row,

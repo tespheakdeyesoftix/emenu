@@ -246,6 +246,10 @@ export type Product = {
   sortOrder?: number;
   isFeatured?: number | boolean;
   isAvailable?: number | boolean;
+  allowDiscount?: number | boolean;
+  allowChangePrice?: number | boolean;
+  isOpenProduct?: number | boolean;
+  allowFree?: number | boolean;
   createdAt?: string;
   updatedAt?: string;
   priceEntries?: ProductPriceDraft[];
@@ -849,6 +853,10 @@ export const useAdminStore = defineStore("admin", {
         sortOrder: Number(payload.sortOrder ?? 0),
         isFeatured: payload.isFeatured ? 1 : 0,
         isAvailable: payload.isAvailable === false ? 0 : 1,
+        allowDiscount: payload.allowDiscount === false || payload.allowDiscount === 0 ? 0 : 1,
+        allowChangePrice: payload.allowChangePrice === false || payload.allowChangePrice === 0 ? 0 : 1,
+        isOpenProduct: payload.isOpenProduct ? 1 : 0,
+        allowFree: payload.allowFree === false || payload.allowFree === 0 ? 0 : 1,
       };
       const response = await this.request("/api/admin/products", {
         method: "POST",

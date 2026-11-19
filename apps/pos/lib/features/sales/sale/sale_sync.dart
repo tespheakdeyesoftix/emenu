@@ -107,6 +107,7 @@ class SaleSync {
         }
         _requireOrderSubmission(context);
         final payload = jsonObject(jsonDecode(job.payload));
+        _requireLineDetails(context, payload);
         final Json result;
         if (job.cancel) {
           final Json saved;
@@ -137,7 +138,9 @@ class SaleSync {
           );
         }
         if (result['id'] != job.saleId ||
-            result['status'] != (job.cancel ? 'cancelled' : 'submitted')) {
+            result['status'] != (job.cancel ? 'cancelled' : 'submitted') ||
+            (!job.cancel && payload.containsKey('note') &&
+                result['note'] != payload['note'])) {
           throw const PosApiError(
             409,
             'BAD_SERVER_DATA',
@@ -172,11 +175,54 @@ class SaleSync {
   }
 
   void _requireOrderSubmission(Json context) {
-    if ((context['capabilities'] as Map?)?['submit_orders'] != true) {
+    if ((context['capabilities'] as Map?)?['order_line_history'] != true) {
       throw const PosApiError(
         503,
         'SERVER_UPGRADE_REQUIRED',
-        'Update the server to synchronize submitted orders.',
+        'Update the server to synchronize order line history.',
+      );
+    }
+  }
+
+  bool _hasLineReason(Json payload, String field) =>
+      jsonRows(payload['lines']).any((line) => line[field] != null);
+
+  bool _hasItemDiscountDetails(Json payload) =>
+      [...jsonRows(payload['lines']), ...jsonRows(payload['voided_lines'])].any(
+        (line) => line['discount_bps'] != null || line['discount_note'] != null,
+      );
+
+  void _requireLineDetails(Json context, Json payload) {
+    if (_hasLineReason(payload, 'price_change_reason') &&
+        (context['capabilities'] as Map?)?['price_change_reasons'] != true) {
+      throw const PosApiError(
+        503,
+        'SERVER_UPGRADE_REQUIRED',
+        'Update the server to synchronize price change reasons.',
+      );
+    }
+    if (_hasLineReason(payload, 'free_reason') &&
+        (context['capabilities'] as Map?)?['free_item_reasons'] != true) {
+      throw const PosApiError(
+        503,
+        'SERVER_UPGRADE_REQUIRED',
+        'Update the server to synchronize free item reasons.',
+      );
+    }
+    if (_hasItemDiscountDetails(payload) &&
+        (context['capabilities'] as Map?)?['item_discount_details'] != true) {
+      throw const PosApiError(
+        503,
+        'SERVER_UPGRADE_REQUIRED',
+        'Update the server to synchronize item discount details.',
+      );
+    }
+    if (jsonRows(payload['voided_lines']).isNotEmpty &&
+        (context['capabilities'] as Map?)?['order_line_void_reasons'] != true) {
+      throw const PosApiError(
+        503,
+        'SERVER_UPGRADE_REQUIRED',
+        'Update the server to synchronize item deletion reasons.',
       );
     }
   }
@@ -200,10 +246,29 @@ class SaleSync {
         (token) async {
           final envelope = jsonObject(jsonDecode(event.envelope));
           final payload = jsonObject(envelope['payload'] ?? {});
-          if (event.kind == 'submit_sale' || event.kind == 'cancel_sale') {
-            _requireOrderSubmission(
-              await api.request(ApiEndpoint.context, token: token),
+          final isSale = event.kind == 'submit_sale' || event.kind == 'checkout';
+          final hasNote = isSale && payload['note'] != null;
+          if (event.kind == 'submit_sale' ||
+              event.kind == 'cancel_sale' ||
+              jsonRows(payload['voided_lines']).isNotEmpty ||
+              _hasLineReason(payload, 'price_change_reason') ||
+              _hasLineReason(payload, 'free_reason') ||
+              _hasItemDiscountDetails(payload) ||
+              hasNote) {
+            final context = await api.request(
+              ApiEndpoint.context,
+              token: token,
             );
+            _requireOrderSubmission(context);
+            _requireLineDetails(context, payload);
+            if (hasNote &&
+                (context['capabilities'] as Map?)?['sale_notes'] != true) {
+              throw const PosApiError(
+                503,
+                'SERVER_UPGRADE_REQUIRED',
+                'Update the server to synchronize sale notes.',
+              );
+            }
           }
           if (event.kind == 'checkout' &&
               (payload['posting_date'] != null ||
@@ -249,6 +314,8 @@ class SaleSync {
                   result['status'] != 'submitted') ||
               (event.kind == 'cancel_sale' &&
                   result['status'] != 'cancelled') ||
+              (isSale && payload.containsKey('note') &&
+                  result['note'] != payload['note']) ||
               (reversal != null &&
                   (result['reverses_sale_id'] != reversal['original_sale_id'] ||
                       result['total_minor'] !=
@@ -346,6 +413,7 @@ class SaleSync {
       return;
     }
     final savedDraft = jsonObject(request['draft']);
+    _requireLineDetails(context, savedDraft);
     final submitted = request['submitted_order'] == true;
     if (submitted) _requireOrderSubmission(context);
     if ((savedDraft['posting_date'] != null ||
@@ -379,16 +447,23 @@ class SaleSync {
       'tax_minor',
       'total_minor',
       'base_price_override_minor',
+      'price_change_reason',
+      'free_reason',
+      'discount_bps',
+      'discount_note',
       'note',
     ];
     if (draft['total_minor'] != sale.total ||
         draft['currency'] != sale.currency ||
         draft['secondary_exchange_rate'] != request['exchange_rate'] ||
+        (savedDraft.containsKey('note') && draft['note'] != savedDraft['note']) ||
         quoted.length != actual.length ||
         Iterable<int>.generate(quoted.length).any(
           (index) =>
               (quoted[index]['is_free'] == true) !=
                   (actual[index]['is_free'] == true) ||
+              (quoted[index]['discount_minor'] ?? 0) !=
+                  (actual[index]['discount_minor'] ?? 0) ||
               fields.any(
                 (field) => quoted[index][field] != actual[index][field],
               ),

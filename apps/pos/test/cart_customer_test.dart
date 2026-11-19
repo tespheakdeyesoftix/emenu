@@ -21,7 +21,16 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 const customers = <Json>[
   {'id': 'walk', 'name': 'Walk-in', 'is_walk_in': 1},
-  {'id': 'alice', 'name': 'Alice Chan', 'external_reference': 'CARD-001'},
+  {
+    'id': 'alice',
+    'name': 'Alice Chan',
+    'external_reference': 'CARD-001',
+    'phone_number': '012 345 678',
+    'email': 'alice@example.com',
+    'gender': 'Female',
+    'is_membership': 1,
+    'allow_credit': true,
+  },
   {'id': 'bob', 'name': 'Bob Smith', 'external_reference': 'CARD-002'},
   {'id': 'sok', 'name': 'សុខ ដារ៉ា', 'external_reference': 'CARD-003'},
 ];
@@ -185,6 +194,9 @@ void main() {
       await tester.enterText(find.byType(TextField), 'Alice');
       await tester.pump();
       expect(find.text('Bob Smith'), findsNothing);
+      for (final detail in ['012 345 678', 'alice@example.com', 'Female', 'Membership', 'Allow credit']) {
+        expect(find.text(detail), findsOneWidget);
+      }
       await tester.tap(find.text('Alice Chan'));
       await tester.pumpAndSettle();
       expect(register.customerId.value, 'alice');

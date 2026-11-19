@@ -260,8 +260,7 @@
       "level": "Tax level {number}",
       "levelName": "Tax name",
       "afterDiscount": "Calculate after discount",
-      "includeTax": "Include tax {number} in the base",
-      "currentRegisterTax": "Current register tax"
+      "includeTax": "Include tax {number} in the base"
     },
     "taxMode": "Tax mode",
     "taxRate": "Tax rate (%)",
@@ -722,7 +721,14 @@
         "label": "Product settings",
         "details": "Details",
         "prices": "Portions & prices",
-        "modifiers": "Modifier groups"
+        "modifiers": "Modifier groups",
+        "pos": "POS Option"
+      },
+      "posOptions": {
+        "allowDiscount": "Allow discount",
+        "allowChangePrice": "Allow change price",
+        "isOpenProduct": "Is open product",
+        "allowFree": "Allow free"
       },
       "productRatingHelp": "Leave empty to hide the rating badge.",
       "invalidProductRating": "Guest rating must be between 0 and 5.",

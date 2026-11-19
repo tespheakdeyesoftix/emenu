@@ -109,11 +109,13 @@ class RegisterController extends GetxController implements SalesRegister {
       sales.openHeldBillFromHistory(bill);
   void resumeBill(HeldBill bill) => sales.resumeBill(bill);
   Future<void> discardBill(HeldBill bill) => sales.discardBill(bill);
-  void add(CartLine line) => sales.add(line);
+  void add(CartLine line) {
+    sales.add(line);
+  }
   void quantity(int index, int amount) => sales.quantity(index, amount);
   CartLine? replaceCartLine(CartLine original, CartLine replacement) =>
       sales.replaceCartLine(original, replacement);
-  void reorderCartLine(CartLine line) => sales.reorderCartLine(line);
+  CartLine? reorderCartLine(CartLine line) => sales.reorderCartLine(line);
   Json? cartCatalogProduct(CartLine line) => sales.cartCatalogProduct(line);
   Future<void> checkout(List<Json> payments) => sales.checkout(payments);
   bool canReverseSale(LocalSale sale) => sales.canReverseSale(sale);
@@ -234,6 +236,7 @@ class RegisterController extends GetxController implements SalesRegister {
           state != null &&
           existing != null &&
           (jsonEncode(existing['context']) != jsonEncode(state['context']) ||
+              jsonEncode(existing['tables']) != jsonEncode(state['tables']) ||
               jsonEncode(existing['catalog']) != jsonEncode(state['catalog']) ||
               jsonEncode(existing['customers']) !=
                   jsonEncode(state['customers']))) {

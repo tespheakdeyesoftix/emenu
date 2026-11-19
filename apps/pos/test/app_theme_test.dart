@@ -37,7 +37,7 @@ void main() {
     );
   });
 
-  test('red and WhiteSmoke keep accessible contrast', () {
+  test('monochrome controls keep accessible contrast', () {
     final scheme = AppTheme.light.colorScheme;
     expect(scheme.secondary, const Color(0xfff5f5f5));
     expect(scheme.surface, Colors.white);
@@ -47,6 +47,9 @@ void main() {
       (scheme.onSecondary, scheme.secondary),
       (scheme.onSecondaryContainer, scheme.secondaryContainer),
       (scheme.onSecondaryContainer, scheme.surface),
+      (scheme.onTertiary, scheme.tertiary),
+      (scheme.onTertiaryContainer, scheme.tertiaryContainer),
+      (scheme.onInverseSurface, scheme.inverseSurface),
       (scheme.primary, scheme.secondaryContainer),
       (scheme.onErrorContainer, scheme.errorContainer),
       (scheme.primary, AppColors.card),
@@ -57,5 +60,25 @@ void main() {
     ]) {
       expect(contrast(foreground, background), greaterThanOrEqualTo(4.5));
     }
+    for (final color in [
+      AppColors.canvas,
+      AppColors.card,
+      AppColors.selectedCard,
+      scheme.primary,
+      scheme.primaryContainer,
+      scheme.secondary,
+      scheme.secondaryContainer,
+      scheme.tertiary,
+      scheme.tertiaryContainer,
+      scheme.inverseSurface,
+      scheme.inversePrimary,
+      scheme.onSurface,
+      scheme.onSurfaceVariant,
+      scheme.outline,
+    ]) {
+      expect(color.r, color.g);
+      expect(color.g, color.b);
+    }
+    expect(contrast(scheme.outline, scheme.surface), greaterThanOrEqualTo(3));
   });
 }

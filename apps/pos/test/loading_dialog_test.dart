@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:drift/native.dart';
 import 'package:emenu_pos/auths/login_screen.dart';
@@ -57,6 +58,7 @@ class DelayedRegister extends RegisterController {
 
   final completion = Completer<void>();
   int commands = 0;
+  String? billId;
 
   @override
   Json get operatingContext => {'business_date': '2026-11-17'};
@@ -64,6 +66,7 @@ class DelayedRegister extends RegisterController {
   @override
   Future<void> sendCommand(RegisterAction action, Json body) async {
     commands++;
+    billId = body['bill_id'] as String?;
     await completion.future;
   }
 }
@@ -291,7 +294,7 @@ void main() {
 
   for (final failure in [false, true]) {
     testWidgets(
-      'table opening blocks UI and closes its loader after ${failure ? 'failure' : 'success'}',
+      'switching from a submitted order closes its loader after ${failure ? 'failure' : 'success'}',
       (tester) async {
         final database = RegisterDatabase(NativeDatabase.memory());
         addTearDown(database.close);
@@ -310,19 +313,32 @@ void main() {
             {'id': 'b', 'code': 'B', 'label': 'Table B'},
           ],
         };
-        register.selectTable('a');
-        register.add(
-          const CartLine({
-            'id': 'coffee',
-            'name': 'Coffee',
-            'price_minor': 250,
+        const line = CartLine({
+          'id': 'coffee',
+          'name': 'Coffee',
+          'price_minor': 250,
+        });
+        final bill = HeldBill(
+          id: 'submitted-bill',
+          profileId: 'counter',
+          tableId: 'a',
+          revision: 1,
+          updatedAt: DateTime.utc(2026, 11, 17),
+          payload: jsonEncode({
+            'status': 'submitted',
+            'table_status': 'occupied',
+            'quote_context': register.context,
+            'lines': [line.heldSnapshot],
           }),
         );
+        register.heldBills.add(bill);
+        register.resumeBill(bill);
         register.tab.value = RegisterController.tablesTab;
         await mount(tester, home: RegisterShell(register));
         await tester.tap(find.text('Table B'));
         await tester.pump();
         expect(register.commands, 1);
+        expect(register.billId, bill.id);
         expect(register.busy.value, isTrue);
         expect(find.byType(LoadingDialogWidget), findsOneWidget);
         expect(find.byType(LinearProgressIndicator), findsNothing);

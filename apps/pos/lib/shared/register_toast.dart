@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
+import 'app_theme.dart';
+
 bool isSuccessfulRegisterMessage(String? message) => const {
   'SAVED',
   'BILL_HELD',
@@ -22,11 +24,13 @@ class RegisterToastHost extends StatefulWidget {
     super.key,
     required this.message,
     required this.child,
+    this.onDismissed,
     this.duration = const Duration(seconds: 4),
   });
 
   final String? message;
   final Widget child;
+  final ValueChanged<String>? onDismissed;
   final Duration duration;
 
   @override
@@ -57,7 +61,10 @@ class _RegisterToastHostState extends State<RegisterToastHost> {
 
   void _dismiss() {
     _dismissTimer?.cancel();
-    if (mounted) setState(() => _message = null);
+    final dismissed = _message;
+    if (!mounted || dismissed == null) return;
+    setState(() => _message = null);
+    widget.onDismissed?.call(dismissed);
   }
 
   @override
@@ -109,18 +116,33 @@ class _ToastMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final success = isSuccessfulRegisterMessage(message);
-    final pending = message == 'STORE_COMMAND_PENDING';
-    final foreground = success
-        ? colors.onPrimaryContainer
-        : pending
-        ? colors.onSecondaryContainer
-        : colors.onErrorContainer;
-    final background = success
-        ? colors.primaryContainer
-        : pending
-        ? colors.secondaryContainer
-        : colors.errorContainer;
+    final (background, icon) = switch (message) {
+      _ when isSuccessfulRegisterMessage(message) => (
+        Colors.green.shade800,
+        Icons.check_circle_outline_rounded,
+      ),
+      'STORE_COMMAND_PENDING' ||
+      'STORE_AUTHORITY_PENDING' ||
+      'SHIFT_COMMAND_PENDING' ||
+      'STORE_SYNC_FIRST' ||
+      'SYNC_REQUIRED' ||
+      'UNSYNCED_SHIFT_SALES' ||
+      'UNSYNCED_DAY_SALES' ||
+      'WORKING_DAY_REQUIRED' ||
+      'CASHIER_SHIFT_REQUIRED' ||
+      'TABLE_REQUIRED' ||
+      'EMPTY_CART' ||
+      'HOLD_CURRENT_BILL' ||
+      'PRODUCT_PRICE_CHANGE_NOT_ALLOWED' ||
+      'PRODUCT_FREE_NOT_ALLOWED' ||
+      'PRODUCT_DISCOUNT_NOT_ALLOWED' ||
+      'FINISH_CURRENT_ORDER' => (
+        AppColors.warning,
+        Icons.warning_amber_rounded,
+      ),
+      _ => (Colors.red.shade800, Icons.error_outline_rounded),
+    };
+    const foreground = Colors.white;
     return Material(
       key: const ValueKey('register-toast'),
       color: background,
@@ -137,15 +159,7 @@ class _ToastMessage extends StatelessWidget {
           child: Row(
             spacing: 10,
             children: [
-              Icon(
-                success
-                    ? Icons.check_circle_outline_rounded
-                    : pending
-                    ? Icons.hourglass_empty_rounded
-                    : Icons.info_outline_rounded,
-                size: 21,
-                color: foreground,
-              ),
+              Icon(icon, size: 21, color: foreground),
               Expanded(
                 child: Text(
                   message.tr,

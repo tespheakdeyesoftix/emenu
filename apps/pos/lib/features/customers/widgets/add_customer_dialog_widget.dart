@@ -52,6 +52,7 @@ class _AddCustomerDialogState extends State<AddCustomerDialogWidget> {
   late String _gender = _initialValue('gender');
   late String _birthDate = _initialValue('dob');
   late bool _membership = _initialMembership;
+  late bool _allowCredit = _initialAllowCredit;
   Uint8List? _pickedPhoto;
   bool _removePhoto = false;
   bool _pickingPhoto = false;
@@ -71,6 +72,9 @@ class _AddCustomerDialogState extends State<AddCustomerDialogWidget> {
   bool get _initialMembership =>
       widget.customer?['is_membership'] == 1 ||
       widget.customer?['is_membership'] == true;
+  bool get _initialAllowCredit =>
+      widget.customer?['allow_credit'] == 1 ||
+      widget.customer?['allow_credit'] == true;
   bool get _hasPhoto =>
       !_removePhoto &&
       (_pickedPhoto != null ||
@@ -127,6 +131,7 @@ class _AddCustomerDialogState extends State<AddCustomerDialogWidget> {
         if (_id == null || entry.value != _initialValue(entry.key))
           entry.key: entry.value.isEmpty ? null : entry.value,
       if (_membership != _initialMembership) 'is_membership': _membership,
+      if (_allowCredit != _initialAllowCredit) 'allow_credit': _allowCredit,
       if (_pickedPhoto case final bytes?)
         'photo_upload': {
           'content_type': 'image/png',
@@ -451,6 +456,17 @@ class _AddCustomerDialogState extends State<AddCustomerDialogWidget> {
                             : null,
                       ),
                     ],
+                  ),
+                  CheckboxListTile(
+                    dense: true,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('customer_allow_credit'.tr),
+                    value: _allowCredit,
+                    onChanged: enabled
+                        ? (value) =>
+                              setState(() => _allowCredit = value ?? false)
+                        : null,
                   ),
                   for (final (key, label, limit, type) in _contactFields)
                     _textField(key, label, limit, type, enabled),

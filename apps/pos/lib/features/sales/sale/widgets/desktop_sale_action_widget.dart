@@ -127,6 +127,10 @@ class _DockActionButton extends StatelessWidget {
       style: TextButton.styleFrom(
         foregroundColor: foreground ?? Theme.of(context).colorScheme.onSurface,
         backgroundColor: background,
+        iconColor: foreground ?? Theme.of(context).colorScheme.onSurface,
+        disabledForegroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+        disabledIconColor: Theme.of(context).colorScheme.onSurfaceVariant,
+        disabledBackgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
         minimumSize: Size(44, showLabel ? 52 : 44),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
@@ -167,7 +171,7 @@ class _DockDivider extends StatelessWidget {
   );
 }
 
-class _DockMoreMenu extends StatelessWidget {
+class _DockMoreMenu extends GetView<SaleController> {
   const _DockMoreMenu({required this.showLabel});
 
   final bool showLabel;
@@ -206,29 +210,35 @@ class _DockMoreMenu extends StatelessWidget {
           icon: Icons.more_horiz_rounded,
           onPressed: () => menu.isOpen ? menu.close() : menu.open(),
         ),
-        menuChildren: const [
-          _MoreMenuItem(
+        menuChildren: [
+          const _MoreMenuItem(
             label: 'sale_view_bill',
             icon: Icons.receipt_long_outlined,
           ),
-          _MoreMenuItem(label: 'cart_note', icon: Icons.edit_note_rounded),
-          _MoreMenuItem(
+          Obx(() => _MoreMenuItem(
+            label: 'sale_note',
+            icon: Icons.edit_note_rounded,
+            onPressed: controller.service.cartEditable && controller.service.supportsSaleNotes
+                ? () => controller.editSaleNote(context)
+                : null,
+          )),
+          const _MoreMenuItem(
             label: 'sale_change_menu',
             icon: Icons.restaurant_menu_rounded,
           ),
-          _MoreMenuItem(
+          const _MoreMenuItem(
             label: 'sale_change_merge_table',
             icon: Icons.table_restaurant_outlined,
           ),
-          _MoreMenuItem(
+          const _MoreMenuItem(
             label: 'sale_change_price_list_rule',
             icon: Icons.price_change_outlined,
           ),
-          Padding(
+          const Padding(
             padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             child: Divider(height: 1),
           ),
-          _MoreMenuItem(
+          const _MoreMenuItem(
             label: 'sale_void_bill',
             icon: Icons.block_rounded,
             destructive: true,
@@ -244,18 +254,20 @@ class _MoreMenuItem extends StatelessWidget {
     required this.label,
     required this.icon,
     this.destructive = false,
+    this.onPressed = _previewAction,
   });
 
   final String label;
   final IconData icon;
   final bool destructive;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final color = destructive ? colors.error : colors.onSurface;
     return MenuItemButton(
-      onPressed: _previewAction,
+      onPressed: onPressed,
       leadingIcon: Icon(
         icon,
         size: 20,

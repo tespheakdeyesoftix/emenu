@@ -226,14 +226,23 @@ void main() {
       findsOneWidget,
     );
     expect(productCount(), 50);
+    final backToTop = find.byTooltip('Back to top');
+    expect(backToTop, findsNothing);
     await scrollToEnd();
     expect(productCount(), 100);
     await scrollToEnd();
     expect(productCount(), 105);
+    await tester.tap(backToTop);
+    await tester.pumpAndSettle();
+    expect(position().pixels, position().minScrollExtent);
+    expect(productCount(), 105);
+    expect(backToTop, findsNothing);
+    await scrollToEnd();
 
     controller.openSection('drinks');
     await tester.pumpAndSettle();
     expect(position().pixels, 0);
+    expect(backToTop, findsNothing);
     final childFolder = find.byKey(const ValueKey('catalog-folder-hot'));
     final firstProduct = find.byKey(const ValueKey('catalog-product-item-0'));
     expect(
@@ -245,6 +254,20 @@ void main() {
     expect(productCount(), 100);
     await scrollToEnd();
     expect(productCount(), 100);
+
+    controller.search.text = 'missing product';
+    controller.searchChanged(controller.search.text);
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pump();
+    await tester.tap(find.text('Show all products'));
+    await tester.pumpAndSettle();
+    expect(controller.search.text, isEmpty);
+    expect(controller.section.value, controller.defaultSection);
+    expect(find.text('Show all products'), findsNothing);
+    expect(productCount(), 50);
+    await scrollToEnd();
+    await scrollToEnd();
+    expect(productCount(), 105);
   });
 
   testWidgets('product card layout changes and keeps the card tappable', (

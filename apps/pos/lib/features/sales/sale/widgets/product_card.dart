@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 
 import '../../../../shared/app_theme.dart';
 import '../../../../shared/network_cached_image_widget.dart';
@@ -10,6 +11,7 @@ class ProductCard extends StatelessWidget {
     required this.name,
     required this.price,
     required this.onTap,
+    this.orderedQuantity = 0,
     this.code,
     this.imageUrl,
     this.layout = ProductCardLayout.imageTop,
@@ -32,6 +34,7 @@ class ProductCard extends StatelessWidget {
 
   final String name;
   final String price;
+  final num orderedQuantity;
   final String? code;
   final String? imageUrl;
   final VoidCallback onTap;
@@ -76,6 +79,35 @@ class ProductCard extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: codeStyle,
+                  ),
+                ),
+              ),
+            ),
+          if (orderedQuantity > 0)
+            PositionedDirectional(
+              start: 4,
+              end: 4,
+              bottom: 4,
+              child: Align(
+                alignment: AlignmentDirectional.bottomEnd,
+                child: DecoratedBox(
+                  decoration: ShapeDecoration(
+                    color: colors.primary,
+                    shape: StadiumBorder(side: BorderSide(color: colors.onPrimary)),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        '×$orderedQuantity',
+                        semanticsLabel: "${'cart_total_quantity'.tr} $orderedQuantity",
+                        style: type.labelSmall?.copyWith(
+                          color: colors.onPrimary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),

@@ -264,31 +264,6 @@
               v-model="config.tax_rules"
               v-model:default-rule-id="config.default_tax_rule_id"
             />
-            <h3 class="border-t border-black/10 pt-4 font-semibold">
-              {{ t("selling.taxRules.currentRegisterTax") }}
-            </h3>
-            <div class="grid gap-4 sm:grid-cols-2">
-              <label>
-                <span class="label">{{ t("selling.taxMode") }}</span>
-                <Select
-                  size="lg"
-                  variant="outline"
-                  v-model="config.tax_mode"
-                  :options="posTaxModes.map(mode => ({ label: t(`selling.modes.${mode}`), value: mode }))"
-                />
-              </label>
-              <label v-if="config.tax_mode !== 'disabled'">
-                <span class="label">{{ t("selling.taxRate") }}</span>
-                <TextInput size="lg" variant="outline"
-                  v-model.number="taxRate"
-                  type="number"
-                  required
-                  min="0"
-                  max="100"
-                  step="0.01"
-                />
-              </label>
-            </div>
           </TabPanel>
 
           <TabPanel
@@ -379,7 +354,7 @@ import { computed, nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { ArrowDown, ArrowUp } from "lucide-vue-next";
 import { emptyPosReceiptDefaults } from "../../../../shared/posReceipts";
-import { posTableStatusColors, posTableStatuses, posTaxModes, type ProfileConfig, type PosTableStatusColors } from "../../../../shared/posProfile";
+import { posTableStatusColors, posTableStatuses, type ProfileConfig, type PosTableStatusColors } from "../../../../shared/posProfile";
 import { useAdminStore } from "../stores/admin";
 import type {
   PosPaymentOption,
@@ -443,7 +418,6 @@ const branchId = ref(
   props.profile?.branch_id ?? props.options.branches[0]?.id ?? "",
 );
 const active = ref(props.profile?.is_active ?? true);
-const taxRate = ref(config.value.tax_rate_bps / 100);
 const selectedIds = ref([...(config.value.selected_ids ?? [])]);
 const tableStatusColors = ref<PosTableStatusColors>({ ...posTableStatusColors, ...config.value.table_status_colors });
 const tableGroupIds = ref([...(config.value.table_group_ids ?? [])]);
@@ -594,10 +568,6 @@ async function save(event: SubmitEvent) {
     table_status_colors: { ...tableStatusColors.value },
     selected_ids: selectedIds.value.length ? selectedIds.value : null,
     default_menu_id: config.value.catalog_mode === "menu" ? defaultMenu.value || null : null,
-    tax_rate_bps:
-      config.value.tax_mode === "disabled"
-        ? 0
-        : Math.round(taxRate.value * 100),
   };
   const keepExistingShifts =
     config.value.cashier_shift_enabled &&

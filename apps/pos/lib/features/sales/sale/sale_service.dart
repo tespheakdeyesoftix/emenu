@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:get/get.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../core/api_endpoint.dart';
 import '../../../core/bill_information.dart';
@@ -10,6 +11,7 @@ import '../../../core/pricing.dart';
 import '../../../core/register_authority.dart';
 import '../../../core/register_database.dart';
 import '../sales_register.dart';
+import 'cart_action.dart';
 import 'cart_line.dart';
 import 'catalog_navigation.dart';
 import 'customer/customer_directory.dart';
@@ -26,6 +28,7 @@ class SaleService extends GetxService {
 
   final SalesRegister register;
   final cart = <CartLine>[].obs;
+  final voidedLines = <CartLine>[].obs;
   final screenSettings = const SaleScreenSettings().obs;
   final tableId = RxnString();
   final tableGroupId = RxnString();
@@ -33,6 +36,7 @@ class SaleService extends GetxService {
   final selectedPostingDate = RxnString();
   int billGeneration = 0;
   final customerId = RxnString();
+  final saleNote = RxnString();
   final _parkedTableIds = <String>{}.obs;
   final _activeBill = Rxn<({String id, int revision})>();
   final _quoteContext = Rxn<Json>();
@@ -70,7 +74,13 @@ class SaleService extends GetxService {
   void selectTab(int destination) => register.selectTab(destination);
 
   Json get _quoted => _quoteContext.value ?? context;
-  Json get quoteConfig => jsonObject(jsonObject(_quoted['profile'])['config']);
+  Json get quoteConfig => _quoteContext.value == null
+      ? config
+      : withCurrentTaxSettings(
+          jsonObject(jsonObject(_quoted['profile'])['config']),
+          config,
+        );
+
   Json get business => jsonObject(_quoted['business']);
   String get currency => business['currency'] as String;
   String get exchangeRate => business['secondary_exchange_rate'].toString();
@@ -79,6 +89,20 @@ class SaleService extends GetxService {
   Json get operatingContext => register.operatingContext;
   BillTotals totalOf(CartLine line) => line.totals(quoteConfig);
   int get cartTotal => cart.fold(0, (sum, line) => sum + totalOf(line).total);
+
+  BillTotals previewTotalOf(CartLine line) {
+    try {
+      return totalOf(line);
+    } on DiscountExceedsSubtotal {
+      final subtotal = totalOf(line.withQuantity(line.quantity, discount: 0)).subtotal;
+      return totalOf(line.withQuantity(line.quantity, discount: subtotal));
+    }
+  }
+
+  int get cartPreviewTotal =>
+      cart.fold(0, (sum, line) => sum + previewTotalOf(line).total);
+  bool get needsDiscountReview =>
+      cart.any((line) => line.discount > 0 && previewTotalOf(line).discount != line.discount);
 
   Json get catalog => jsonObject(register.snapshot.value?['catalog'] ?? {});
   List<Json> get catalogNodes => catalogNavigation.nodes;
@@ -166,17 +190,18 @@ class SaleService extends GetxService {
     return matches.length == 1 ? matches.single : null;
   }
 
-  CartLine withOptions(CartLine original, CartLine next) =>
-      next.withQuantity(original.quantity).withLineEdits({
+  CartLine withOptions(CartLine original, CartLine next) => next
+      .withQuantity(original.quantity, order: original.order)
+      .withLineEdits({
         ...original.lineEdits,
         if (next.portion?['id'] != original.portion?['id'])
           'base_price_override_minor': null,
       });
 
-  CartLine toggleFree(CartLine line) => line.withLineEdits({
+  CartLine restorePrice(CartLine line) => line.withLineEdits({
     ...line.lineEdits,
-    'is_free': !line.isFree,
-    'discount_minor': 0,
+    'is_free': false,
+    'free_reason': null,
   });
 
   bool validLineAmount(CartLine line, String key, String input) {
@@ -197,8 +222,10 @@ class SaleService extends GetxService {
   ) => database.recordReceiptPrint(sale.id, operatorId, copies);
 
   bool get canSubmit =>
-      cart.isNotEmpty &&
+      (cart.isNotEmpty ||
+          (_activeBill.value != null && voidedLines.isNotEmpty)) &&
       cartEditable &&
+      !needsDiscountReview &&
       !register.needsOperatingSetup &&
       (tableMode != 'required' || tableId.value != null) &&
       !storeAuthorityPending &&
@@ -212,11 +239,13 @@ class SaleService extends GetxService {
 
   void clearCart() {
     cart.clear();
+    voidedLines.clear();
     tableId.value = null;
     guestCover.value = null;
     selectedPostingDate.value = null;
     billGeneration++;
     customerId.value = null;
+    saleNote.value = null;
     _activeBill.value = null;
     _quoteContext.value = null;
   }
@@ -227,13 +256,43 @@ class SaleService extends GetxService {
       (context['capabilities'] as Map?)?['cart_line_edits'] == true &&
       (!paired.value || context['store_cart_line_edits'] == true);
 
-  bool get hasCartDraft =>
-      cart.isNotEmpty ||
+  bool get supportsFreeItemReasons =>
+      supportsCartLineEdits &&
+      (!paired.value || context['store_free_item_reasons'] == true);
+
+  bool get supportsItemDiscountDetails =>
+      !paired.value || context['store_item_discount_details'] == true;
+
+  bool get supportsSaleNotes =>
+      !paired.value || context['store_sale_notes'] == true;
+
+  bool checkProductEdit(CartLine line, CartProductEdit edit) {
+    final current = (catalog['products'] as List?)
+        ?.whereType<Map>()
+        .where((product) => product['id'] == line.product['id'])
+        .firstOrNull;
+    final allowed = current?[edit.option] ?? line.product[edit.option];
+    if (allowed != false) return true;
+    message.value = edit.warning;
+    return false;
+  }
+
+  bool get hasCartDraft => cart.isNotEmpty || _hasBillDetails;
+
+  bool get _hasBillDetails =>
       _activeBill.value != null ||
       tableId.value != null ||
       guestCover.value != null ||
       selectedPostingDate.value != null ||
+      saleNote.value != null ||
       customerId.value != null;
+
+  bool setSaleNote(String note) {
+    if (!cartEditable || !supportsSaleNotes || note.length > 500) return false;
+    saleNote.value = note.isEmpty ? null : note;
+    _saveCart();
+    return true;
+  }
 
   void selectCustomer(String? id) {
     if (!cartEditable) return;
@@ -241,22 +300,46 @@ class SaleService extends GetxService {
     _saveCart();
   }
 
-  Future<void> discardCart() => register.run(() async {
-    if (commandPending.value) {
-      throw const FormatException('STORE_COMMAND_PENDING');
-    }
-    await _cartWrites;
-    await database.removeCartDraft(
-      operator.value!.id,
-      installation.value!.profileId,
+  bool get hasNewOrderItems {
+    final newLines = cart.where((line) => !line.submitted);
+    if (newLines.isEmpty) return false;
+    final bill = _activeBill.value;
+    if (bill == null) return true;
+    final held = heldBills.where((entry) => entry.id == bill.id).firstOrNull;
+    final quantities = {
+      if (held != null)
+        for (final line in CartLine.billLines(
+          jsonObject(jsonDecode(held.payload)),
+        ))
+          line.order['line_key']: line.quantity,
+    };
+    return newLines.any(
+      (line) => line.quantity > (quantities[line.order['line_key']] ?? 0),
     );
-    clearCart();
-    if (tableMode == 'required') tab.value = tablesTab;
-    _cartSaveFailed = false;
-  });
+  }
 
-  void add(CartLine line) {
-    if (!cartEditable) return;
+  Future<bool> discardCart() async {
+    var discarded = false;
+    await register.run(() async {
+      if (commandPending.value) {
+        throw const FormatException('STORE_COMMAND_PENDING');
+      }
+      await _cartWrites;
+      final actor = operator.value;
+      final setup = installation.value;
+      if (actor != null && setup != null) {
+        await database.removeCartDraft(actor.id, setup.profileId);
+      }
+      clearCart();
+      if (tableMode == 'required') tab.value = tablesTab;
+      _cartSaveFailed = false;
+      discarded = true;
+    });
+    return discarded;
+  }
+
+  CartLine? add(CartLine line) {
+    if (!cartEditable) return null;
     try {
       if (cart.isEmpty && _activeBill.value == null) {
         final current = context;
@@ -281,29 +364,206 @@ class SaleService extends GetxService {
       );
       if (index >= 0) {
         final updated = cart[index].withQuantity(
-          cart[index].quantity + line.quantity,
+          normalizedQuantity(cart[index].quantity + line.quantity),
         );
         totalOf(updated);
         cart[index] = updated;
         _saveCart();
-        return;
+        return updated;
       }
       if (cart.length >= 60) throw const FormatException('CART_LIMIT');
-      cart.add(line);
+      final added = _newOrderLine(line);
+      cart.add(added);
       _saveCart();
+      return added;
     } catch (error) {
       if (cart.isEmpty && _activeBill.value == null) _quoteContext.value = null;
       register.showError(error);
+      return null;
     }
+  }
+
+  CartLine _newOrderLine(CartLine line) {
+    final pending = cart.where((item) => item.canEditQuantity).firstOrNull;
+    return line.withQuantity(
+      line.quantity,
+      order: {
+        'status': 'new',
+        'ordered_at':
+            pending?.order['ordered_at'] ??
+            DateTime.now().toUtc().toIso8601String(),
+        'ordered_by_name': operator.value?.displayName,
+      },
+    );
+  }
+
+  ({CartLine? remaining, CartLine removed}) _splitLine(CartLine line, num count) {
+    final keep = normalizedQuantity(line.quantity - count);
+    // Inclusive tax can round differently after a line is split.
+    final share = (line.discount * count / line.quantity).round();
+    int discountFor(num qty, int requested) => requested == 0
+        ? 0
+        : requested
+              .clamp(0, totalOf(line.withQuantity(qty, discount: 0)).subtotal)
+              .toInt();
+    final removedDiscount = discountFor(count, share);
+    return (
+      remaining: keep == 0
+          ? null
+          : line.withQuantity(
+              keep,
+              discount: discountFor(keep, line.discount - removedDiscount),
+            ),
+      removed: line.withQuantity(count, discount: removedDiscount),
+    );
+  }
+
+  CartLine _voidPortion(
+    CartLine portion, {
+    required bool partial,
+    required String reason,
+  }) => portion.withQuantity(
+    portion.quantity,
+    order: {
+      ...portion.order,
+      'status': 'void',
+      'source_line_key': portion.order['line_key'],
+      if (partial) 'line_key': const Uuid().v4(),
+      'void_reason': reason,
+    },
+  );
+
+  Future<CartLine?> markItemFree(
+    CartLine line,
+    num count,
+    String reason, {
+    required bool remember,
+  }) async {
+    final text = reason.trim();
+    if (!cartEditable ||
+        !supportsFreeItemReasons ||
+        line.isFree ||
+        line.voided ||
+        !validSaleQuantity(count) ||
+        count > line.quantity ||
+        text.isEmpty ||
+        text.length > 250) {
+      return null;
+    }
+
+    CartLine? result;
+    await register.run(() async {
+      final index = cart.indexOf(line);
+      if (index < 0 || commandPending.value) return;
+      if (!checkProductEdit(line, CartProductEdit.free)) return;
+      final split = _splitLine(line, count);
+      final remaining = split.remaining;
+      if (remaining != null && cart.length >= 60) {
+        throw const FormatException('CART_LIMIT');
+      }
+      final free = _newOrderLine(split.removed.withLineEdits({
+        ...split.removed.withDiscount().lineEdits,
+        'is_free': true,
+        'free_reason': text,
+      }));
+      totalOf(free);
+      if (remaining != null) totalOf(remaining);
+
+      final items = cart.toList()..replaceRange(index, index + 1, [
+        if (remaining != null) remaining,
+        free,
+      ]);
+      final voids = [
+        ...voidedLines,
+        if (line.submitted)
+          _voidPortion(split.removed, partial: remaining != null, reason: text),
+      ];
+      final writeDraft = _draftWriter(items, voids);
+      await _cartWrites;
+      await database.transaction(() async {
+        if (remember) await database.rememberFreeItemReason(text);
+        await writeDraft();
+      });
+      cart.assignAll(items);
+      voidedLines.assignAll(voids);
+      _cartSaveFailed = false;
+      result = free;
+    });
+    return result;
+  }
+
+  Future<CartLine?> deleteQuantity(
+    CartLine line,
+    num count,
+    String reason,
+    bool remember,
+  ) async {
+    CartLine? remaining;
+    if (!cartEditable || reason.trim().isEmpty || reason.length > 250)
+      return null;
+    await register.run(() async {
+      final index = cart.indexOf(line);
+      if (index < 0 ||
+          !validSaleQuantity(count) ||
+          count > line.quantity ||
+          commandPending.value)
+        return;
+      final split = _splitLine(line, count);
+      final kept = split.remaining;
+      final nextCart = cart.toList();
+      final nextVoids = voidedLines.toList();
+      if (kept == null) {
+        nextCart.removeAt(index);
+      } else {
+        totalOf(kept);
+        nextCart[index] = kept;
+      }
+      if (line.submitted) {
+        final removed = _voidPortion(
+          split.removed,
+          partial: kept != null,
+          reason: reason.trim(),
+        );
+        totalOf(removed);
+        nextVoids.add(removed);
+      }
+      final writeDraft = _draftWriter(nextCart, nextVoids);
+      await _cartWrites;
+      await database.transaction(() async {
+        await database.recordItemDeletion(
+          product: line.product['id'] as String,
+          quantity: count,
+          reason: reason.trim(),
+          remember: remember,
+          operatorId: operator.value?.id,
+          billId: _activeBill.value?.id,
+        );
+        await writeDraft();
+      });
+      cart.assignAll(nextCart);
+      voidedLines.assignAll(nextVoids);
+      if (cart.isEmpty && _activeBill.value == null) _quoteContext.value = null;
+      _cartSaveFailed = false;
+      remaining = kept;
+    });
+    return remaining;
   }
 
   void quantity(int index, int amount) {
     if (!cartEditable || index < 0 || index >= cart.length) return;
     if (amount <= 0) {
-      cart.removeAt(index);
+      final removed = cart.removeAt(index);
+      if (removed.submitted) {
+        voidedLines.add(
+          removed.withQuantity(
+            removed.quantity,
+            order: {...removed.order, 'status': 'void'},
+          ),
+        );
+      }
       if (cart.isEmpty && _activeBill.value == null) _quoteContext.value = null;
       _saveCart();
-    } else if (amount <= 999) {
+    } else if (cart[index].canEditQuantity && amount <= 999) {
       replaceCartLine(cart[index], cart[index].withQuantity(amount));
     }
   }
@@ -311,6 +571,9 @@ class SaleService extends GetxService {
   CartLine? replaceCartLine(CartLine original, CartLine replacement) {
     final index = cart.indexOf(original);
     if (!cartEditable || index < 0) return null;
+    if (!original.canEditQuantity && replacement.quantity != original.quantity) {
+      return null;
+    }
     try {
       if (replacement.hasLineEdits && !supportsCartLineEdits) {
         throw const FormatException('CART_LINE_UPGRADE_REQUIRED');
@@ -325,12 +588,17 @@ class SaleService extends GetxService {
     }
   }
 
-  void reorderCartLine(CartLine line) {
-    if (!cartEditable || !cart.contains(line)) return;
+  CartLine? reorderCartLine(CartLine line) {
+    if (!cartEditable || line.voided || !cart.contains(line)) return null;
+    if (line.canEditQuantity) {
+      final quantity = normalizedQuantity(line.quantity + 1);
+      if (!validSaleQuantity(quantity)) return null;
+      return replaceCartLine(line, line.withQuantity(quantity));
+    }
     try {
       final product = cartCatalogProduct(line);
-      if (product == null) return;
-      add(
+      if (product == null) return null;
+      return add(
         CartLine.fromCatalog(product, {
           'portion_id': line.portion?['id'],
           'quantity': 1,
@@ -338,6 +606,7 @@ class SaleService extends GetxService {
       );
     } catch (error) {
       register.showError(error);
+      return null;
     }
   }
 
@@ -372,10 +641,16 @@ class SaleService extends GetxService {
     if (!requiresCashierShift && selectedPostingDate.value != null)
       'posting_date': selectedPostingDate.value,
     'customer_id': customerId.value,
+    if (supportsSaleNotes) 'note': saleNote.value,
     'currency': currency,
     'exchange_rate': exchangeRate,
     'total_minor': cartTotal,
     'quote': cart.map((line) => line.quote(quoteConfig)).toList(),
+    if (voidedLines.isNotEmpty)
+      'voided_lines': voidedLines
+          .where((line) => line.order['void_reason'] != null)
+          .map((line) => line.request)
+          .toList(),
     'expected_context': operatingContext,
   };
 }

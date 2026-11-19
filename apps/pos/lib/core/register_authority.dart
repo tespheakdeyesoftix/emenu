@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:drift/drift.dart' show Value;
+import 'package:uuid/uuid.dart';
 
 import '../features/sales/sale/cart_line.dart';
 import 'pos_api.dart';
@@ -337,6 +338,12 @@ class RegisterAuthority {
       );
     }
     final saved = held == null ? null : jsonObject(jsonDecode(held.payload));
+    final rawNote = input.containsKey('note') ? input['note'] : saved?['note'];
+    if (rawNote != null && (rawNote is! String || rawNote.trim().length > 500)) {
+      throw const FormatException('cart_note_too_long');
+    }
+    final text = (rawNote as String?)?.trim();
+    final note = text == null || text.isEmpty ? null : text;
     final postingOverride =
         input['posting_date'] ??
         (activeConfig['cashier_shift_enabled'] != true
@@ -347,14 +354,22 @@ class RegisterAuthority {
       activeConfig,
       operating['business_date'] as String,
     );
-    final quoteContext = saved == null
+    final savedQuote = saved == null
         ? {
             'profile': context['profile'],
             'business': context['business'],
             'payment_types': context['payment_types'],
           }
         : jsonObject(saved['quote_context']);
-    final config = jsonObject(jsonObject(quoteContext['profile'])['config']);
+    final quoteProfile = jsonObject(savedQuote['profile']);
+    final config = withCurrentTaxSettings(
+      jsonObject(quoteProfile['config']),
+      activeConfig,
+    );
+    final quoteContext = {
+      ...savedQuote,
+      'profile': {...quoteProfile, 'config': config},
+    };
     final business = jsonObject(quoteContext['business']);
     final currency = business['currency'] as String;
     final rate = business['secondary_exchange_rate'].toString();
@@ -427,6 +442,7 @@ class RegisterAuthority {
     final savedLines = jsonRows(saved?['lines']);
     bool hasEdits(Json line) =>
         line['base_price_override_minor'] != null ||
+        line['price_change_reason'] != null ||
         line['is_free'] == true ||
         line['note'] != null;
     if ((savedLines.any(hasEdits) || quoted.any(hasEdits)) &&
@@ -438,7 +454,102 @@ class RegisterAuthority {
         'Update the register and server to use these order line edits.',
       );
     }
-    final lines = _pricedLines(snapshot, saved, quoted);
+    final previous = saved == null ? <CartLine>[] : CartLine.billLines(saved);
+    if (quoted.isEmpty &&
+        !(saved?['status'] == 'submitted' &&
+            (previous.any((line) => line.submitted) ||
+                jsonRows(saved?['voided_lines']).isNotEmpty))) {
+      throw const FormatException('EMPTY_CART');
+    }
+    final lines = [
+      for (final line in _pricedLines(snapshot, previous, quoted))
+        line.withQuantity(
+          line.quantity,
+          order: {
+            if (!line.submitted) 'ordered_at': time.toUtc().toIso8601String(),
+            if (!line.submitted) 'ordered_by_name': actor.displayName,
+            ...line.order,
+            'line_key': line.order['line_key'] ?? const Uuid().v4(),
+            if (!line.submitted &&
+                (submit || action == RegisterAction.checkout)) ...{
+              'status': 'submitted',
+              'order_session': commandId,
+              'ordered_at': time.toUtc().toIso8601String(),
+              'ordered_by': actor.id,
+              'ordered_by_name': actor.displayName,
+            },
+          },
+        ),
+    ];
+    final activeKeys = lines.map((line) => line.order['line_key']).toSet();
+    final savedVoids = jsonRows(saved?['voided_lines']);
+    final knownKeys = savedVoids.map((row) => row['line_key']).toSet();
+    final previousByKey = {
+      for (final line in previous) line.order['line_key']: line,
+    };
+    final voidedLines = [...savedVoids];
+    for (final change in jsonRows(input['voided_lines'])) {
+      final key = change['line_key'];
+      if (knownKeys.contains(key)) continue;
+      final source = previousByKey[change['source_line_key']];
+      final count = change['quantity'];
+      final reason = change['void_reason'];
+      final discount = change['discount_minor'] ?? 0;
+      if (key is! String ||
+          key.isEmpty ||
+          activeKeys.contains(key) ||
+          source == null ||
+          !source.submitted ||
+          source.product['id'] != change['product_id'] ||
+          count is! num ||
+          !validSaleQuantity(count) ||
+          discount is! int ||
+          reason is! String ||
+          reason.trim().isEmpty ||
+          reason.length > 250)
+        throw invalidCommand;
+      final removed = source.withQuantity(
+        count,
+        order: {
+          ...source.order,
+          'line_key': key,
+          'source_line_key': change['source_line_key'],
+          'status': 'void',
+          'void_reason': reason.trim(),
+        },
+      ).withLineEdits({
+        ...source.lineEdits,
+        'discount_minor': discount,
+        'discount_bps': change['discount_bps'],
+        'discount_note': change['discount_note'],
+      });
+      removed.totals(config);
+      voidedLines.add(removed.heldSnapshot);
+      knownKeys.add(key);
+    }
+    voidedLines.addAll([
+      for (final old in previous)
+        if (old.submitted &&
+            !activeKeys.contains(old.order['line_key']) &&
+            !knownKeys.contains(old.order['line_key']))
+          {...old.heldSnapshot, 'status': 'void'},
+    ]);
+    final deletions = [
+      for (final row in voidedLines)
+        if (row['void_reason'] != null)
+          {
+            for (final field in [
+              'line_key',
+              'source_line_key',
+              'quantity',
+              'discount_minor',
+              'discount_bps',
+              'discount_note',
+              'void_reason',
+            ])
+              if (row[field] != null) field: row[field],
+          },
+    ];
     final prices = lines.map((line) => line.quote(config)).toList();
     final total = prices.fold<int>(
       0,
@@ -455,7 +566,9 @@ class RegisterAuthority {
         input['total_minor'] != total ||
         prices.indexed.any(
           (pair) =>
-              amountFields.any((key) => pair.$2[key] != quoted[pair.$1][key]),
+              amountFields.any((key) => pair.$2[key] != quoted[pair.$1][key]) ||
+              (pair.$2['discount_minor'] ?? 0) !=
+                  (quoted[pair.$1]['discount_minor'] ?? 0),
         )) {
       throw const PosApiError(
         409,
@@ -477,7 +590,10 @@ class RegisterAuthority {
       'table_id': tableId,
       'guest_cover': cover,
       'customer_id': customerId,
+      if (input.containsKey('note') || note != null) 'note': note,
       'lines': lines.map((line) => line.request).toList(),
+      'expected_total_minor': total,
+      if (deletions.isNotEmpty) 'voided_lines': deletions,
       'expected_context': operating,
     };
     final types = jsonRows(quoteContext['payment_types']);
@@ -500,9 +616,7 @@ class RegisterAuthority {
     Json storeSale() {
       final catalog = jsonObject(snapshot['catalog']);
       final legacyTax = legacyTaxSettings(config);
-      final taxRule = config['default_tax_rule'] is Map
-          ? jsonObject(config['default_tax_rule'])
-          : null;
+      final taxRule = defaultTaxRule(config);
       return {
         if (postingOverride != null) 'posting_date': postingDate,
         'expected_context': operating,
@@ -518,6 +632,7 @@ class RegisterAuthority {
         'table_code': tableCode,
         'customer_id': customerId,
         'customer_name': customerName,
+        if (input.containsKey('note') || note != null) 'note': note,
         'total_minor': total,
         'lines': [
           for (final (index, line) in lines.indexed)
@@ -536,6 +651,7 @@ class RegisterAuthority {
             },
         ],
         'payment_types': types,
+        if (deletions.isNotEmpty) 'voided_lines': deletions,
         'receipt': receipt,
       };
     }
@@ -552,6 +668,7 @@ class RegisterAuthority {
           'operator_name': actor.displayName,
           'customer_id': customerId,
           'customer_name': customerName,
+          'note': ?note,
           'table_code': tableCode,
           'table_label': tableLabel,
           'guest_cover': cover,
@@ -561,13 +678,11 @@ class RegisterAuthority {
           'total_minor': total,
           'currency': currency,
           'quote_context': quoteContext,
-          'lines': [
-            for (final line in lines)
-              {...line.heldSnapshot, if (submitted) 'status': 'submitted'},
-          ],
+          'lines': lines.map((line) => line.heldSnapshot).toList(),
+          'voided_lines': voidedLines,
         },
       );
-      if (submitted) {
+      if (submit) {
         if (store != null) {
           await store.submitSale(commandId, id, storeSale());
         } else {
@@ -604,9 +719,11 @@ class RegisterAuthority {
       createdAt: time,
       request: {
         'draft': draft,
+        'note': ?note,
         'register_command_id': commandId,
         if (submitted) 'submitted_order': true,
         'quote': prices,
+        'voided_lines': voidedLines,
         'exchange_rate': rate,
         'payments': payments,
         'receipt': receipt,
@@ -620,31 +737,43 @@ class RegisterAuthority {
     }
   }
 
-  List<CartLine> _pricedLines(Json snapshot, Json? saved, List<Json> quoted) {
-    if (quoted.isEmpty) throw const FormatException('EMPTY_CART');
+  List<CartLine> _pricedLines(
+    Json snapshot,
+    List<CartLine> previous,
+    List<Json> quoted,
+  ) {
     if (quoted.length > 60) throw const FormatException('CART_LIMIT');
     final catalog = {
       for (final row in jsonRows(jsonObject(snapshot['catalog'])['products']))
         row['id']: row,
     };
-    final previous = jsonRows(saved?['lines'])
-        .map(CartLine.fromHeldSnapshot)
-        .toList();
+    final usedKeys = <String>{};
     return quoted.map((row) {
       final ids = (row['modifier_ids'] as List).cast<String>();
       final selected = ids.toSet();
       if (ids.length > 120 || selected.length != ids.length) {
         throw invalidCommand;
       }
+      final key = row['line_key'];
+      if (key != null && (key is! String || !usedKeys.add(key)))
+        throw invalidCommand;
       final existing = previous
-          .where((line) => line.matchesSelection(row, selected))
+          .where(
+            (line) => key != null
+                ? line.order['line_key'] == key
+                : row['status'] != 'new' &&
+                      !usedKeys.contains(line.order['line_key']) &&
+                      line.matchesSelection(row, selected),
+          )
           .firstOrNull;
-      if (existing != null) {
-        return existing.withQuantity(row['quantity'] as int).withLineEdits(row);
+      if (existing != null) usedKeys.add(existing.order['line_key'] as String);
+      if (existing != null && existing.matchesSelection(row, selected)) {
+        return existing.withQuantity(row['quantity'] as num).withLineEdits(row);
       }
       final product = catalog[row['product_id']];
       if (product == null) throw CartLine.unavailable;
-      return CartLine.fromCatalog(product, row, selected);
+      final line = CartLine.fromCatalog(product, row, selected);
+      return line.withQuantity(line.quantity, order: existing?.order);
     }).toList();
   }
 

@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import '../../core/pos_api.dart';
 import '../../core/bill_information.dart';
 import '../../shared/forms/posting_date_picker.dart';
+import '../../shared/note_dialog_widget.dart';
 import '../../core/pricing.dart';
 import '../../global.dart';
 import '../../helpers/helper.dart';
@@ -17,6 +18,10 @@ import 'sale/catalog_navigation.dart';
 import 'sale/sale_screen_settings.dart';
 import 'sale/widgets/sale_screen_setting_dialog_widget.dart';
 import 'sale/widgets/payment_dialog.dart';
+import 'sale/widgets/delete_cart_item_dialog.dart';
+import 'sale/widgets/change_price_dialog.dart';
+import 'sale/widgets/free_item_dialog.dart';
+import 'sale/widgets/item_discount_dialog.dart';
 import 'sale/widgets/product_options_dialog.dart';
 import 'sale/widgets/select_customer_dialog_widget.dart';
 import 'sale/widgets/scan_memeber_card_dialog_widget.dart';
@@ -177,6 +182,11 @@ class SaleController extends GetxController {
 
   void selectLine(CartLine line) {
     selectedLine.value = identical(selectedLine.value, line) ? null : line;
+  }
+
+  void reorderLine(CartLine line) {
+    final updated = service.reorderCartLine(line);
+    if (updated != null && line.canEditQuantity) selectedLine.value = updated;
   }
 
   @override

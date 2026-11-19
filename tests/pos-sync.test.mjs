@@ -1548,6 +1548,171 @@ test("Reset data backs up and clears orders and POS sales at the selected scope"
   assert.equal(await db.prepare("SELECT activity_revision FROM cashier_shifts WHERE id='shift-foreign'").first("activity_revision"), 1);
 });
 
+test("Reset data backs up working days, cashier shifts and their dependents without crossing tenants", async (t) => {
+  const { main } = await prepareBookings(t);
+  const scopes = [["main", "biz_a", main], ["east", "biz_a", "booking_east"], ["foreign", "biz_b", "booking_foreign"]];
+  async function receipt(business, profile, id, response) {
+    await db.prepare(`INSERT INTO pos_commands
+      (business_id,profile_id,idempotency_key,request_hash,actor_id,created_at,response_status,response_json,state_valid)
+      VALUES (?,?,?,'fixture','fixture',datetime('now'),201,?,1)`)
+      .bind(business, profile, id, JSON.stringify(response)).run();
+  }
+  async function sale(label, business, branch, suffix, day, shift, status = "paid", reverses = null) {
+    const id = "reset-sale-" + label + "-" + suffix;
+    const amount = reverses ? -200 : 200;
+    await db.batch([
+      db.prepare(`INSERT INTO sales
+        (id,business_id,branch_id,profile_id,working_day_id,shift_id,reverses_sale_id,status,business_date,currency,
+          secondary_exchange_rate,tax_mode,tax_rate_bps,subtotal_minor,tax_minor,total_minor,customer_id,customer_name,
+          receipt_json,created_at,created_by,updated_at,updated_by)
+        VALUES (?,?,?,?,?,?,?,?,'2026-11-19','USD','4000','disabled',0,?,0,?,'walk-in','Walk in','{}',
+          datetime('now'),'fixture',datetime('now'),'fixture')`)
+        .bind(id,business,branch,"reset-pos-" + label,day,shift,reverses,status,amount,amount),
+      db.prepare(`INSERT INTO sale_products
+        (id,sale_id,line_number,product_id,product_name,price_list_id,modifiers_json,quantity,unit_price_minor,subtotal_minor,tax_minor,total_minor)
+        VALUES (?,?,1,'coffee','Coffee','normal','[]',?,200,?,0,?)`)
+        .bind("line-" + id,id,reverses ? -1 : 1,amount,amount),
+      ...(status === "paid" ? [db.prepare(`INSERT INTO sale_payments
+        (id,sale_id,line_number,payment_type_id,payment_type_name,payment_kind,currency,entry_type,amount_minor,reverses_payment_id)
+        VALUES (?,?,1,'cash','Cash','cash','USD',?,?,?)`)
+        .bind("payment-" + id,id,reverses ? "reversal" : "tender",amount,reverses ? "payment-" + reverses : null)] : []),
+    ]);
+    await receipt(business,"reset-pos-" + label,id,{ id,lines: [],payments: [] });
+    return id;
+  }
+  for (const [label,business,branch] of scopes) {
+    const profile = "reset-pos-" + label;
+    const day = "reset-day-" + label;
+    await db.batch([
+      db.prepare("INSERT INTO pos_profiles (id,business_id,branch_id,name,config_json) VALUES (?,?,?,?,'{}')")
+        .bind(profile,business,branch,label),
+      db.prepare(`INSERT INTO working_days (id,business_id,branch_id,business_date,timezone,opened_at,opened_by)
+        VALUES (?,?,?,'2026-11-19','Asia/Phnom_Penh',datetime('now'),'fixture')`).bind(day,business,branch),
+      ...["closed","open"].map(state => db.prepare(`INSERT INTO cashier_shifts
+        (id,business_id,branch_id,profile_id,working_day_id,opened_at,opened_by,closed_at,closed_by,payment_types_json)
+        VALUES (?,?,?,?,?,datetime('now'),'fixture',?,?,'[]')`)
+        .bind("reset-" + state + "-" + label,business,branch,profile,day,
+          state === "closed" ? "2026-11-19T01:00:00Z" : null,state === "closed" ? "fixture" : null)),
+      ...["closed","open"].map(state => db.prepare(`INSERT INTO cash_floats
+        (id,shift_id,payment_type_id,currency,kind,amount_minor,created_at,created_by)
+        VALUES (?,?,'cash','USD','opening',1000,datetime('now'),'fixture')`)
+        .bind("float-" + state + "-" + label,"reset-" + state + "-" + label)),
+      db.prepare(`INSERT INTO cashier_shift_closing_counts
+        (shift_id,payment_type_id,payment_type_name,currency,expected_minor,declared_minor)
+        VALUES (?,'cash','Cash','USD',1200,1200)`).bind("reset-closed-" + label),
+      db.prepare(`INSERT INTO cashier_shift_reopens
+        (id,shift_id,reopened_at,reopened_by,reason,previous_closed_at,previous_closed_by,previous_counts_json)
+        VALUES (?,?,datetime('now'),'fixture','Test reopen','2026-11-18T01:00:00Z','fixture','[]')`)
+        .bind("reopen-" + label,"reset-closed-" + label),
+    ]);
+    await receipt(business,profile,day,{ id: day,branch_id: branch });
+    for (const state of ["closed","open"]) {
+      await receipt(business,profile,"shift-command-" + state + "-" + label,
+        { id: "reset-" + state + "-" + label,profile_id: profile,working_day_id: day,closing_counts: [] });
+      await receipt(business,profile,"float-command-" + state + "-" + label,
+        { id: "float-" + state + "-" + label,shift_id: "reset-" + state + "-" + label });
+      await sale(label,business,branch,state,day,"reset-" + state + "-" + label);
+    }
+    await sale(label,business,branch,"submitted",day,null,"submitted");
+  }
+  await sale("main","biz_a",main,"reversal","reset-day-main","reset-open-main","paid","reset-sale-main-closed");
+  // A profile may also have history from when working days were disabled.
+  await db.prepare(`INSERT INTO cashier_shifts
+    (id,business_id,branch_id,profile_id,opened_at,opened_by,closed_at,closed_by,payment_types_json)
+    VALUES ('reset-no-day','biz_a','booking_east','reset-pos-east',datetime('now'),'fixture',datetime('now'),'fixture','[]')`).run();
+  await sale("east","biz_a","booking_east","no-day",null,"reset-no-day");
+  await receipt("biz_a","reset-pos-east","shift-no-day",{ id: "reset-no-day",working_day_id: null });
+
+  const reset = (action,input) => superRequest("biz_a",input,"POST","super@example.test","reset-data/" + action);
+  const backup = input => reset("backup",input).then(result => expectStatus(result,200));
+  const confirmation = (input,snapshot) => ({ ...input,token: snapshot.token,confirmation: snapshot.branch.name,
+    backupSaved: true,confirmBusinessWide: input.scope === "business" });
+  const ids = async (table,column = "id") => (await db.prepare("SELECT " + column + " AS id FROM " + table + " ORDER BY 1").all()).results.map(row => row.id);
+  const rows = (snapshot,name) => {
+    const table = snapshot.tables.find(table => table.name === name);
+    assert.ok(table,"Missing backup file: " + name);
+    return table.rows.map(row => Object.fromEntries(table.columns.map((column,index) => [column,row[index]])));
+  };
+  const unaffected = async (business = "biz_b",branch = "booking_foreign") => {
+    const where = "business_id=?1 AND branch_id=?2";
+    const shifts = "shift_id IN (SELECT id FROM cashier_shifts WHERE " + where + ")";
+    const sales = "sale_id IN (SELECT id FROM sales WHERE " + where + ")";
+    const tables = [
+      ["working_days",where],["cashier_shifts",where],["sales",where],
+      ["cash_floats",shifts],["cashier_shift_closing_counts",shifts],["cashier_shift_reopens",shifts],
+      ["sale_products",sales],["sale_payments",sales],
+      ["pos_commands","business_id=?1 AND profile_id IN (SELECT id FROM pos_profiles WHERE " + where + ")"],
+    ];
+    return Promise.all(tables.map(async ([table,condition]) =>
+      (await db.prepare("SELECT * FROM " + table + " WHERE " + condition + " ORDER BY rowid").bind(business,branch).all()).results));
+  };
+  const foreignBefore = await unaffected();
+  const eastBefore = await unaffected("biz_a","booking_east");
+  const shiftInput = { scope: "branch",branchId: main,selection: ["cashierShifts"] };
+  const shiftBackup = await backup(shiftInput);
+  assert.deepEqual(shiftBackup.blockers,[]);
+  assert.deepEqual(shiftBackup.tables.map(table => table.name),[
+    "pos_commands","sale_products","sale_payments","sales","cash_floats","cashier_shift_closing_counts","cashier_shift_reopens","cashier_shifts",
+  ]);
+  assert.equal(rows(shiftBackup,"sales").length,3);
+  assert.equal(rows(shiftBackup,"sale_products").length,3);
+  assert.equal(rows(shiftBackup,"sale_payments").length,3);
+  assert.equal(rows(shiftBackup,"cash_floats").length,2);
+  assert.equal(rows(shiftBackup,"cashier_shift_closing_counts")[0].declared_minor,1200);
+  assert.equal(rows(shiftBackup,"cashier_shift_reopens")[0].previous_counts_json,"[]");
+  assert.equal(rows(shiftBackup,"pos_commands").length,7);
+  assert.equal(rows(shiftBackup,"cashier_shifts").length,2);
+  await expectStatus(await reset("delete",{ ...confirmation(shiftInput,shiftBackup),confirmation: "wrong branch" }),400);
+  await expectStatus(await reset("backup",{ ...shiftInput,branchId: "booking_foreign" }),404);
+  await db.prepare("UPDATE cash_floats SET amount_minor=1100 WHERE id='float-open-main'").run();
+  await expectStatus(await reset("delete",confirmation(shiftInput,shiftBackup)),409);
+  const fresh = await backup(shiftInput);
+  await db.prepare(`CREATE TRIGGER reset_shift_test_fail BEFORE DELETE ON cashier_shifts
+    WHEN OLD.id='reset-open-main' BEGIN SELECT RAISE(ABORT,'reset-shift-test-failure'); END`).run();
+  try {
+    await expectStatus(await reset("delete",confirmation(shiftInput,fresh)),500);
+    assert.equal(await db.prepare("SELECT response_status FROM pos_commands WHERE idempotency_key='shift-command-open-main'").first("response_status"),201);
+    assert.equal(await db.prepare("SELECT count(*) AS n FROM sales WHERE branch_id=?").bind(main).first("n"),4);
+    assert.equal(await db.prepare("SELECT count(*) AS n FROM super_admin_audit_log WHERE action='business.data_reset'").first("n"),0);
+  } finally { await db.prepare("DROP TRIGGER reset_shift_test_fail").run(); }
+  await expectStatus(await reset("delete",confirmation(shiftInput,fresh)),200);
+  assert.ok((await ids("working_days")).includes("reset-day-main"));
+  assert.equal(await db.prepare("SELECT count(*) AS n FROM cashier_shifts WHERE branch_id=?").bind(main).first("n"),0);
+  assert.deepEqual((await ids("sales")).filter(id => id.includes("main")),["reset-sale-main-submitted"]);
+  assert.deepEqual(await unaffected(),foreignBefore);
+  assert.deepEqual(await unaffected("biz_a","booking_east"),eastBefore);
+  assert.equal(await db.prepare("SELECT response_status FROM pos_commands WHERE idempotency_key='reset-day-main'").first("response_status"),201);
+  assert.equal(await db.prepare("SELECT json_extract(response_json,'$.code') AS code FROM pos_commands WHERE idempotency_key='float-command-open-main'").first("code"),"POS_DATA_RESET");
+
+  const dayInput = { scope: "branch",branchId: "booking_east",selection: ["workingDays"] };
+  const dayBackup = await backup(dayInput);
+  assert.equal(rows(dayBackup,"working_days").length,1);
+  assert.equal(rows(dayBackup,"cashier_shifts").length,2);
+  assert.equal(rows(dayBackup,"sales").length,3);
+  assert.equal(rows(dayBackup,"pos_commands").length,8);
+  await expectStatus(await reset("delete",confirmation(dayInput,dayBackup)),200);
+  assert.ok(!(await ids("working_days")).includes("reset-day-east"));
+  assert.ok((await ids("cashier_shifts")).includes("reset-no-day"));
+  assert.ok((await ids("sales")).includes("reset-sale-east-no-day"));
+  assert.equal(await db.prepare("SELECT response_status FROM pos_commands WHERE idempotency_key='reset-day-east'").first("response_status"),410);
+  assert.deepEqual(await unaffected(),foreignBefore);
+
+  const businessInput = { scope: "business",branchId: main,selection: ["workingDays","cashierShifts"] };
+  const businessBackup = await backup(businessInput);
+  assert.equal(rows(businessBackup,"sales").length,2);
+  await expectStatus(await reset("delete",{ ...confirmation(businessInput,businessBackup),confirmBusinessWide: false }),400);
+  await expectStatus(await reset("delete",confirmation(businessInput,businessBackup)),200);
+  assert.deepEqual(await ids("working_days"),["reset-day-foreign"]);
+  assert.deepEqual(await ids("cashier_shifts"),["reset-closed-foreign","reset-open-foreign"]);
+  assert.deepEqual(await ids("sales"),["reset-sale-foreign-closed","reset-sale-foreign-open","reset-sale-foreign-submitted"]);
+  assert.deepEqual(await ids("cash_floats"),["float-closed-foreign","float-open-foreign"]);
+  assert.deepEqual(await ids("cashier_shift_closing_counts","shift_id"),["reset-closed-foreign"]);
+  assert.deepEqual(await ids("cashier_shift_reopens"),["reopen-foreign"]);
+  assert.deepEqual(await unaffected(),foreignBefore);
+  assert.equal(await db.prepare("SELECT count(*) AS n FROM pos_profiles").first("n"),3);
+  assert.equal(await db.prepare("SELECT count(*) AS n FROM super_admin_audit_log WHERE action='business.data_reset'").first("n"),3);
+});
+
 test("a whole-business reset keeps the other catalog and protects menus linked to saved orders", async () => {
   const checkout = await prepareNotificationCheckout();
   const main = await db.prepare("SELECT id FROM branches WHERE business_id='biz_a' AND is_default=1").first("id");

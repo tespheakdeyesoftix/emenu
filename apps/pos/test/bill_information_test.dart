@@ -411,6 +411,7 @@ void main() {
               'bill_information': true,
               'sale_context_guard': true,
               'submit_orders': true,
+              'order_line_history': true,
             },
           };
         } else {

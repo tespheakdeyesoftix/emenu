@@ -64,6 +64,11 @@ class CustomerService extends GetxService {
   );
 
   Future<Json> save(String? id, Json fields, String commandId) {
+    if (fields.containsKey('allow_credit') &&
+        (register.context['capabilities'] as Map?)?['customer_credit'] !=
+            true) {
+      throw const FormatException('CUSTOMER_CREDIT_UPGRADE');
+    }
     if (fields.containsKey('photo_upload') &&
         (register.context['capabilities'] as Map?)?['customer_photo_upload'] !=
             true) {

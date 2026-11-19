@@ -336,8 +336,7 @@ export const storeOperatorActive = `EXISTS (
 export const profileColumns = `p.id,p.branch_id,b.name AS branch_name,p.name,
   p.is_active,p.version,p.config_json,p.pending_config_json`;
 
-function readProfileConfig(json: string): ProfileConfigView {
-  const config = JSON.parse(json) as ProfileConfig;
+function normalizeProfileConfig(config: ProfileConfig): ProfileConfigView {
   const taxRules = (config.tax_rules ?? []).map((rule, index) => ({
     ...rule,
     id: rule.id ?? "legacy_tax_rule_" + (index + 1),
@@ -357,16 +356,29 @@ function readProfileConfig(json: string): ProfileConfigView {
   };
 }
 
+export function registerTaxSettings(profile: PosProfile) {
+  const config = normalizeProfileConfig(
+    JSON.parse(profile.pending_config_json ?? profile.config_json),
+  );
+  return {
+    tax_rules: config.tax_rules,
+    default_tax_rule_id: config.default_tax_rule_id,
+    default_tax_rule: config.default_tax_rule,
+    tax_mode: config.tax_mode,
+    tax_rate_bps: config.tax_rate_bps,
+  };
+}
+
 export function profileView(profile: PosProfile, admin = false) {
   const { config_json, pending_config_json, is_active, ...fields } = profile;
   return {
     ...fields,
     is_active: Boolean(is_active),
-    config: readProfileConfig(config_json),
+    config: normalizeProfileConfig(JSON.parse(config_json)),
     ...(admin
       ? {
           pending_config: pending_config_json
-            ? readProfileConfig(pending_config_json)
+            ? normalizeProfileConfig(JSON.parse(pending_config_json))
             : null,
         }
       : {}),

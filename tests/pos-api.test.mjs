@@ -929,6 +929,64 @@ test("POS profile receipt templates round-trip with defaults for each type", asy
   assert.deepEqual((await context()).default_receipt_templates, { receipt: null, kitchen_receipt: null, qr_label: null });
 });
 
+test("product POS options round-trip through the editor API and register catalog", async () => {
+  const profile = await newProfile("Product POS options", { catalog_mode: "category", selected_ids: ["drinks"] });
+  const token = await start(profile);
+  const keys = ["allow_discount", "allow_change_price", "is_open_product", "allow_free"];
+  const apiFlags = (row) => keys.map((key) => row[key]);
+  const editorFlags = (row) => [row.allowDiscount, row.allowChangePrice, row.isOpenProduct, row.allowFree];
+  const catalog = async (id) => (await read(token, "/catalog")).products.find((row) => row.id === id);
+  assert.deepEqual(apiFlags(await catalog("coffee")), [true, true, false, true]);
+
+  await prepare(`INSERT INTO price_lists(id,business_id,name,is_normal)
+    SELECT 'product-pos-options-normal','cafe','Normal Rate',1
+    WHERE NOT EXISTS (SELECT 1 FROM price_lists WHERE business_id='cafe' AND is_normal=1)`).run();
+  const body = { nameKm: "Product POS options", categoryId: "coffee-category", priceCents: 3 };
+  const created = await status(await request("/api/admin/products", admin, "POST", body), 201);
+  const createdIds = [created.id];
+  const path = `/api/admin/products/${created.id}`;
+  const detail = async () => {
+    const page = await status(await request(`/api/admin/catalog?productId=${created.id}`, admin), 200);
+    return page.products[0];
+  };
+  try {
+    assert.deepEqual(editorFlags(await detail()), [1, 1, 0, 1]);
+    assert.deepEqual(apiFlags(await catalog(created.id)), [true, true, false, true]);
+    const configured = await status(await request("/api/admin/products", admin, "POST", {
+      ...body, nameKm: "Configured product", allowDiscount: false, allowChangePrice: false,
+      isOpenProduct: true, allowFree: false,
+    }), 201);
+    createdIds.push(configured.id);
+    assert.deepEqual(apiFlags(await catalog(configured.id)), [false, false, true, false]);
+    await status(await request(path, admin, "PUT", {
+      ...body, allowDiscount: false, allowChangePrice: false, isOpenProduct: true, allowFree: false,
+    }), 200);
+    assert.deepEqual(editorFlags(await detail()), [0, 0, 1, 0]);
+    assert.deepEqual(apiFlags(await catalog(created.id)), [false, false, true, false]);
+
+    // Older clients that omit POS options must preserve the saved values.
+    await status(await request(path, admin, "PUT", { ...body, nameKm: "Renamed product" }), 200);
+    assert.deepEqual(editorFlags(await detail()), [0, 0, 1, 0]);
+    for (const field of ["allowDiscount", "allowChangePrice", "isOpenProduct", "allowFree"]) {
+      await status(await request(path, admin, "PUT", { ...body, [field]: "false" }), 400);
+    }
+    await status(await request(path, admin, "PUT", { ...body, allowFree: null }), 400);
+    assert.deepEqual(apiFlags(await catalog(created.id)), [false, false, true, false]);
+
+    await status(await request(path, admin, "PUT", {
+      ...body, allowDiscount: true, allowChangePrice: true, isOpenProduct: false, allowFree: true,
+    }), 200);
+    assert.deepEqual(apiFlags(await catalog(created.id)), [true, true, false, true]);
+    const foreign = await status(await request("/api/auth/login", null, "POST", {
+      email: emailFor("stranger"), passwordProof: proofFor(emailFor("stranger")), authVersion: version,
+    }), 200);
+    await status(await request(path, foreign.token, "PUT", body), 404);
+  } finally {
+    await prepare("DELETE FROM products WHERE business_id='cafe' AND id IN (SELECT value FROM json_each(?))", JSON.stringify(createdIds)).run();
+    await prepare("DELETE FROM price_lists WHERE id='product-pos-options-normal'").run();
+  }
+});
+
 test("POS catalog exposes uploaded and external menu/category photos", async () => {
   const menuProfile = await newProfile("Menu photos", {
     catalog_mode: "menu", selected_ids: ["main-menu", "food-menu"],
@@ -1214,8 +1272,8 @@ test("POS profiles save multiple three-level tax rules and reject rates outside 
   const updated = await patch({ tax_rules: updatedRules, default_tax_rule_id: cambodia.id });
   assert.deepEqual(updated.pending_config.tax_rules, updatedRules);
   assert.deepEqual(updated.pending_config.default_tax_rule, changedRule);
-  assert.deepEqual((await context()).tax_rules, rules);
-  assert.deepEqual((await context()).default_tax_rule, vatOnly);
+  assert.deepEqual((await context()).tax_rules, updatedRules);
+  assert.deepEqual((await context()).default_tax_rule, changedRule);
   await patch({ print_copies: 2 });
   await write(token, "/sales/" + bill.id + "/cancel", { revision: bill.revision, reason: "Test" }, 200);
   assert.deepEqual((await context()).tax_rules, updatedRules);
@@ -1269,7 +1327,15 @@ test("submitted orders persist on both tables and settle or cancel in place", as
   assert.equal((await read(token, "/sales?status=submitted")).sales[0].id, id);
   assert.equal((await read(token, "/sales?history=active")).sales[0].status, "submitted");
 
-  const edited = await write(token, path + "/submit", { lines: [coffee(3)] }, 200);
+  const secondOrder = coffee(3, { line_key: "second-coffee", order_session: "second-order" });
+  const expanded = await write(token, path + "/submit", { lines: [coffee(2), secondOrder] }, 200);
+  assert.equal(expanded.lines[0].id, submitted.lines[0].id);
+  assert.equal(expanded.lines[0].ordered_at, submitted.lines[0].ordered_at);
+  assert.notEqual(expanded.lines[0].order_session, expanded.lines[1].order_session);
+  const edited = await write(token, path + "/submit", { lines: [secondOrder] }, 200);
+  assert.equal(edited.voided_lines[0].id, submitted.lines[0].id);
+  assert.equal(edited.voided_lines[0].status, "void");
+  assert.equal(edited.lines[0].id, expanded.lines[1].id);
   assert.equal(edited.lines[0].quantity, 3);
   assert.equal(edited.lines[0].status, "submitted");
   const paid = await write(token, path + "/checkout", {
@@ -1280,6 +1346,7 @@ test("submitted orders persist on both tables and settle or cancel in place", as
   assert.equal(paid.id, id);
   assert.equal(paid.status, "paid");
   assert.equal(paid.lines[0].status, "paid");
+  assert.equal(paid.voided_lines[0].status, "void");
 
   const discardedPath = `/sales/${randomUUID()}`;
   const discarded = await write(token, discardedPath + "/submit", {
@@ -2581,6 +2648,7 @@ test("Selling customer and group CRUD preserve legacy customers and enforce tena
   assert.equal(legacy.customer_group_id, null);
   assert.equal(legacy.customer_code, null);
   assert.equal(legacy.is_membership, 0);
+  assert.equal(legacy.allow_credit, 0);
   assert.ok((await get("/customers")).customers.some((row) => row.id === legacy.id));
 
   const { id: groupId } = await adminWrite("/customer-groups", "POST", { name: "Regulars" });
@@ -2612,7 +2680,7 @@ test("Selling customer and group CRUD preserve legacy customers and enforce tena
   const customerPath = "/customers/" + customer.id;
   assert.deepEqual(await get(customerPath), {
     ...fields, id: customer.id, is_walk_in: 0, is_membership: 1,
-    customer_group_name: "Regulars", has_uploaded_photo: 0,
+    customer_group_name: "Regulars", has_uploaded_photo: 0, allow_credit: 0,
   });
   const listCustomers = (query) => get("/customers?" + new URLSearchParams(query));
   for (const term of ["CONTACT DETAILS", "m-001", "012345678", "+855 (012) 345-678"]) {
@@ -2645,6 +2713,10 @@ test("Selling customer and group CRUD preserve legacy customers and enforce tena
   const edited = await adminWrite(customerPath, "PATCH", { email: null }, 200);
   assert.equal(edited.email, null);
   assert.equal(edited.phone_number, fields.phone_number);
+  assert.equal((await adminWrite(customerPath, "PATCH", { allow_credit: true }, 200)).allow_credit, 1);
+  await adminWrite(customerPath, "PATCH", { allow_credit: "true" }, 400);
+  assert.equal((await get(customerPath)).allow_credit, 1);
+  assert.equal((await adminWrite(customerPath, "PATCH", { allow_credit: false }, 200)).allow_credit, 0);
   await adminWrite(customerPath, "PATCH", { customer_code: null }, 400);
   assert.equal((await get(customerPath)).customer_code, fields.customer_code);
   await adminWrite(customerPath, "PATCH", { customer_group_id: "foreign-group" }, 400);
@@ -2711,6 +2783,7 @@ test("POS profile staff can manage customers and safely retry directory writes",
   const group = await adminWrite("/customer-groups", "POST", { name: "Register members" });
   assert.equal((await read(token, "/context")).capabilities.customer_directory, true);
   assert.equal((await read(token, "/context")).capabilities.customer_photo_upload, true);
+  assert.equal((await read(token, "/context")).capabilities.customer_credit, true);
   assert.ok((await read(token, "/customer-groups")).customer_groups.some((row) => row.id === group.id));
   await read(discovery, "/customers", 403);
   await write(token, "/customers", { name: "Missing code", is_membership: true }, 400);
@@ -2723,7 +2796,7 @@ test("POS profile staff can manage customers and safely retry directory writes",
   const fields = {
     name: "New register customer", phone_number: "012345678", customer_code: "REGISTER-123",
     is_membership: true, customer_group_id: group.id, email: "member@example.test",
-    gender: "Female", dob: "1996-02-29", photo_upload: photo,
+    gender: "Female", dob: "1996-02-29", photo_upload: photo, allow_credit: true,
   };
   const created = await write(token, "/customers", fields, 201, key);
   const path = `/customers/${created.id}`;
@@ -2731,6 +2804,7 @@ test("POS profile staff can manage customers and safely retry directory writes",
   assert.equal((await write(token, "/customers", { ...fields, name: "Different" }, 409, key)).code, "IDEMPOTENCY_CONFLICT");
   assert.equal((await read(token, path)).customer_group_name, group.name);
   assert.equal(created.has_uploaded_photo, 1);
+  assert.equal(created.allow_credit, 1);
   assert.equal(created.photo, null);
   assert.deepEqual(await read(token, path + "/photo"), photo);
   await read(discovery, path + "/photo", 403);
@@ -2739,6 +2813,13 @@ test("POS profile staff can manage customers and safely retry directory writes",
   assert.equal(updated.email, null);
   assert.equal(updated.customer_code, fields.customer_code);
   assert.equal(updated.is_membership, 1);
+  assert.equal(updated.allow_credit, 1);
+  const creditKey = randomUUID();
+  const creditDisabled = await write(token, path, { allow_credit: false }, 200, creditKey, "PATCH");
+  assert.equal(creditDisabled.allow_credit, 0);
+  assert.deepEqual(await write(token, path, { allow_credit: false }, 200, creditKey, "PATCH"), creditDisabled);
+  await write(token, path, { allow_credit: 1 }, 400, randomUUID(), "PATCH");
+  assert.equal((await read(token, path)).allow_credit, 0);
   assert.equal(updated.has_uploaded_photo, 1);
   assert.equal(updated.dob, fields.dob);
   assert.equal(updated.gender, fields.gender);

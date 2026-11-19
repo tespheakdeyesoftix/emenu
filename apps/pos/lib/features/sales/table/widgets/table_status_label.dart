@@ -28,6 +28,9 @@ Color tableStatusColor(String status, Json configured) {
   );
 }
 
+Color tableStatusForeground(Color background) =>
+    background.computeLuminance() > 0.179 ? Colors.black : Colors.white;
+
 class TableStatusLabel extends StatelessWidget {
   const TableStatusLabel(this.status, this.color, {super.key});
   final String status;
@@ -38,14 +41,30 @@ class TableStatusLabel extends StatelessWidget {
     mainAxisSize: MainAxisSize.min,
     spacing: 6,
     children: [
-      Icon(tableStatusIcons[status], color: color, size: 17),
+      DecoratedBox(
+        decoration: BoxDecoration(
+          color: color,
+          border: Border.all(
+            color: tableStatusForeground(color).withValues(alpha: .22),
+          ),
+          borderRadius: BorderRadius.circular(5),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(3),
+          child: Icon(
+            tableStatusIcons[status],
+            color: tableStatusForeground(color),
+            size: 15,
+          ),
+        ),
+      ),
       Flexible(
         child: Text(
           'table_$status'.tr,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: Theme.of(context).textTheme.labelSmall
-              ?.copyWith(color: color, fontWeight: FontWeight.w600),
+              ?.copyWith(fontWeight: FontWeight.w600),
         ),
       ),
     ],

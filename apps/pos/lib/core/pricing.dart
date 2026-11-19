@@ -2,11 +2,43 @@ import 'pos_api.dart';
 
 const maxPosAmount = 100000000000;
 
+// POS quantities are stored to the nearest thousandth of a unit.
+num normalizedQuantity(num value) {
+  final units = (value * 1000).round();
+  return units % 1000 == 0 ? units ~/ 1000 : units / 1000;
+}
+
+bool validSaleQuantity(num value) =>
+    value.isFinite && value > 0 && value <= 999 &&
+    normalizedQuantity(value) == value;
+
 Json legacyTaxSettings(Json config) =>
     config['legacy_tax'] is Map ? jsonObject(config['legacy_tax']) : config;
 
+Json withCurrentTaxSettings(Json saved, Json current) => {
+  ...saved,
+  for (final key in [
+    'tax_rules',
+    'default_tax_rule_id',
+    'default_tax_rule',
+    'legacy_tax',
+    'tax_mode',
+    'tax_rate_bps',
+  ])
+    key: current[key],
+};
+
+Json? defaultTaxRule(Json config) {
+  final selected = config['default_tax_rule'];
+  if (selected is Map) return jsonObject(selected);
+  final id = config['default_tax_rule_id'];
+  if (id is! String || id.isEmpty) return null;
+  return jsonRows(config['tax_rules']).where((rule) => rule['id'] == id).firstOrNull;
+}
+
 class BillTotals {
   const BillTotals({
+    required this.gross,
     required this.subtotal,
     required this.discount,
     required this.tax1,
@@ -15,6 +47,7 @@ class BillTotals {
     required this.total,
   });
 
+  final int gross;
   final int subtotal;
   final int discount;
   final int tax1;
@@ -22,6 +55,11 @@ class BillTotals {
   final int tax3;
   final int total;
   int get tax => tax1 + tax2 + tax3;
+}
+
+class DiscountExceedsSubtotal extends FormatException {
+  const DiscountExceedsSubtotal()
+    : super('The discount exceeds the line subtotal.');
 }
 
 int _round(BigInt numerator, BigInt denominator) {
@@ -50,21 +88,25 @@ int _round(BigInt numerator, BigInt denominator) {
 
 BillTotals lineTotals({
   required int unitPrice,
-  required int quantity,
+  required num quantity,
   required String taxMode,
   required int taxRateBps,
   int discount = 0,
+  int? discountBps,
   Json? taxRule,
 }) {
   if (unitPrice < 0 ||
-      quantity < 1 ||
-      quantity > 999 ||
+      !validSaleQuantity(quantity) ||
       discount < 0 ||
+      (discountBps != null && (discountBps < 1 || discountBps > 10000)) ||
       taxRateBps < 0 ||
       taxRateBps > 10000) {
     throw const FormatException('Invalid quantity, price, or tax.');
   }
-  final gross = unitPrice * quantity;
+  final gross = _round(
+    BigInt.from(unitPrice) * BigInt.from((quantity * 1000).round()),
+    BigInt.from(1000),
+  );
   if (gross > maxPosAmount) {
     throw const FormatException('The amount exceeds the register limit.');
   }
@@ -94,6 +136,10 @@ BillTotals lineTotals({
   ];
   var subtotal = gross;
   var taxes = [0, 0, 0];
+  int discountFor(int base) => discountBps == null
+      ? discount
+      : _round(BigInt.from(base) * BigInt.from(discountBps), BigInt.from(10000));
+  final int amountOff;
   if (mode == 'inclusive') {
     final scale =
         rates.fold(BigInt.one, (max, rate) => rate.$2 > max ? rate.$2 : max) *
@@ -137,12 +183,13 @@ BillTotals lineTotals({
       denominator,
     );
     subtotal = gross - taxes.reduce((sum, amount) => sum + amount);
-    if (discount > subtotal) {
-      throw const FormatException('The discount exceeds the line subtotal.');
+    amountOff = discountFor(subtotal);
+    if (amountOff > subtotal) {
+      throw const DiscountExceedsSubtotal();
     }
-    if (discount > 0) {
+    if (amountOff > 0) {
       final grossBase = BigInt.from(gross) * base;
-      final discountBase = BigInt.from(discount) * denominator;
+      final discountBase = BigInt.from(amountOff) * denominator;
       final applied = discountBase > grossBase ? grossBase : discountBase;
       final reductions = coefficients(true);
       taxes = extract(
@@ -153,12 +200,13 @@ BillTotals lineTotals({
       );
     }
   } else {
-    if (discount > subtotal) {
-      throw const FormatException('The discount exceeds the line subtotal.');
+    amountOff = discountFor(subtotal);
+    if (amountOff > subtotal) {
+      throw const DiscountExceedsSubtotal();
     }
     if (mode == 'exclusive') {
       for (final (i, (numerator, denominator)) in rates.indexed) {
-        final net = subtotal - (afterDiscount[i] == true ? discount : 0);
+        final net = subtotal - (afterDiscount[i] == true ? amountOff : 0);
         final prior = parents[i].fold(0, (sum, parent) => sum + taxes[parent]);
         taxes[i] = _round(
           BigInt.from(net + prior) * numerator,
@@ -170,12 +218,13 @@ BillTotals lineTotals({
     }
   }
   return BillTotals(
+    gross: gross,
     subtotal: subtotal,
-    discount: discount,
+    discount: amountOff,
     tax1: taxes[0],
     tax2: taxes[1],
     tax3: taxes[2],
-    total: subtotal - discount + taxes.reduce((sum, amount) => sum + amount),
+    total: subtotal - amountOff + taxes.reduce((sum, amount) => sum + amount),
   );
 }
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:get/get.dart';
 
@@ -12,7 +13,11 @@ import '../features/register/register_controller.dart';
 import '../features/sales/sale_binding.dart';
 import '../features/sales/sale_controller.dart';
 import '../features/sales/sale_screen.dart';
+import '../features/sales/sale/cart_action.dart';
 import '../features/sales/sale/sales_history_view.dart';
+import '../features/sales/sale/sale_service.dart';
+import '../features/sales/table/widgets/table_status_label.dart';
+import '../features/sales/sale/widgets/confirm_exit_sale_dialog_widget.dart';
 import '../helpers/helper.dart';
 import '../shared/app_theme.dart';
 import '../shared/brand_mark.dart';
@@ -85,6 +90,40 @@ class RegisterShell extends StatefulWidget {
 
 class _RegisterShellState extends State<RegisterShell> {
   RegisterController get controller => widget.controller;
+  bool _choosingExit = false;
+  bool _drawerOpen = false;
+
+  Future<void> _leaveSale(bool selling, VoidCallback navigate) async {
+    if (_choosingExit) return;
+    final service = controller.sales;
+    if (!selling || !service.hasNewOrderItems) {
+      navigate();
+      return;
+    }
+    if (!service.cartEditable) return;
+    final generation = service.billGeneration;
+    _choosingExit = true;
+    try {
+      final choice = await showDialog<SaleExitChoice>(
+        context: context,
+        builder: (_) =>
+            ConfirmExitSaleDialogWidget(canSubmit: service.canSubmit),
+      );
+      if (!mounted ||
+          choice == null ||
+          generation != service.billGeneration ||
+          !service.cartEditable)
+        return;
+      final saved = await switch (choice) {
+        SaleExitChoice.hold => service.holdCart(),
+        SaleExitChoice.submit => service.submitOrder(),
+        SaleExitChoice.continueWithoutSaving => service.discardCart(),
+      };
+      if (mounted && saved) navigate();
+    } finally {
+      _choosingExit = false;
+    }
+  }
 
   @override
   void initState() {
@@ -138,9 +177,14 @@ class _RegisterShellState extends State<RegisterShell> {
       final profileName =
           jsonObject(controller.context['profile'])['name'] as String? ??
           'eMenu POS';
-      void selectDestination(int id) => controller.selectTab(
-        id == RegisterController.sellTab ? controller.landingTab : id,
-      );
+      final selling = selected == RegisterController.sellTab;
+      void selectDestination(int id) {
+        final target = id == RegisterController.sellTab
+            ? controller.landingTab
+            : id;
+        if (target != selected)
+          _leaveSale(selling, () => controller.selectTab(target));
+      }
 
       final destinations = [
         (RegisterController.sellTab, Icons.point_of_sale_outlined, 'sell'),
@@ -161,7 +205,6 @@ class _RegisterShellState extends State<RegisterShell> {
         _ => destinations.firstWhere((row) => row.$1 == selected).$3.tr,
       };
       final colors = Theme.of(context).colorScheme;
-      final selling = selected == RegisterController.sellTab;
       final busy = controller.busy.value;
       final notice = controller.commandPending.value
           ? 'STORE_COMMAND_PENDING'
@@ -207,7 +250,7 @@ class _RegisterShellState extends State<RegisterShell> {
                       icon: const Icon(Icons.grid_view_rounded),
                       label: Text('table_plan'.tr),
                       onPressed: () =>
-                          controller.selectTab(RegisterController.tablesTab),
+                          selectDestination(RegisterController.tablesTab),
                     )
                   : null,
               title: Column(
@@ -220,11 +263,19 @@ class _RegisterShellState extends State<RegisterShell> {
                     style: Theme.of(context).textTheme.labelMedium
                         ?.copyWith(color: colors.onSurfaceVariant),
                   ),
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.headlineSmall,
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 2,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      if (selling) _SaleStatusBadge(controller.sales),
+                    ],
                   ),
                 ],
               ),
@@ -234,7 +285,7 @@ class _RegisterShellState extends State<RegisterShell> {
                     tooltip: 'table_plan'.tr,
                     icon: const Icon(Icons.grid_view_rounded),
                     onPressed: () =>
-                        controller.selectTab(RegisterController.tablesTab),
+                        selectDestination(RegisterController.tablesTab),
                   ),
                 ConnectionStatusWidget(connected: online, label: status.tr),
                 if (wide && owner)
@@ -257,21 +308,49 @@ class _RegisterShellState extends State<RegisterShell> {
             height: 1,
             color: colors.outlineVariant.withValues(alpha: .65),
           ),
-          if (showOperatingSetup)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: ListTile(
-                leading: const Icon(Icons.schedule),
-                tileColor: colors.secondaryContainer,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                title: Text('open_operating_context'.tr),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => controller.tab.value = RegisterController.shiftTab,
-              ),
+          Expanded(
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                body,
+                if (showOperatingSetup)
+                  Positioned(
+                    top: 8,
+                    left: 12,
+                    right: 12,
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 440),
+                        child: FilledButton.tonal(
+                          style: FilledButton.styleFrom(
+                            shape: const StadiumBorder(),
+                            elevation: 4,
+                            backgroundColor: AppColors.warning,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 8,
+                            ),
+                          ),
+                          onPressed: () =>
+                              selectDestination(RegisterController.shiftTab),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            spacing: 8,
+                            children: [
+                              const Icon(Icons.schedule, size: 18),
+                              Flexible(child: Text('open_operating_context'.tr)),
+                              const Icon(Icons.chevron_right, size: 18),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
-          Expanded(child: body),
+          ),
         ],
       );
 
@@ -282,7 +361,10 @@ class _RegisterShellState extends State<RegisterShell> {
         RegisterController.customersTab => pane(const CustomerScreen()),
         _ => SaleScreen(layout: pane),
       };
-      return Scaffold(
+      final guardBack =
+          selling && (tableSale || controller.sales.hasNewOrderItems);
+      final scaffold = Scaffold(
+        onDrawerChanged: (open) => setState(() => _drawerOpen = open),
         drawer: wide
             ? null
             : Drawer(
@@ -307,7 +389,7 @@ class _RegisterShellState extends State<RegisterShell> {
                         title: Text('user_profile'.tr),
                         onTap: () {
                           Navigator.pop(context);
-                          controller.tab.value = RegisterController.profileTab;
+                          selectDestination(RegisterController.profileTab);
                         },
                       ),
                       const Align(
@@ -337,7 +419,7 @@ class _RegisterShellState extends State<RegisterShell> {
                         title: Text('lock'.tr),
                         onTap: () {
                           Navigator.pop(context);
-                          controller.lock();
+                          _leaveSale(selling, controller.lock);
                         },
                       ),
                     ],
@@ -364,6 +446,12 @@ class _RegisterShellState extends State<RegisterShell> {
         body: SafeArea(
           child: RegisterToastHost(
             message: notice,
+            onDismissed: (message) {
+              if (CartProductEdit.isWarning(message) &&
+                  controller.message.value == message) {
+                controller.message.value = null;
+              }
+            },
             child: Row(
               children: [
                 if (wide)
@@ -422,14 +510,14 @@ class _RegisterShellState extends State<RegisterShell> {
                           icon: const Icon(Icons.lock_outline),
                           label: 'lock'.tr,
                           selected: false,
-                          onTap: controller.lock,
+                          onTap: () => _leaveSale(selling, controller.lock),
                         ),
                         _RailItem(
                           icon: const Icon(Icons.person_outline),
                           label: 'user_profile'.tr,
                           selected: selected == RegisterController.profileTab,
-                          onTap: () => controller.tab.value =
-                              RegisterController.profileTab,
+                          onTap: () =>
+                              selectDestination(RegisterController.profileTab),
                         ),
                       ],
                     ),
@@ -439,6 +527,24 @@ class _RegisterShellState extends State<RegisterShell> {
             ),
           ),
         ),
+      );
+      return PopScope(
+        canPop: !guardBack || _drawerOpen,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop || !guardBack) return;
+          if (tableSale) {
+            selectDestination(RegisterController.tablesTab);
+          } else {
+            _leaveSale(
+              selling,
+              () => WidgetsBinding.instance.addPostFrameCallback((_) async {
+                if (mounted && !await Navigator.of(context).maybePop())
+                  await SystemNavigator.pop();
+              }),
+            );
+          }
+        },
+        child: scaffold,
       );
     }),
   );
@@ -457,6 +563,46 @@ class _RegisterShellState extends State<RegisterShell> {
       id == RegisterController.historyTab && waiting > 0
       ? Badge.count(count: waiting, child: Icon(icon))
       : Icon(icon);
+}
+
+class _SaleStatusBadge extends StatelessWidget {
+  const _SaleStatusBadge(this.sales);
+
+  final SaleService sales;
+
+  @override
+  Widget build(BuildContext context) => Obx(() {
+    final status = sales.activeSaleStatus;
+    final (label, colorKey) = switch (status) {
+      'occupied' => ('sales_submitted', 'occupied'),
+      'bill_requested' => ('table_bill_requested', 'bill_requested'),
+      'hold' => ('table_hold', 'hold'),
+      _ => ('cart_new_line', 'vacant'),
+    };
+    final configured = sales.config['table_status_colors'];
+    final background = tableStatusColor(
+      colorKey,
+      configured is Map ? jsonObject(configured) : {},
+    );
+    return DecoratedBox(
+      decoration: ShapeDecoration(
+        color: background,
+        shape: const StadiumBorder(),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+        child: Text(
+          label.tr,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: background.computeLuminance() > 0.179
+                ? Colors.black
+                : Colors.white,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  });
 }
 
 class _RailItem extends StatelessWidget {

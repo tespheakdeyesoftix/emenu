@@ -76,10 +76,7 @@ void main() {
       expect(toast, findsOneWidget);
       expect(find.byType(RegisterNotice), findsNothing);
       expect(tester.getRect(panel), originalPosition);
-      expect(
-        tester.widget<Material>(toast).color,
-        AppTheme.light.colorScheme.errorContainer,
-      );
+      expect(tester.widget<Material>(toast).color, Colors.red.shade800);
       await tester.pump(const Duration(seconds: 4));
       await tester.pumpAndSettle();
       expect(toast, findsNothing);
@@ -103,10 +100,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('TABLE_OCCUPIED'.tr), findsNothing);
     expect(find.text('MENU_RELOADED'.tr), findsOneWidget);
-    expect(
-      tester.widget<Material>(toast).color,
-      AppTheme.light.colorScheme.primaryContainer,
-    );
+    expect(tester.widget<Material>(toast).color, Colors.green.shade800);
     await tester.pump(const Duration(seconds: 2));
     expect(toast, findsOneWidget);
     await tester.pump(const Duration(seconds: 2));
@@ -143,6 +137,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('STORE_COMMAND_PENDING'.tr), findsOneWidget);
       expect(toast, findsOneWidget);
+      expect(tester.widget<Material>(toast).color, const Color(0xffbf4b00));
       final rect = tester.getRect(toast);
       expect(rect.left, greaterThanOrEqualTo(16));
       expect(rect.right, lessThanOrEqualTo(374));

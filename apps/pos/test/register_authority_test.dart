@@ -10,6 +10,8 @@ import 'package:emenu_pos/core/register_authority.dart';
 import 'package:emenu_pos/core/register_database.dart';
 import 'package:emenu_pos/core/register_network.dart';
 import 'package:emenu_pos/core/register_shift_reports.dart';
+import 'package:emenu_pos/features/sales/sale/sale_service.dart'
+    show HeldBillMethods;
 import 'package:emenu_pos/features/sales/sale/sale_sync.dart';
 import 'package:emenu_pos/core/store_host.dart';
 import 'package:emenu_pos/core/store_transport.dart';
@@ -612,7 +614,7 @@ void main() {
   });
 
   test(
-    'switching tables saves the current order and keeps it if saving fails',
+    'opening and switching tables keeps a local draft until submit',
     () async {
       final database = RegisterDatabase(NativeDatabase.memory());
       addTearDown(database.close);
@@ -628,6 +630,10 @@ void main() {
       controller.operator.value = await database.operatorById('cashier');
       controller.applyProfileSnapshot(state);
       await controller.openTable('table', cover: 2);
+      final table = jsonRows(state['tables']).first;
+      expect(controller.tableStatus(table), 'vacant');
+      expect(await database.watchHeldBills().first, isEmpty);
+      expect(await database.nextSubmittedOrder(), isNull);
       controller.add(CartLine(coffee));
       controller.selectTab(RegisterController.tablesTab);
 
@@ -638,32 +644,66 @@ void main() {
       await database.saveSnapshot(profileId, withoutShift);
       controller.applyProfileSnapshot(withoutShift);
       await controller.openTable('second_table', cover: 3);
-      expect(controller.message.value, 'CASHIER_SHIFT_REQUIRED');
-      expect(controller.tableId.value, 'table');
-      expect(controller.guestCover.value, 2);
-      expect(controller.cart.single.quantity, 1);
-      expect(await database.watchHeldBills().first, isEmpty);
-
-      await database.saveSnapshot(profileId, state);
-      controller.applyProfileSnapshot(state);
-      await controller.openTable('second_table', cover: 3);
       expect(controller.tableId.value, 'second_table');
       expect(controller.guestCover.value, 3);
       expect(controller.cart, isEmpty);
       expect(controller.tab.value, RegisterController.sellTab);
-      final saved = (await database.watchHeldBills().first).single;
-      expect(saved.tableId, 'table');
-      expect(
-        jsonObject(jsonDecode(saved.payload)),
-        containsPair('table_status', 'occupied'),
-      );
+      expect(controller.tableStatus(table), 'vacant');
+      expect(await database.watchHeldBills().first, isEmpty);
+      expect(await database.nextSubmittedOrder(), isNull);
+      expect(await database.parkedTableIds('cashier', profileId), ['table']);
 
-      controller.heldBills.add(saved);
       controller.selectTab(RegisterController.tablesTab);
       await controller.openTable('table');
       expect(controller.tableId.value, 'table');
       expect(controller.guestCover.value, 2);
       expect(controller.cart.single.quantity, 1);
+      expect(controller.tableStatus(table), 'vacant');
+      expect(await database.parkedTableIds('cashier', profileId), isEmpty);
+
+      await database.saveSnapshot(profileId, state);
+      controller.applyProfileSnapshot(state);
+      expect(await controller.sales.submitOrder(), isTrue);
+      final saved = (await database.watchHeldBills().first).single;
+      expect(saved.tableId, 'table');
+      final payload = jsonObject(jsonDecode(saved.payload));
+      expect(payload['status'], 'submitted');
+      expect(payload['table_status'], 'occupied');
+      expect((await database.nextSubmittedOrder())?.saleId, saved.id);
+      controller.heldBills.add(saved);
+      expect(controller.tableStatus(table), 'occupied');
+      controller.resumeBill(saved);
+      final original = controller.cart.single;
+      expect(original.submitted, isTrue);
+      expect(controller.sales.hasNewOrderItems, isFalse);
+      controller.add(CartLine(coffee));
+      expect(controller.cart.length, 2);
+      expect(controller.sales.hasNewOrderItems, isTrue);
+      expect(controller.cart.last.submitted, isFalse);
+      controller.quantity(1, 0);
+      expect(controller.cart.single, same(original));
+      expect(controller.sales.hasNewOrderItems, isFalse);
+      controller.add(CartLine(coffee));
+      controller.add(CartLine(coffee));
+      expect(controller.cart.last.quantity, 2);
+      controller.quantity(0, 0);
+      expect(controller.sales.voidedLines.single.voided, isTrue);
+      controller.operator.value = await database.operatorById('owner');
+      expect(await controller.sales.submitOrder(), isTrue);
+      final revised = jsonObject(
+        jsonDecode((await database.watchHeldBills().first).single.payload),
+      );
+      final added = jsonRows(revised['lines']).single;
+      final removed = jsonRows(revised['voided_lines']).single;
+      expect(removed['status'], 'void');
+      expect(removed['ordered_by'], 'cashier');
+      expect(added['status'], 'submitted');
+      expect(added['ordered_by'], 'owner');
+      expect(added['order_session'], isNot(removed['order_session']));
+      expect(
+        revised['total_minor'],
+        controller.totalOf(CartLine(coffee, quantity: 2)).total,
+      );
       await controller.lock();
     },
   );

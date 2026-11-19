@@ -57,6 +57,10 @@ void main() {
     );
     final field = find.byType(TextField);
     expect(tester.widget<TextField>(field).controller!.text, '2');
+    await tester.tap(find.widgetWithText(OutlinedButton, '7'));
+    expect(tester.widget<TextField>(field).controller!.text, '7');
+    await tester.tap(find.widgetWithText(OutlinedButton, '3'));
+    expect(tester.widget<TextField>(field).controller!.text, '73');
     await tester.enterText(field, '1001');
     await tester.pump();
     expect(

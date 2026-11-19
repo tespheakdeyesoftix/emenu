@@ -14,8 +14,11 @@ class TablePlanView extends GetView<SaleController> {
   @override
   Widget build(BuildContext context) => Obx(() {
     final service = controller.service;
+    final tables = service.tables;
     return GroupedTableCards(
-      tables: service.tables,
+      tables: tables,
+      totals: service.tableSaleTotals(tables),
+      currency: service.currency,
       configuredColors: service.config['table_status_colors'],
       initialGroupId: service.tableGroupId.value,
       onGroupChanged: (id) => service.tableGroupId.value = id,
@@ -29,6 +32,8 @@ class GroupedTableCards extends StatelessWidget {
   const GroupedTableCards({
     super.key,
     required this.tables,
+    required this.totals,
+    required this.currency,
     required this.configuredColors,
     required this.tableStatus,
     this.initialGroupId,
@@ -38,6 +43,8 @@ class GroupedTableCards extends StatelessWidget {
   });
 
   final List<Json> tables;
+  final Map<String, TableSaleTotals> totals;
+  final String currency;
   final Object? configuredColors;
   final String Function(Json) tableStatus;
   final String? initialGroupId;
@@ -124,6 +131,8 @@ class GroupedTableCards extends StatelessWidget {
         return Obx(
           () => TableCard(
             table: table,
+            totals: totals[table['id']] ?? (guests: 0, amount: 0),
+            currency: currency,
             status: tableStatus(table),
             configuredColors: configured,
             selected: table['id'] == selectedTableId,

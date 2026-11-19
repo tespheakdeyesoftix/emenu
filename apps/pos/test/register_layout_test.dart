@@ -134,6 +134,7 @@ void main() {
           'capabilities': {
             'customer_directory': true,
             'customer_photo_upload': true,
+            'customer_credit': true,
           },
         },
         'customers': [
@@ -197,6 +198,11 @@ void main() {
       expect(find.text('Membership requires a customer code'), findsOneWidget);
       final code = find.widgetWithText(TextFormField, 'Customer code *');
       await tester.enterText(code, 'MEM-123');
+      final credit = find.widgetWithText(CheckboxListTile, 'Allow credit');
+      await tester.ensureVisible(credit);
+      expect(tester.widget<CheckboxListTile>(credit).value, isFalse);
+      await tester.tap(credit);
+      await tester.pumpAndSettle();
       final gender = find.widgetWithText(
         DropdownButtonFormField<String>,
         'Gender',
@@ -219,6 +225,7 @@ void main() {
       final added = register.sales.customerDirectory.byId('added-customer')!;
       expect(added['customer_code'], 'MEM-123');
       expect(added['is_membership'], true);
+      expect(added['allow_credit'], true);
       expect(added['gender'], 'Female');
       expect(added['dob'], DateTime.now().toIso8601String().substring(0, 10));
       expect(added['has_uploaded_photo'], 1);
@@ -229,12 +236,22 @@ void main() {
       );
       await tester.tap(find.text('New diner'));
       await tester.pumpAndSettle();
+      expect(tester.widget<CheckboxListTile>(credit).value, isTrue);
       await tester.tap(find.byTooltip('Remove photo'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(credit);
+      await tester.tap(credit);
       await tester.pumpAndSettle();
       await tester.enterText(name, 'Updated diner');
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
       expect(register.photos, isEmpty);
+      expect(
+        register.sales.customerDirectory.byId(
+          'added-customer',
+        )?['allow_credit'],
+        false,
+      );
 
       await tester.tap(find.text('Updated diner'));
       await tester.pumpAndSettle();
@@ -567,8 +584,8 @@ void main() {
         await tester.pumpAndSettle();
         final toolbarRect = tester.getRect(toolbar);
         final searchRect = tester.getRect(search);
-        expect(searchRect.width, lessThanOrEqualTo(300));
-        expect(searchRect.height, lessThanOrEqualTo(40));
+        if (width >= 1080) expect(searchRect.width, greaterThan(300));
+        expect(searchRect.height, greaterThanOrEqualTo(48));
         expect(searchRect.center.dx, closeTo(toolbarRect.center.dx, 1));
         expect(searchRect.center.dy, closeTo(toolbarRect.center.dy, 1));
       }
@@ -594,6 +611,16 @@ void main() {
       expect(coffee, findsNothing);
       expect(tea, findsOneWidget);
 
+      await tester.enterText(search, 'Coffee');
+      await tester.pump();
+      await tester.tap(find.byTooltip('Clear search'));
+      await tester.pump();
+      expect(tester.widget<TextField>(search).controller!.text, isEmpty);
+      expect(find.byTooltip('Clear search'), findsNothing);
+      expect(coffee, findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(tea, findsOneWidget);
+
       await tester.enterText(search, 'c1');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
@@ -608,7 +635,9 @@ void main() {
       expect(search, findsOneWidget);
       await tester.enterText(search, 'Tea');
       await tester.tap(find.widgetWithText(NavigationDestination, 'Sales'));
-      await tester.pump();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
       expect(search, findsNothing);
       await tester.pump(const Duration(milliseconds: 700));
       expect(tester.takeException(), isNull);
@@ -719,71 +748,81 @@ void main() {
         ),
       );
       await tap(
-        find.byWidgetPredicate((widget) {
-          if (widget is! PopupMenuItem) return false;
-          final child = widget.child;
-          return child is Text && child.data == label;
-        }),
+        find.descendant(
+          of: find.byWidgetPredicate((widget) => widget is PopupMenuItem),
+          matching: find.text(label),
+        ),
       );
-    }
-
-    Future<void> enter(String value) async {
-      await tester.enterText(find.byType(TextFormField), value);
-      await tap(find.widgetWithText(FilledButton, 'Save'));
     }
 
     final name = find.text('C1 · Coffee');
     await tap(name);
     await tap(find.widgetWithText(OutlinedButton, 'Price'));
-    await enter('3.00');
+    await tester.enterText(find.widgetWithText(TextField, 'USD'), '3.00');
+    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Save')).onPressed, isNull);
+    await tester.enterText(find.widgetWithText(TextField, 'Reason'), 'Member price');
+    await tap(find.text('Save reason for next time'));
+    await tap(find.widgetWithText(FilledButton, 'Save'));
     expect(controller.cart.single.unit, 325);
+    expect(controller.cart.single.priceChangeReason, 'Member price');
+    expect(await database.priceReasons(), contains('Member price'));
     await tap(find.widgetWithText(OutlinedButton, 'Qty'));
-    await enter('2');
+    await tester.enterText(
+      find.descendant(of: find.byType(AlertDialog), matching: find.byType(TextField)),
+      '2',
+    );
+    await tap(find.widgetWithText(FilledButton, 'Save'));
     await more('Note');
-    await enter('No ice');
+    await tester.enterText(find.widgetWithText(TextField, 'Note'), 'No ice');
+    await tap(find.widgetWithText(FilledButton, 'Save'));
     expect(find.text('No ice'), findsOneWidget);
     await more('Discount');
-    await enter('0.50');
+    await tap(find.text('Amount'));
+    await tester.enterText(find.widgetWithText(TextField, 'USD'), '0.50');
+    await tap(find.widgetWithText(FilledButton, 'Next'));
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Discount note'),
+      'Promotion',
+    );
+    await tap(find.widgetWithText(FilledButton, 'Save'));
     expect(controller.cartTotal, 600);
     expect(find.text('24000 ៛'), findsOneWidget);
 
     await more('Edit');
     expect(
-      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+      tester
+          .widget<FilterChip>(find.widgetWithText(FilterChip, r'Milk · $0.25'))
+          .selected,
       isTrue,
     );
-    await tap(find.widgetWithText(OutlinedButton, r'Large · $4.00'));
+    await tap(find.widgetWithText(ChoiceChip, r'Large · $4.00'));
     await tap(find.widgetWithText(FilledButton, 'Save'));
     expect(controller.cart.single.basePriceOverride, isNull);
     expect(controller.cartTotal, 800);
     await tap(find.widgetWithText(OutlinedButton, 'Re-Order'));
-    expect(controller.cart.length, 2);
-    expect(controller.cart.last.unit, 425);
-    expect(controller.cart.last.quantity, 1);
-    expect(controller.cart.last.note, isNull);
+    expect(controller.cart.single.unit, 425);
+    expect(controller.cart.single.quantity, 3);
+    expect(controller.cart.single.note, 'No ice');
+    expect(tester.widget<CartItemRow>(find.byType(CartItemRow)).selected, isTrue);
 
     await more('Mark as Free');
-    expect(controller.cartTotal, 425);
-    expect(controller.cart.first.isFree, isTrue);
+    await tester.enterText(find.widgetWithText(TextField, 'Free quantity'), '3');
+    await tap(find.widgetWithText(FilledButton, 'Next'));
+    await tester.enterText(find.widgetWithText(TextField, 'Reason'), 'Courtesy');
+    await tap(find.text('Save reason for next time'));
+    await tap(find.widgetWithText(FilledButton, 'Save'));
+    expect(controller.cartTotal, 0);
+    expect(controller.cart.single.isFree, isTrue);
+    expect(controller.cart.single.freeReason, 'Courtesy');
+    expect(await database.freeItemReasons(), contains('Courtesy'));
     await more('Restore Price');
     expect(controller.cartTotal, 1275);
-    controller.snapshot.value = {
-      ...data,
-      'catalog': {
-        'products': [
-          {...coffee, 'modifier_groups': []},
-        ],
-      },
-    };
-    await tester.pumpAndSettle();
     await tap(find.widgetWithText(OutlinedButton, 'Re-Order'));
-    expect(controller.cart.length, 2);
-    expect(controller.message.value, 'SELECTION_CHANGED');
-    controller.message.value = null;
-    await tester.pumpAndSettle();
+    expect(controller.cart.single.quantity, 4);
     await tap(find.widgetWithText(OutlinedButton, 'Delete'));
-    await tap(find.widgetWithText(FilledButton, 'Delete'));
-    expect(controller.cart.length, 1);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(controller.cart, isEmpty);
+    controller.add(CartLine(coffee, portion: sizes.first, modifiers: [milk]));
 
     tester.view.physicalSize = const Size(390, 680);
     await tester.pumpAndSettle();
@@ -809,7 +848,11 @@ void main() {
     final payPosition = tester.getCenter(pay);
     final list = find.descendant(
       of: find.byType(SaleCart),
-      matching: find.byType(ListView),
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is SingleChildScrollView &&
+            widget.scrollDirection == Axis.vertical,
+      ),
     );
     await tester.drag(list, const Offset(0, -350));
     await tester.pumpAndSettle();
@@ -899,18 +942,77 @@ void main() {
       expect(navigation.selectedIndex, 0);
       await tester.tap(find.byTooltip('Back to table plan'));
       await tester.pumpAndSettle();
+      expect(find.text('Leave this sale?'), findsOneWidget);
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
       expect(find.byType(SellView), findsNothing);
       expect(find.byType(TablePlanView), findsOneWidget);
       expect(find.text('Bar table'), findsOneWidget);
-      expect(controller.guestCover.value, 4);
+      expect(
+        tester
+            .widget<TableCard>(find.widgetWithText(TableCard, 'Bar table'))
+            .status,
+        'vacant',
+      );
+      expect(controller.guestCover.value, isNull);
       await tester.tap(find.text('Bar table'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(OutlinedButton, '4'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open table'));
       await tester.pumpAndSettle();
       expect(find.byType(SellView), findsOneWidget);
       expect(find.byType(TablePlanView), findsNothing);
-      expect(controller.cart.single.quantity, 1);
+      expect(controller.cart, isEmpty);
       expect(tester.takeException(), isNull);
     },
   );
+
+  for (final choice in ['Hold Order', 'Submit Order']) {
+    testWidgets('$choice saves before navigating to Sales', (tester) async {
+      final db = RegisterDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      addTearDown(Get.reset);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1250, 800);
+      final register = _SubmitRegister(db)
+        ..snapshot.value = _tableSnapshot('disabled');
+      register.add(
+        const CartLine({'id': 'coffee', 'name': 'Coffee', 'price_minor': 250}),
+      );
+      await tester.pumpWidget(
+        GetMaterialApp(
+          locale: const Locale('en'),
+          translations: PosTranslations(),
+          home: RegisterShell(register),
+        ),
+      );
+      await tester.pumpAndSettle();
+      Future<void> choose() async {
+        await tester.tap(find.byTooltip('Sales'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(choice));
+        await tester.pumpAndSettle();
+      }
+
+      register.rejectSubmission = true;
+      await choose();
+      expect(register.tab.value, RegisterController.sellTab);
+      expect(register.cart, hasLength(1));
+      register.rejectSubmission = false;
+      await choose();
+      expect(register.tab.value, RegisterController.historyTab);
+      expect(register.cart, isEmpty);
+      final body = register.submissions.last.$2;
+      expect(
+        body['table_status'],
+        choice == 'Hold Order' ? 'hold' : 'occupied',
+      );
+      expect(body['submit_order'] == true, choice == 'Submit Order');
+    });
+  }
 
   for (final mode in ['required', 'optional', 'disabled']) {
     testWidgets('Submit confirms and opens the right screen in $mode mode', (
@@ -1137,7 +1239,7 @@ void main() {
       await tester.tap(find.widgetWithText(ProductCard, 'Coffee'));
       await tester.pumpAndSettle();
       expect(find.widgetWithText(Tooltip, '4'), findsOneWidget);
-      await tester.tap(find.text('Table plan'));
+      controller.selectTab(RegisterController.tablesTab);
       await tester.pumpAndSettle();
       expect(find.byType(TablePlanView), findsOneWidget);
 

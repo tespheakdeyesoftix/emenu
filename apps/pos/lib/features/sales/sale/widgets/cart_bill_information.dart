@@ -30,6 +30,7 @@ class CartBillInformation extends GetView<SaleController> {
         ? 'bill_not_open'.tr
         : shift['opened_by_name'] as String? ?? 'bill_active'.tr;
     final postingDate = service.postingDate;
+    final note = service.saleNote.value;
     final postingDateTooltip =
         '${'posting_date'.tr} · ${dateLabel(postingDate, compact: false)}';
     final dateEditable =
@@ -50,6 +51,16 @@ class CartBillInformation extends GetView<SaleController> {
             tooltip: 'guest_cover'.tr,
             onTap: guestEditable
                 ? () => controller.editBillGuestCover(context)
+                : null,
+          ),
+        if (service.supportsSaleNotes)
+          BillInfoChip(
+            icon: Icons.edit_note_rounded,
+            label: 'sale_note'.tr,
+            trailing: note == null ? null : Icons.check_rounded,
+            tooltip: note ?? 'sale_note'.tr,
+            onTap: service.cartEditable
+                ? () => controller.editSaleNote(context)
                 : null,
           ),
         if (service.usesWorkingDay)

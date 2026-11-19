@@ -59,6 +59,8 @@ abstract final class ApiEndpoint {
   /// menu_id scopes a menu profile to that menu and its descendants; omit it
   /// for category profiles or when no default_menu_id is configured.
   /// Hierarchy nodes include image_url when a menu/category has a photo.
+  /// Products include allow_discount, allow_change_price, is_open_product,
+  /// and allow_free as booleans.
   static const catalog = '/catalog';
 
   /// GET: List tables and their open bills for this profile. No request body.

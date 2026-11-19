@@ -15,93 +15,85 @@ class CartItemActions extends GetView<SaleController> {
     final service = controller.service;
     final editable = service.cartEditable;
     final enhanced = service.supportsCartLineEdits;
-    Widget button(String label, VoidCallback? action) => OutlinedButton(
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+    final colors = Theme.of(context).colorScheme;
+    PopupMenuItem<CartAction> menuItem(
+      CartAction action,
+      IconData icon,
+      String label, {
+      bool enabled = true,
+    }) => PopupMenuItem<CartAction>(
+      value: action,
+      enabled: enabled,
+      child: Row(
+        spacing: 12,
+        children: [
+          Icon(icon, size: 18, color: enabled ? null : Theme.of(context).disabledColor),
+          Flexible(child: Text(label.tr)),
+        ],
       ),
-      onPressed: editable ? action : null,
-      child: Text(label.tr),
     );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            IconButton(
-              tooltip: 'cart_decrease'.tr,
-              icon: const Icon(Icons.remove_circle_outline),
-              onPressed: editable && line.quantity > 1
-                  ? () => controller.replaceLine(
-                      line,
-                      line.withQuantity(line.quantity - 1),
-                    )
-                  : null,
-            ),
-            Text('${line.quantity}'),
-            IconButton(
-              tooltip: 'cart_increase'.tr,
-              icon: const Icon(Icons.add_circle_outline),
-              onPressed: editable && line.quantity < 999
-                  ? () => controller.replaceLine(
-                      line,
-                      line.withQuantity(line.quantity + 1),
-                    )
-                  : null,
-            ),
-          ],
+    Widget button(String label, VoidCallback? action, {bool danger = false}) => Expanded(
+      child: OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          backgroundColor: danger && editable ? colors.error : null,
+          foregroundColor: danger && editable ? colors.onError : null,
+          side: danger && editable ? BorderSide.none : null,
+          padding: const EdgeInsets.symmetric(horizontal: 3),
+          minimumSize: const Size(0, 34),
+          shape: const StadiumBorder(),
         ),
-        Wrap(
-          spacing: 5,
-          runSpacing: 4,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            button(
-              'cart_price',
-              enhanced && !line.isFree
-                  ? () => controller.editAmount(context, line, discount: false)
-                  : null,
+        onPressed: editable ? action : null,
+        child: Text(label.tr, textAlign: TextAlign.center),
+      ),
+    );
+    return Row(
+      spacing: 4,
+      children: [
+        button(
+          'cart_price',
+          enhanced && !line.isFree
+              ? () => controller.editPrice(context, line)
+              : null,
+        ),
+        button(
+          'cart_qty',
+          line.canEditQuantity ? () => controller.editQuantity(context, line) : null,
+        ),
+        button(
+          'cart_reorder',
+          line.canEditQuantity && line.quantity + 1 > 999
+              ? null
+              : () => controller.reorderLine(line),
+        ),
+        button('cart_delete', () => controller.deleteLine(context, line), danger: true),
+        PopupMenuButton<CartAction>(
+          tooltip: 'cart_more'.tr,
+          enabled: editable,
+          onSelected: (action) =>
+              controller.onCartAction(context, line, action),
+          itemBuilder: (_) => [
+            menuItem(CartAction.edit, Icons.tune_rounded, 'cart_edit_options'),
+            menuItem(
+              CartAction.free,
+              line.isFree ? Icons.undo_rounded : Icons.card_giftcard_outlined,
+              line.isFree ? 'cart_restore_price' : 'cart_mark_free',
+              enabled: line.isFree ? enhanced : service.supportsFreeItemReasons,
             ),
-            button('cart_qty', () => controller.editQuantity(context, line)),
-            button('cart_reorder', () => service.reorderCartLine(line)),
-            button('cart_delete', () => controller.deleteLine(context, line)),
-            PopupMenuButton<CartAction>(
-              tooltip: 'cart_more'.tr,
-              enabled: editable,
-              onSelected: (action) =>
-                  controller.onCartAction(context, line, action),
-              itemBuilder: (_) => [
-                PopupMenuItem(
-                  value: CartAction.edit,
-                  child: Text('cart_edit_options'.tr),
-                ),
-                PopupMenuItem(
-                  value: CartAction.free,
-                  enabled: enhanced,
-                  child: Text(
-                    (line.isFree ? 'cart_restore_price' : 'cart_mark_free').tr,
-                  ),
-                ),
-                PopupMenuItem(
-                  value: CartAction.note,
-                  enabled: enhanced,
-                  child: Text('cart_note'.tr),
-                ),
-                PopupMenuItem(
-                  value: CartAction.discount,
-                  enabled: !line.isFree,
-                  child: Text('cart_discount'.tr),
-                ),
-              ],
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 12,
-                ),
-                child: Text('cart_more'.tr),
-              ),
+            menuItem(
+              CartAction.note,
+              Icons.edit_note_rounded,
+              'cart_note',
+              enabled: enhanced,
+            ),
+            menuItem(
+              CartAction.discount,
+              line.hasDiscount ? Icons.undo_rounded : Icons.percent_rounded,
+              line.hasDiscount ? 'cart_cancel_discount' : 'cart_discount',
+              enabled: line.hasDiscount ||
+                  (!line.isFree && service.supportsItemDiscountDetails),
             ),
           ],
+          icon: const Icon(Icons.more_horiz),
         ),
       ],
     );

@@ -4,7 +4,7 @@ import {
   PosError, recordId, respond, sql, string, type PosContext,
 } from "./posApiCore";
 
-const customerColumns = "id name external_reference is_walk_in phone_number address customer_group_id gender dob email photo customer_code is_membership";
+const customerColumns = "id name external_reference is_walk_in phone_number address customer_group_id gender dob email photo customer_code is_membership allow_credit";
 const customerFrom = `FROM pos_customers c LEFT JOIN pos_customer_groups g
     ON g.id=c.customer_group_id AND g.business_id=c.business_id
   WHERE c.business_id=?`;
@@ -42,10 +42,11 @@ function parseCustomer(body: Record<string, unknown>, creating: boolean): Custom
     if (!url || !["https:", "http:"].includes(url.protocol) || url.username || url.password)
       invalid("Enter an HTTP or HTTPS photo URL");
   }
-  const membership = body.is_membership;
-  return membership === undefined
-    ? fields
-    : { ...fields, is_membership: Number(boolean(membership, "is_membership")) };
+  const flags: Record<string, number> = {};
+  for (const field of ["is_membership", "allow_credit"] as const) {
+    if (body[field] !== undefined) flags[field] = Number(boolean(body[field], field));
+  }
+  return { ...fields, ...flags };
 }
 
 function customerWriteError(error: unknown): never {

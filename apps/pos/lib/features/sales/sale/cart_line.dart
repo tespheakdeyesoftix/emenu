@@ -8,19 +8,35 @@ class CartLine {
     this.modifiers = const [],
     this.quantity = 1,
     this.discount = 0,
+    this.discountBps,
+    this.discountNote,
     this.basePriceOverride,
+    this.priceChangeReason,
     this.isFree = false,
+    this.freeReason,
     this.note,
+    this.order = const {},
   });
 
   final Json product;
   final Json? portion;
   final List<Json> modifiers;
-  final int quantity;
+  final num quantity;
   final int discount;
+  final int? discountBps;
+  final String? discountNote;
   final int? basePriceOverride;
+  final String? priceChangeReason;
   final bool isFree;
+  final String? freeReason;
   final String? note;
+  final Json order;
+  bool get submitted => order['status'] == 'submitted';
+  bool get voided => order['status'] == 'void';
+  bool get canEditQuantity => !submitted && !voided;
+  String get session => submitted || voided
+      ? order['order_session'] as String? ?? 'legacy'
+      : 'current';
 
   String name(String language) {
     final translated = (product['name_$language'] as String?)?.trim();
@@ -35,31 +51,60 @@ class CartLine {
       modifiers.fold(0, (total, item) => total + (item['price_minor'] as int));
   int get catalogUnit => catalogBase + modifierPrice;
   int get unit => isFree ? 0 : basePrice + modifierPrice;
-  bool get hasLineEdits => basePriceOverride != null || isFree || note != null;
-  bool get canMerge => !hasLineEdits && discount == 0;
+  bool get hasLineEdits =>
+      basePriceOverride != null || priceChangeReason != null || isFree || note != null;
+  bool get hasDiscount => discount > 0 || discountBps != null;
+  bool get canMerge => !submitted && !hasLineEdits && !hasDiscount;
 
-  CartLine withQuantity(int next, {int? discount}) => CartLine(
+  CartLine withQuantity(num next, {int? discount, Json? order}) => CartLine(
     product,
     portion: portion,
     modifiers: modifiers,
     quantity: next,
     discount: discount ?? this.discount,
+    discountBps: discountBps,
+    discountNote: discountNote,
     basePriceOverride: basePriceOverride,
+    priceChangeReason: priceChangeReason,
     isFree: isFree,
+    freeReason: freeReason,
     note: note,
+    order: order ?? this.order,
   );
+
+  CartLine withDiscount({int amount = 0, int? bps, String? note}) =>
+      withLineEdits({
+        ...lineEdits,
+        'discount_minor': amount,
+        'discount_bps': bps,
+        'discount_note': note,
+      });
 
   CartLine withLineEdits(Json data) {
     final base = data['base_price_override_minor'];
     final free = data['is_free'];
+    final freeReason = data['free_reason'];
     final rawNote = data['note'];
+    final reason = data['price_change_reason'];
     final discount = data['discount_minor'] ?? 0;
+    final discountBps = data['discount_bps'];
+    final discountNote = data['discount_note'];
     if ((base != null && (base is! int || base < 0 || base > maxPosAmount)) ||
         (free != null && free is! bool) ||
+        (freeReason != null &&
+            (free != true || freeReason is! String ||
+                freeReason.trim().isEmpty || freeReason.trim().length > 250)) ||
         (rawNote != null &&
             (rawNote is! String || rawNote.trim().length > 500)) ||
+        (reason != null && (reason is! String || reason.trim().length > 250)) ||
         discount is! int ||
-        (free == true && discount != 0)) {
+        discount < 0 ||
+        (discountBps != null &&
+            (discountBps is! int || discountBps < 1 || discountBps > 10000)) ||
+        (discountNote != null &&
+            (discountNote is! String || discountNote.trim().length > 250 ||
+                (discount == 0 && discountBps == null))) ||
+        (free == true && (discount != 0 || discountBps != null))) {
       throw const FormatException('INVALID_LINE_EDIT');
     }
     final note = (rawNote as String?)?.trim();
@@ -68,21 +113,32 @@ class CartLine {
       portion: portion,
       modifiers: modifiers,
       quantity: quantity,
-      discount: discount,
+      discount: discountBps == null ? discount : 0,
+      discountBps: discountBps as int?,
+      discountNote: (discountNote as String?)?.trim(),
       basePriceOverride: base as int?,
+      priceChangeReason: reason is String && reason.trim().isNotEmpty ? reason.trim() : null,
       isFree: free == true,
+      freeReason: (freeReason as String?)?.trim(),
       note: note == null || note.isEmpty ? null : note,
+      order: order,
     );
   }
 
   Json get lineEdits => {
     if (discount != 0) 'discount_minor': discount,
+    'discount_bps': ?discountBps,
+    if (hasDiscount) 'discount_note': ?discountNote,
     'base_price_override_minor': ?basePriceOverride,
+    'price_change_reason': ?priceChangeReason,
     if (isFree) 'is_free': true,
+    'free_reason': ?freeReason,
     'note': ?note,
   };
 
   Json get request => {
+    'status': 'new',
+    ...order,
     'product_id': product['id'],
     'portion_id': portion?['id'],
     'modifier_ids': modifiers.map((item) => item['id']).toList(),
@@ -91,6 +147,8 @@ class CartLine {
   };
 
   Json get heldSnapshot => {
+    'status': 'new',
+    ...order,
     'product': product,
     'portion': portion,
     'modifiers': modifiers,
@@ -102,8 +160,32 @@ class CartLine {
     jsonObject(line['product']),
     portion: line['portion'] == null ? null : jsonObject(line['portion']),
     modifiers: jsonRows(line['modifiers']),
-    quantity: line['quantity'] as int,
+    quantity: line['quantity'] as num,
+    order: {
+      for (final key in [
+        'status',
+        'line_key',
+        'order_session',
+        'ordered_at',
+        'ordered_by',
+        'ordered_by_name',
+        'source_line_key',
+        'void_reason',
+      ])
+        if (line[key] != null) key: line[key],
+    },
   ).withLineEdits(line);
+
+  static List<CartLine> billLines(Json bill) => [
+    for (final (index, row) in jsonRows(bill['lines']).indexed)
+      CartLine.fromHeldSnapshot({
+        'status': bill['status'] ?? 'new',
+        'line_key': 'legacy_${index + 1}',
+        if (bill['status'] == 'submitted')
+          'ordered_by_name': bill['operator_name'],
+        ...row,
+      }),
+  ];
 
   BillTotals totals(Json config) => lineTotals(
     unitPrice: unit,
@@ -111,9 +193,8 @@ class CartLine {
     taxMode: (legacyTaxSettings(config)['tax_mode'] as String?) ?? 'disabled',
     taxRateBps: (legacyTaxSettings(config)['tax_rate_bps'] as int?) ?? 0,
     discount: discount,
-    taxRule: config['default_tax_rule'] is Map
-        ? jsonObject(config['default_tax_rule'])
-        : null,
+    discountBps: discountBps,
+    taxRule: defaultTaxRule(config),
   );
 
   Json quote(Json config) {
@@ -125,6 +206,7 @@ class CartLine {
       'name_km': name('km'),
       'name_en': name('en'),
       'unit_price_minor': unit,
+      if (amounts.discount != 0) 'discount_minor': amounts.discount,
       'subtotal_minor': amounts.subtotal,
       'tax_1_amount': amounts.tax1,
       'tax_2_amount': amounts.tax2,
@@ -177,7 +259,7 @@ class CartLine {
       product,
       portion: portion,
       modifiers: selected,
-      quantity: line['quantity'] as int,
+      quantity: line['quantity'] as num,
     ).withLineEdits(line);
   }
 

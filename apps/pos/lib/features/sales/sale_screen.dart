@@ -33,6 +33,7 @@ class SaleScreen extends GetView<SaleController> {
             search: SearchInputField(
               controller: controller.search,
               onChanged: controller.searchChanged,
+              onClear: controller.clearSearch,
               onSubmitted: (input) {
                 final product = controller.searchSubmitted(input);
                 if (product != null) controller.addProduct(context, product);

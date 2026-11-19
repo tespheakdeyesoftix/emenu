@@ -265,6 +265,31 @@
           :currency="store.business.currency"
         />
       </TabPanel>
+      <TabPanel as="section" :force-mount="true" value="pos"
+        data-product-tab="pos"
+        class="data-[state=inactive]:hidden grid gap-4 sm:grid-cols-2"
+      >
+        <Checkbox
+          v-model="newProduct.allowDiscount"
+          :label="t('pages.catalog.posOptions.allowDiscount')"
+          :disabled="saving"
+        />
+        <Checkbox
+          v-model="newProduct.allowChangePrice"
+          :label="t('pages.catalog.posOptions.allowChangePrice')"
+          :disabled="saving"
+        />
+        <Checkbox
+          v-model="newProduct.isOpenProduct"
+          :label="t('pages.catalog.posOptions.isOpenProduct')"
+          :disabled="saving"
+        />
+        <Checkbox
+          v-model="newProduct.allowFree"
+          :label="t('pages.catalog.posOptions.allowFree')"
+          :disabled="saving"
+        />
+      </TabPanel>
       </SettingsTabs>
     </form>
 
@@ -381,6 +406,7 @@ const productTabs = computed(() => [
   { id: "details", label: t("pages.catalog.productTabs.details") },
   { id: "prices", label: t("pages.catalog.productTabs.prices") },
   { id: "modifiers", label: t("pages.catalog.productTabs.modifiers") },
+  { id: "pos", label: t("pages.catalog.productTabs.pos") },
 ]);
 const productMenuIds = ref<string[]>([]);
 const localMenuDraft = ref<string[]>();
@@ -413,6 +439,10 @@ const newProduct = reactive({
   primaryMediaId: "",
   isFeatured: false,
   isAvailable: true,
+  allowDiscount: true,
+  allowChangePrice: true,
+  isOpenProduct: false,
+  allowFree: true,
   mediaIds: [] as string[],
   imageUrl: "",
   sortOrder: 0,
@@ -632,6 +662,10 @@ function resetProduct(useRememberedFields = false) {
     primaryMediaId: "",
     isFeatured: false,
     isAvailable: true,
+    allowDiscount: true,
+    allowChangePrice: true,
+    isOpenProduct: false,
+    allowFree: true,
     mediaIds: [],
     imageUrl: "",
     sortOrder: 0,
@@ -695,6 +729,10 @@ function openEditProduct(item: Product, priceEntries: ProductPriceEntry[]) {
       item.primaryMediaId || images.find((image) => image.isPrimary)?.id || "",
     isFeatured: Boolean(item.isFeatured),
     isAvailable: item.isAvailable !== 0 && item.isAvailable !== false,
+    allowDiscount: item.allowDiscount !== 0 && item.allowDiscount !== false,
+    allowChangePrice: item.allowChangePrice !== 0 && item.allowChangePrice !== false,
+    isOpenProduct: Boolean(item.isOpenProduct),
+    allowFree: item.allowFree !== 0 && item.allowFree !== false,
     mediaIds: images.map((image) => image.id),
     imageUrl: item.imageUrl || "",
     sortOrder: Number(item.sortOrder ?? 0),

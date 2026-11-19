@@ -23,6 +23,16 @@ function targetsFor(scope: string, selections: Set<unknown>) {
   const targets: Target[] = [];
   const add = (name: string, where = own) => targets.push({ name, where });
   const resetScope = scope === "business" ? own : branchOnly;
+  const workingDays = selected("workingDays");
+  const cashierShifts = selected("cashierShifts") || workingDays;
+  const dayIds = `SELECT id FROM working_days WHERE ${resetScope}`;
+  const shiftsWhere = selected("cashierShifts") ? resetScope
+    : `${resetScope} AND working_day_id IN (${dayIds})`;
+  const shiftIds = `SELECT id FROM cashier_shifts WHERE ${shiftsWhere}`;
+  const relatedSales = [];
+  if (workingDays) relatedSales.push(`working_day_id IN (${dayIds})`);
+  if (cashierShifts) relatedSales.push(`shift_id IN (${shiftIds})`);
+  const salesWhere = selected("sales") ? resetScope : `${resetScope} AND (${relatedSales.join(" OR ")})`;
   const orders = selected("orders");
   const tables = selected("tables") || selected("tableGroups");
   const bookings = selected("bookings");
@@ -49,17 +59,33 @@ function targetsFor(scope: string, selections: Set<unknown>) {
     add("order_products", `order_id IN (${orderIds})`);
     add("orders", ordersWhere);
   }
-  if (selected("sales")) {
-    const saleIds = `SELECT id FROM sales WHERE ${resetScope}`;
-    add("pos_commands", `${own} AND EXISTS (
-      SELECT 1 FROM sales WHERE ${resetScope} AND sales.profile_id=pos_commands.profile_id
+  if (selected("sales") || cashierShifts) {
+    const saleIds = `SELECT id FROM sales WHERE ${salesWhere}`;
+    const commands = [`EXISTS (
+      SELECT 1 FROM sales WHERE ${salesWhere} AND sales.profile_id=pos_commands.profile_id
         AND sales.id=json_extract(pos_commands.response_json,'$.id')
         AND json_type(pos_commands.response_json,'$.lines')='array'
-    )`);
+    )`];
+    if (cashierShifts) {
+      commands.push(`EXISTS (SELECT 1 FROM cashier_shifts WHERE ${shiftsWhere}
+        AND profile_id=pos_commands.profile_id AND (
+          id=json_extract(pos_commands.response_json,'$.id') OR
+          id=json_extract(pos_commands.response_json,'$.shift_id')
+        ))`);
+    }
+    if (workingDays) commands.push(`json_extract(pos_commands.response_json,'$.id') IN (${dayIds})
+      AND profile_id IN (SELECT id FROM pos_profiles WHERE ${resetScope})`);
+    add("pos_commands", `${own} AND (${commands.map(condition => `(${condition})`).join(" OR ")})`);
     add("sale_products", `sale_id IN (${saleIds})`);
     add("sale_payments", `sale_id IN (${saleIds})`);
-    add("sales", resetScope);
+    add("sales", salesWhere);
   }
+  if (cashierShifts) {
+    for (const name of ["cash_floats", "cashier_shift_closing_counts", "cashier_shift_reopens"])
+      add(name, `shift_id IN (${shiftIds})`);
+    add("cashier_shifts", shiftsWhere);
+  }
+  if (workingDays) add("working_days", resetScope);
   if (bookings) add("bookings", branchOnly);
   if (tables) add("restaurant_tables", branchOnly);
   if (selected("tableGroups")) add("table_groups", branchOnly);
@@ -151,6 +177,10 @@ const menuOrderReference = (resettingBusinessOrders: boolean) => `EXISTS (
 function tenantChecks(targets: Target[]) {
   const checks = [];
   for (const { name, where } of targets) {
+    if (name === "sales") checks.push(`NOT EXISTS (
+      SELECT 1 FROM sales WHERE reverses_sale_id IN (SELECT id FROM sales WHERE ${where})
+        AND id NOT IN (SELECT id FROM sales WHERE ${where})
+    )`);
     const relations = name === "orders" ? [["telegram_order_deliveries", "order_id"]]
       : name === "products" ? [["product_images", "product_id"], ["product_prices", "product_id"]]
       : name === "categories" ? [["categories", "parent_id"]] : [];
@@ -198,6 +228,12 @@ export async function resetBusinessData(
   const remainingMenuOrders = menuOrderReference(scope === "business" && selected.has("orders"));
   const targets = targetsFor(scope, selected);
   const sales = targets.find(({ name }) => name === "sales");
+  const resettingOperations = selected.has("workingDays") || selected.has("cashierShifts");
+  const commandReset = JSON.stringify({
+    code: resettingOperations ? "POS_DATA_RESET" : "SALE_RESET",
+    error: resettingOperations ? "This POS working day, shift or sale was cleared by an administrator."
+      : "This POS sale was cleared by an administrator.",
+  });
   if (sendDeletedWebhooks && !targets.some(({ name }) => name === "orders" || name === "bookings"))
     return fail(400, "Select a reset that removes orders or bookings to send Deleted webhooks.");
   const ownership = tenantChecks(targets);
@@ -207,7 +243,7 @@ export async function resetBusinessData(
   if (ownership.length) {
     const sql = `SELECT (${ownership.join(" AND ")}) AS valid`;
     if (!await db.prepare(sql).bind(...scopeBindings(sql, businessId, branchId)).first<number>("valid"))
-      blockers.push("A related record belongs to another business. This selection cannot be reset.");
+      blockers.push("A related record outside this reset references the selection. Include its data in the reset or reset it first.");
   }
   if (deleting && blockers.length) return fail(409, blockers[0]);
   const snapshots = await readSnapshot(db, targets, businessId, branchId);
@@ -266,10 +302,9 @@ export async function resetBusinessData(
           SELECT shift_id FROM sales WHERE ${sales.where}
         ) AND ${guarded}`).bind(businessId, branchId, auditId)] : []),
       ...snapshots.map(({ name, where }) => {
-        // Retain the idempotency key so retries cannot recreate a deleted sale.
+        // Keep idempotency keys so old POS retries cannot recreate cleared records.
         const statement = name === "pos_commands"
-          ? `UPDATE pos_commands SET response_status=410,
-              response_json='{"code":"SALE_RESET","error":"This POS sale was cleared by an administrator."}'`
+          ? `UPDATE pos_commands SET response_status=410,response_json='${commandReset}'`
           : `DELETE FROM ${name}`;
         return db.prepare(`${statement} WHERE (${where}) AND ${guarded}`).bind(businessId, branchId, auditId);
       }),

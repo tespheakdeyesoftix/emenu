@@ -35,7 +35,8 @@ class RegisterAppBar extends StatelessWidget {
         ),
       );
       if (search != null && box.maxWidth >= 600) {
-        final width = box.maxWidth < 900 && actions.length >= 3 ? 180.0 : 300.0;
+        final fraction = box.maxWidth < 900 && actions.length >= 3 ? .30 : .40;
+        final width = (box.maxWidth * fraction).clamp(180.0, 640.0);
         return Row(
           key: const ValueKey('register-app-bar-row'),
           spacing: 12,
@@ -60,13 +61,7 @@ class RegisterAppBar extends StatelessWidget {
               Flexible(child: controls),
             ],
           ),
-          if (search != null)
-            Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 300),
-                child: search,
-              ),
-            ),
+          ?search,
         ],
       );
     },

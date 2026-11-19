@@ -51,6 +51,17 @@ function bounded(value: bigint) {
   return Number(value);
 }
 
+export function saleQuantity(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 ||
+      value > 999 || Math.round(value * 1000) / 1000 !== value)
+    invalid("Enter a quantity from 0.001 to 999 with up to three decimal places");
+  return value;
+}
+
+export function lineGross(unitPrice: number, quantity: number) {
+  return bounded(rounded(BigInt(unitPrice) * BigInt(Math.round(quantity * 1000)), 1000n));
+}
+
 export function priceMinor(value: number, currency: PosCurrency) {
   const [numerator, denominator] = ratio(value);
   return bounded(rounded(numerator * units(currency), denominator));
@@ -82,6 +93,7 @@ export function saleLineTotals(
   bps: number,
   rule: PosTaxRule | null = null,
   discount = 0,
+  discountBps: number | null = null,
 ) {
   const rates = rule
     ? [rule.tax_1_rate, rule.tax_2_rate, rule.tax_3_rate].map(ratio)
@@ -101,6 +113,10 @@ export function saleLineTotals(
   ];
   let subtotal = gross;
   let taxes = [0n, 0n, 0n];
+  const discountFor = (base: number) => discountBps == null
+    ? discount
+    : Number(rounded(BigInt(base) * BigInt(discountBps), 10000n));
+  let amountOff: number;
   if (mode === "inclusive") {
     // Express each level as a share of the pretax price with a common
     // denominator. This allows exact extraction even with compounded rates.
@@ -130,10 +146,11 @@ export function saleLineTotals(
     };
     taxes = extract(shares.map((share) => BigInt(gross) * share), denominator);
     subtotal = gross - Number(taxes.reduce((sum, tax) => sum + tax, 0n));
-    if (discount > subtotal) invalid("The discount exceeds the line subtotal");
-    if (discount) {
+    amountOff = discountFor(subtotal);
+    if (amountOff > subtotal) invalid("The discount exceeds the line subtotal");
+    if (amountOff) {
       const grossBase = BigInt(gross) * base;
-      const discountBase = BigInt(discount) * denominator;
+      const discountBase = BigInt(amountOff) * denominator;
       const applied = discountBase > grossBase ? grossBase : discountBase;
       const reductions = coefficients(true);
       taxes = extract(
@@ -142,10 +159,11 @@ export function saleLineTotals(
       );
     }
   } else {
-    if (discount > subtotal) invalid("The discount exceeds the line subtotal");
+    amountOff = discountFor(subtotal);
+    if (amountOff > subtotal) invalid("The discount exceeds the line subtotal");
     if (mode === "exclusive") {
       for (const [i, [n, d]] of rates.entries()) {
-        const net = BigInt(subtotal - (afterDiscount[i] ? discount : 0));
+        const net = BigInt(subtotal - (afterDiscount[i] ? amountOff : 0));
         const prior = parents[i].reduce((sum, parent) => sum + taxes[parent], 0n);
         taxes[i] = rounded((net + prior) * n, d * 100n);
       }
@@ -155,12 +173,12 @@ export function saleLineTotals(
   const tax = bounded(taxes.reduce((sum, amount) => sum + amount, 0n));
   return {
     subtotal_minor: subtotal,
-    discount_minor: discount,
+    discount_minor: amountOff,
     tax_1_amount: tax1,
     tax_2_amount: tax2,
     tax_3_amount: tax3,
     tax_minor: tax,
-    total_minor: subtotal - discount + tax,
+    total_minor: subtotal - amountOff + tax,
   };
 }
 
@@ -208,6 +226,8 @@ function catalogScope(context: PosContext, menuId?: string) {
     SELECT p.id,p.code,p.category_id AS categoryId,COALESCE(NULLIF(p.name_km,''),p.name) AS name,
       p.name_km AS nameKm,p.name_en AS nameEn,p.name_zh AS nameZh,p.description,p.unit,p.image_url AS imageUrl,
       p.price_cents AS priceCents,p.portions_json AS portionsJson,p.modifier_groups_json AS modifierGroupsJson,
+      p.allow_discount AS allowDiscount,p.allow_change_price AS allowChangePrice,
+      p.is_open_product AS isOpenProduct,p.allow_free AS allowFree,
       ${isMenu ? `(SELECT json_group_array(mp.menu_id) ${assignment})` : "'[]'"} AS menuIds
     FROM products p WHERE p.business_id=?1 AND p.is_available=1
       AND ${isMenu ? `EXISTS (SELECT 1 ${assignment})` : "p.category_id IN (SELECT id FROM selected_nodes)"}
@@ -356,6 +376,10 @@ export async function getCatalog(
       name_zh: product.nameZh,
       description: product.description,
       unit: product.unit,
+      allow_discount: Boolean(product.allowDiscount),
+      allow_change_price: Boolean(product.allowChangePrice),
+      is_open_product: Boolean(product.isOpenProduct),
+      allow_free: Boolean(product.allowFree),
       image_url: product.imageUrl,
       category_id: product.categoryId,
       menu_ids: JSON.parse(String(product.menuIds)),
@@ -382,14 +406,26 @@ export async function getCatalog(
 export function saleLineEdits(line: Record<string, unknown>) {
   const free = line.is_free === undefined ? false : boolean(line.is_free, "is_free");
   const discount = integer(line.discount_minor ?? 0, "discount_minor", 0);
-  if (free && discount !== 0) invalid("A free item cannot have a line discount");
+  const discountBps = line.discount_bps == null
+    ? null
+    : integer(line.discount_bps, "discount_bps", 1, 10000);
+  const discountNote = optionalText(line.discount_note, "discount note", 250);
+  const freeReason = optionalText(line.free_reason, "free item reason", 250);
+  if (free && (discount !== 0 || discountBps != null)) invalid("A free item cannot have a line discount");
+  if (discountNote != null && discount === 0 && discountBps == null)
+    invalid("A discount note requires a line discount");
+  if (!free && freeReason != null) invalid("A free item reason requires a free item");
   return {
     base_price_override_minor: line.base_price_override_minor == null
       ? null
       : integer(line.base_price_override_minor, "base_price_override_minor", 0),
     is_free: free,
+    free_reason: freeReason,
     discount_minor: discount,
+    discount_bps: discountBps,
+    discount_note: discountNote,
     note: optionalText(line.note, "line note"),
+    price_change_reason: optionalText(line.price_change_reason, "price change reason", 250),
   };
 }
 
@@ -417,7 +453,7 @@ export async function saleLines(
           ? null
           : recordId(line.portion_id, "portion_id"),
       modifiers,
-      quantity: integer(line.quantity, "quantity", 1, 999),
+      quantity: saleQuantity(line.quantity),
       edits: saleLineEdits(line),
     };
   });
@@ -474,8 +510,8 @@ export async function saleLines(
       ? 0
       : (input.edits.base_price_override_minor ?? base) +
         modifiers.reduce((sum, option) => sum + option.price_minor, 0);
-    const gross = unitPrice * input.quantity;
-    if (gross < 0)
+    const gross = lineGross(unitPrice, input.quantity);
+    if (unitPrice < 0)
       conflict(
         "The selected options produce a negative line price",
         "INVALID_PRICING",
@@ -506,7 +542,7 @@ export async function saleLines(
       quantity: input.quantity,
       unit_price_minor: unitPrice,
       ...input.edits,
-      ...saleLineTotals(gross, taxMode, taxRate, taxRule, input.edits.discount_minor),
+      ...saleLineTotals(gross, taxMode, taxRate, taxRule, input.edits.discount_minor, input.edits.discount_bps),
     };
   });
 }

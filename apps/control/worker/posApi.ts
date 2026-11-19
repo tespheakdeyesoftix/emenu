@@ -27,6 +27,7 @@ import {
   type PosDependencies,
   type PosIdentity,
   type PosProfile,
+  registerTaxSettings,
   type ProfileConfig,
 } from "./posApiCore";
 import {
@@ -263,16 +264,24 @@ async function tables(context: PosContext, url: URL) {
     const { page, limit } = pagination(url);
     return respond({ tables: [], page, page_size: limit, has_more: false });
   }
-  return respond(
-    await pageOf(
-      context.db,
-      url,
-      "tables",
-      `SELECT t.id,t.code,t.label,t.group_id,g.name AS group_name,
+  const result = await pageOf(
+    context.db,
+    url,
+    "tables",
+    `WITH table_sales AS (
+      SELECT table_id,MIN(id) AS open_sale_id,
+        json_group_array(json_object('id',id,'guest_cover',guest_cover,'total_minor',total_minor))
+          FILTER (WHERE status='submitted') AS submitted_sales
+      FROM sales WHERE business_id=?2 AND profile_id=?1 AND table_id IS NOT NULL AND status IN ('open','submitted')
+      GROUP BY table_id
+    )
+    SELECT t.id,t.code,t.label,t.group_id,g.name AS group_name,
     s.id AS open_sale_id,s.guest_cover,bk.arrival_at AS booking_arrival_at,bk.pax AS booking_pax,
+    COALESCE(ts.submitted_sales,'[]') AS submitted_sales,
     CASE WHEN s.id IS NOT NULL THEN 'occupied' WHEN bk.id IS NOT NULL THEN 'booked' ELSE 'available' END AS status
     FROM restaurant_tables t JOIN table_groups g ON g.id=t.group_id AND g.business_id=t.business_id AND g.branch_id=t.branch_id
-    LEFT JOIN sales s ON s.business_id=t.business_id AND s.profile_id=?1 AND s.table_id=t.id AND s.status IN ('open','submitted')
+    LEFT JOIN table_sales ts ON ts.table_id=t.id
+    LEFT JOIN sales s ON s.id=ts.open_sale_id
     LEFT JOIN bookings bk ON bk.id=(
       SELECT reservation.id FROM bookings reservation
       WHERE reservation.business_id=t.business_id AND reservation.branch_id=t.branch_id
@@ -285,25 +294,36 @@ async function tables(context: PosContext, url: URL) {
     WHERE t.business_id=?2 AND t.branch_id=?3 AND t.is_active=1 AND g.is_active=1
       AND (?4 IS NULL OR selected.key IS NOT NULL)
     ORDER BY selected.key,g.sort_order,g.name,g.id,t.sort_order,t.id`,
-      [
-        context.profile.id,
-        context.identity.business_id,
-        context.profile.branch_id,
-        context.config.table_group_ids ? JSON.stringify(context.config.table_group_ids) : null,
-        context.now,
-      ],
-    ),
+    [
+      context.profile.id,
+      context.identity.business_id,
+      context.profile.branch_id,
+      context.config.table_group_ids ? JSON.stringify(context.config.table_group_ids) : null,
+      context.now,
+    ],
   );
+  return respond({
+    ...result,
+    tables: (result.tables as { submitted_sales: string }[]).map(row => ({
+      ...row, submitted_sales: JSON.parse(row.submitted_sales),
+    })),
+  });
 }
 
 function posProfileView(profile: PosProfile) {
   const settings = profileView(profile);
-  const { print_copies, tax_mode, tax_rate_bps, ...config } = settings.config;
+  const { print_copies, tax_mode: _mode, tax_rate_bps: _rate, ...config } = settings.config;
+  const pending: ProfileConfig | null = profile.pending_config_json
+    ? JSON.parse(profile.pending_config_json)
+    : null;
+  const { tax_mode, tax_rate_bps, ...taxSettings } = registerTaxSettings(profile);
   return {
     ...settings,
     config: {
       ...config,
-      ...(!config.default_tax_rule && tax_mode !== "disabled" && tax_rate_bps > 0
+      ...taxSettings,
+      table_status_colors: { ...config.table_status_colors, ...pending?.table_status_colors },
+      ...(!taxSettings.default_tax_rule && tax_mode !== "disabled" && tax_rate_bps > 0
         ? { legacy_tax: { tax_mode, tax_rate_bps } }
         : {}),
     },
@@ -508,9 +528,16 @@ export async function handlePosApi(
           cart_line_edits: true,
           bill_information: true,
           submit_orders: true,
+          order_line_history: true,
+          order_line_void_reasons: true,
+          price_change_reasons: true,
+          free_item_reasons: true,
+          item_discount_details: true,
+          sale_notes: true,
           shift_management: true,
           customer_directory: true,
           customer_photo_upload: true,
+          customer_credit: true,
         },
         ...current,
       });

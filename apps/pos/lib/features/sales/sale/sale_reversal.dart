@@ -120,6 +120,7 @@ Future<Json> recordRegisterReversal({
     createdAt: time,
     request: {
       ...payload,
+      'note': ?request['note'],
       'draft': {'expected_context': current},
       'quote': [
         for (final line in jsonRows(request['quote']))
@@ -137,7 +138,7 @@ Future<Json> recordRegisterReversal({
               'total_minor',
               'total_amount',
             ])
-              if (line[field] is int) field: -(line[field] as int),
+              if (line[field] is num) field: -(line[field] as num),
           },
       ],
       'payments': reversalPayments,

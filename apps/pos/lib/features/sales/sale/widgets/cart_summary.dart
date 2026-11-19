@@ -10,11 +10,13 @@ class CartSummary extends StatelessWidget {
     required this.amounts,
     required this.taxRule,
     required this.currency,
+    required this.needsDiscountReview,
   });
 
   final List<BillTotals> amounts;
   final Map? taxRule;
   final String currency;
+  final bool needsDiscountReview;
 
   @override
   Widget build(BuildContext context) {
@@ -26,9 +28,12 @@ class CartSummary extends StatelessWidget {
       sum((row) => row.tax3),
     ];
     final discount = sum((row) => row.discount);
+    num taxRate(int index) => taxRule?['tax_${index + 1}_rate'] as num? ?? 0;
     String taxLabel(int index) {
       final name = (taxRule?['tax_${index + 1}_name'] as String?)?.trim();
-      return name == null || name.isEmpty ? 'cart_tax_level'.tr : name;
+      final label = name == null || name.isEmpty ? 'cart_tax_level'.tr : name;
+      final rate = taxRate(index);
+      return rate > 0 ? '$label ($rate%)' : label;
     }
 
     return DecoratedBox(
@@ -52,11 +57,21 @@ class CartSummary extends StatelessWidget {
                 amount: displayAmount(-discount, currency),
               ),
             for (final (index, tax) in taxes.indexed)
-              if (tax != 0)
+              if (tax != 0 ||
+                  (amounts.isNotEmpty &&
+                      taxRule?['tax_mode'] != 'disabled' &&
+                      taxRate(index) > 0))
                 CartAmount(
                   label: taxLabel(index),
                   amount: displayAmount(tax, currency),
                 ),
+            if (needsDiscountReview)
+              Text(
+                'cart_tax_discount_review'.tr,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
           ],
         ),
       ),

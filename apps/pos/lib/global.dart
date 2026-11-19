@@ -91,6 +91,7 @@ class App {
   Future<num?> input_number({
     required String title,
     bool isFloat = false,
+    int? decimalPlaces,
     num? value,
     num? min,
     num? max,
@@ -114,6 +115,7 @@ class App {
       InputNumberDialogWidget(
         title: title,
         isFloat: isFloat,
+        decimalPlaces: decimalPlaces,
         value: value,
         min: min,
         max: max,

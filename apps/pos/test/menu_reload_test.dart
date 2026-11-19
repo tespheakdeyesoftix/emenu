@@ -175,6 +175,7 @@ void main() {
             ).single,
           );
           register.add(line);
+          final cartLine = register.cart.single;
           await register.sales.flushCart();
           final draft = (await database.cartDraft('owner', 'profile'))!.payload;
 
@@ -196,7 +197,7 @@ void main() {
           expect(register.config['default_menu_id'], success ? 'new' : 'old');
           expect(register.message.value, success ? 'MENU_RELOADED' : 'OFFLINE');
           expect(register.busy.value, isFalse);
-          expect(register.cart.single, same(line));
+          expect(register.cart.single, same(cartLine));
           expect(
             (await database.cartDraft('owner', 'profile'))!.payload,
             draft,

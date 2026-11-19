@@ -22,6 +22,23 @@ class CatalogProductGrid extends GetView<SaleController> {
     final scope = (controller.section.value, controller.term.value);
     final folders = controller.visibleFolders;
     final products = controller.visibleProducts;
+    if (products.isEmpty && controller.term.value.isNotEmpty) {
+      return Padding(
+        padding: EdgeInsets.only(bottom: bottomPadding),
+        child: Center(
+          child: SingleChildScrollView(
+            child: EmptyStateWidget(
+              icon: Icons.search_off_outlined,
+              title: 'catalog_no_matches'.tr,
+              action: OutlinedButton(
+                onPressed: controller.resetCatalog,
+                child: Text('catalog_show_all'.tr),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     final emptyProducts = products.isEmpty
         ? EmptyStateWidget(
             icon: Icons.inventory_2_outlined,
@@ -72,11 +89,20 @@ class _PagedCatalogGridState extends State<_PagedCatalogGrid> {
   final _scroll = ScrollController(keepScrollOffset: false);
   int _limit = _pageSize;
   bool _pageScheduled = false;
+  bool _showBackToTop = false;
 
   @override
   void initState() {
     super.initState();
-    _scroll.addListener(_maybeRevealMore);
+    _scroll.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    final awayFromTop = _scroll.position.extentBefore > 0;
+    if (awayFromTop != _showBackToTop) {
+      setState(() => _showBackToTop = awayFromTop);
+    }
+    _maybeRevealMore();
   }
 
   void _maybeRevealMore() {
@@ -103,8 +129,27 @@ class _PagedCatalogGridState extends State<_PagedCatalogGrid> {
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) =>
+    builder: (context, constraints) => Stack(
+      fit: StackFit.expand,
+      children: [
         _buildGrid(context, constraints.maxWidth),
+        if (_showBackToTop)
+          PositionedDirectional(
+            end: 12,
+            bottom: widget.bottomPadding + 12,
+            child: FloatingActionButton.small(
+              heroTag: null,
+              tooltip: 'catalog_back_to_top'.tr,
+              onPressed: () => _scroll.animateTo(
+                _scroll.position.minScrollExtent,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOutCubic,
+              ),
+              child: const Icon(Icons.vertical_align_top_rounded),
+            ),
+          ),
+      ],
+    ),
   );
 
   Widget _buildGrid(BuildContext context, double width) {
@@ -163,25 +208,32 @@ class _PagedCatalogGridState extends State<_PagedCatalogGrid> {
           if (folders.isNotEmpty && products.isNotEmpty)
             const SliverToBoxAdapter(child: SizedBox(height: 8)),
           if (products.isNotEmpty)
-            SliverGrid.builder(
-              gridDelegate: delegate,
-              itemCount: min(_limit, products.length),
-              itemBuilder: (context, index) {
-                final product = products[index];
-                return ProductCard(
-                  key: ValueKey('catalog-product-${product['id']}'),
-                  layout: widget.layout,
-                  name: catalogLabel(product),
-                  code: product['code']?.toString(),
-                  imageUrl: product['image_url']?.toString(),
-                  price: displayAmount(
-                    product['price_minor'] as int,
-                    controller.service.currency,
-                  ),
-                  onTap: () => controller.addProduct(context, product),
-                );
-              },
-            ),
+            Obx(() {
+              final quantities = <String, num>{};
+              for (final line in controller.service.cart) {
+                if (line.voided) continue;
+                final id = line.product['id'] as String;
+                quantities[id] = (quantities[id] ?? 0) + line.quantity;
+              }
+              final currency = controller.service.currency;
+              return SliverGrid.builder(
+                gridDelegate: delegate,
+                itemCount: min(_limit, products.length),
+                itemBuilder: (context, index) {
+                  final product = products[index];
+                  return ProductCard(
+                    key: ValueKey('catalog-product-${product['id']}'),
+                    layout: widget.layout,
+                    name: catalogLabel(product),
+                    code: product['code']?.toString(),
+                    imageUrl: product['image_url']?.toString(),
+                    price: displayAmount(product['price_minor'] as int, currency),
+                    orderedQuantity: normalizedQuantity(quantities[product['id']] ?? 0),
+                    onTap: () => controller.addProduct(context, product),
+                  );
+                },
+              );
+            }),
           if (widget.emptyProducts case final empty?)
             SliverToBoxAdapter(child: empty),
           if (widget.bottomPadding > 0)
